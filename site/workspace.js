@@ -38,9 +38,14 @@ async function flushDraft(){
  await draftChain;return ok;
 }
 async function draft(form,key){
+ // Keep the form inert until its saved draft and input listener are ready.
+ // IndexedDB reads are asynchronous; accepting input earlier can lose the first edits.
+ const controls=[...form.elements],disabled=controls.map(f=>f.disabled);
+ form.setAttribute('aria-busy','true');controls.forEach(f=>f.disabled=true);
  try{let old=await store.read('drafts',draftKey(key));if(!old&&key==='capture'&&S?.draft?.text)old={type:S.draft.type||'note',context:S.draft.context||'',text:S.draft.text};if(old){for(const [k,v] of Object.entries(old)){const f=form.elements.namedItem(k);if(f&&f.type!=='file')f.type==='checkbox'?f.checked=v===true:f.value=v;}draftStatus('Recovered an unfinished draft.');}}
  catch(e){draftStatus('Draft recovery unavailable: '+e.message,true);}
  form.addEventListener('input',()=>{const value={};for(const f of form.elements)if(f.name&&f.type!=='file')value[f.name]=f.type==='checkbox'?f.checked:f.value;draftJob={key,value};draftDirty=true;draftStatus('Saving draft…');clearTimeout(draftTimer);draftTimer=setTimeout(flushDraft,300);});
+ controls.forEach((f,i)=>f.disabled=disabled[i]);form.setAttribute('aria-busy','false');
 }
 async function clearDraft(key){await flushDraft();await store.draft(draftKey(key),null);draftDirty=false;draftJob=null;}
 async function navigate(v,id=null){if(!S)return;if(!await flushDraft())return;$('#dialog').close();draftJob=null;route=v;recordId=id;location.hash=v+(id?'/'+encodeURIComponent(id):'');activeHash=location.hash;await render();window.scrollTo(0,0);}
