@@ -2,84 +2,49 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-Continuity is an experimental intent-centered computing system. Instead of organizing a person's digital life primarily around files, apps, pages, or chat transcripts, it treats **human intention and its continuity through time** as the primary object.
+## Current workspace: v0.11.0
 
-> A transcript remembers what was said.  
-> Continuity remembers what it meant for what came next.
+Live: https://exemptus9.github.io/artificial-continuity/
 
-## Current test surface
+**Save a conversation → review its decisions → resume in another AI conversation.**
 
-The repository currently contains a standalone **v0.9 Live Lab** under `site/`.
+Create an intention, paste a source or import a UTF-8 `.txt`/`.md` file, link it to the intention, and review source-backed checkpoints. A Resume Pack combines your goal, last position, next action, open questions, confirmed decisions and cited source lines. Copy it or export Markdown. Original source text remains separate from interpretation.
 
-It demonstrates:
+Also includes attention flags, quick-capture drafts, capture-to-idea lineage, actual keyword search, validated backups/recovery, session undo, and legacy v0.9/v0.10 migration. IndexedDB writes use transactional revision checks to reject stale-tab overwrites. No account, model bill or build step is required.
 
-- explicit Continue / Waiting / Blocked / Resolved states
-- resumption briefs
-- capture → idea lineage
-- relevance-triggered prospective memory
-- Personal Constitution policy checks
-- user-visible provenance events
-- two-device divergence and explicit three-way reconciliation
-- browser-local persistence and JSON export
-- local heuristic context reconstruction
+See [v0.11 release notes](docs/V0_11_RELEASE.md) for exact capabilities, limits, migration and test coverage. Historical architecture documents describe a broader research direction, not features silently enabled in this public workspace.
 
-No account, backend, model API, or build step is required for the Live Lab.
+## Try locally
 
-Open `site/index.html` directly or serve the `site/` directory with any static web server.
+Serve `site/` on localhost, for example `python3 -m http.server 8080 --directory site`, then open `http://localhost:8080`. Use HTTPS for remote hosting. Do not rely on `file://` storage behavior.
+
+Data tests: `node --test tests/workspace.test.cjs`.
+Browser tests: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1`, `npx playwright install chromium`, then `node tests/browser.cjs`.
+
+The Pages workflow tests the release before deploying and preserves browser evidence. No production dependencies are downloaded by the app.
+
+## Privacy and boundaries
+
+Data stays in that browser. It is not encrypted or automatically synced. Export private backups before switching devices or clearing browser data. Checkpoints require human review; keyword suggestions are not automatically accepted. Resume Packs are deterministic working briefs, not model-generated memories. Source URLs are references only and are never fetched. Imported conversations do not grant control over ChatGPT's sidebar.
 
 ## Development lineage
 
-Continuity existed before this GitHub repository was created.
-
-The preserved original local Git graph contains versions **v0.1.0 through v0.8.1**, including the transition from a prototype interface to:
-
-- append-only history
-- policy-gated agent proposals
-- HIGP / Human Intent Graph Protocol
-- Cognitive Git
-- provider-neutral reasoning
-- context-consent receipts
-- encrypted vault primitives
-- prospective memory
-- signed synchronization
-- three-way semantic reconciliation
-
-See [Development History](docs/DEVELOPMENT_HISTORY.md).
-
-From the GitHub-repository era forward, meaningful development should land as normal commits before release artifacts are produced.
+Continuity existed before this GitHub repository. Preserved local history covers v0.1.0 through v0.8.1, including experimental event logs, HIGP, branching, provider isolation, consent, encryption, prospective memory and signed sync. See [Development History](docs/DEVELOPMENT_HISTORY.md). Those experiments must not be confused with the hosted application's capabilities. Historical documents and commits remain intact.
 
 ## Core doctrine
 
-1. **Intent over interface state.**
-2. **Provenance over overwrite.**
-3. **Uncertainty over false certainty.**
-4. **Explicit authority over silent agency.**
-5. **Divergence over data loss.**
-6. **Portability over vendor custody.**
-7. **Relevance over arbitrary notification timing.**
+1. Intent over interface state.
+2. Provenance over overwrite.
+3. Uncertainty over false certainty.
+4. Explicit authority over silent agency.
+5. Divergence over data loss.
+6. Portability over vendor custody.
+7. Relevance over arbitrary notification timing.
 
 ## Architecture direction
 
-The intended system separates:
-
-- **Continuity Kernel** — authoritative event/state machinery
-- **Intent Graph** — intentions, ideas, decisions, assumptions, evidence, artifacts, commitments
-- **Policy / Constitution** — authority constraints
-- **Reasoning Providers** — replaceable intelligence engines
-- **Capture surfaces** — browser extension, voice, files, links, screenshots
-- **Sync** — authenticated, divergence-aware history exchange
-- **Clients** — web, mobile, desktop, CLI, extensions
-
-The model is not the product.
+The intended system separates the Continuity Kernel, Intent Graph, policy/Constitution, replaceable reasoning providers, capture surfaces, authenticated divergence-aware synchronization and web/mobile/desktop clients. These are design directions, not a claim that this release implements the full architecture.
 
 **Continuity is the product. The model is the current reasoning engine.**
 
-## Live Lab v0.9
-
-See [v0.9 Live Lab notes](docs/V0_9_LIVE_LAB.md).
-
-## Status
-
-Experimental research prototype. Not production software.
-
-Current priority: make the semantics testable before optimizing infrastructure or visual polish.
+Experimental software. The current priority is a usable, evidence-backed source-to-resumption workflow with honest limits.
