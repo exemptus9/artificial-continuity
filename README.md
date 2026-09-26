@@ -2,49 +2,50 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current workspace: v0.11.0
+## Current workspace: v0.12.0
 
 Live: https://exemptus9.github.io/artificial-continuity/
 
-**Save a conversation → review its decisions → resume in another AI conversation.**
+**Capture → preserve evidence → review decisions → resume → follow through.**
 
-Create an intention, paste a source or import a UTF-8 `.txt`/`.md` file, link it to the intention, and review source-backed checkpoints. A Resume Pack combines your goal, last position, next action, open questions, confirmed decisions and cited source lines. Copy it or export Markdown. Original source text remains separate from interpretation.
+This is a usable browser-local workspace, not a general autonomous AI or a simulation-only dashboard. No account, model subscription or production npm dependency is needed.
 
-Also includes attention flags, quick-capture drafts, capture-to-idea lineage, actual keyword search, validated backups/recovery, session undo, and legacy v0.9/v0.10 migration. IndexedDB writes use transactional revision checks to reject stale-tab overwrites. No account, model bill or build step is required.
+### Use it
 
-See [v0.11 release notes](docs/V0_11_RELEASE.md) for exact capabilities, limits, migration and test coverage. Historical architecture documents describe a broader research direction, not features silently enabled in this public workspace.
+Create an intention. Save a conversation, or batch-import selected `.txt`/`.md` files after preview. Accept source-backed checkpoints yourself. Choose which checkpoints belong in a Resume Pack and copy or download the exact preview for another conversation.
 
-## Try locally
+Add follow-ups for a date or the resolution of another intention. Ready items surface on Now when you use the app. Transfer a whole project to another browser through a previewed JSON packet; imports append copies rather than overwriting existing work. Incoming checkpoints require fresh review.
 
-Serve `site/` on localhost, for example `python3 -m http.server 8080 --directory site`, then open `http://localhost:8080`. Use HTTPS for remote hosting. Do not rely on `file://` storage behavior.
+Install/add to Home screen where supported. After the first successful online cache, the workspace can reload and capture offline. Updates wait for review instead of interrupting typing. Device & drafts rescues unsaved forms from other tabs. Unsaved drafts must be saved as records to enter a full backup.
 
-Data tests: `node --test tests/workspace.test.cjs`.
-Browser tests: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1`, `npx playwright install chromium`, then `node tests/browser.cjs`.
+See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.12.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
 
-The Pages workflow tests the release before deploying and preserves browser evidence. No production dependencies are downloaded by the app.
+### Test locally
 
-## Privacy and boundaries
+Serve `site/` with a static server on localhost, for example `python3 -m http.server 8080 --directory site`. Remote hosting needs HTTPS for storage/clipboard/offline features. Do not rely on file-URL storage behavior.
 
-Data stays in that browser. It is not encrypted or automatically synced. Export private backups before switching devices or clearing browser data. Checkpoints require human review; keyword suggestions are not automatically accepted. Resume Packs are deterministic working briefs, not model-generated memories. Source URLs are references only and are never fetched. Imported conversations do not grant control over ChatGPT's sidebar.
+Data: `node --test tests/*.test.cjs`.
+
+Browser tooling: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1` then `npx playwright install chromium`.
+
+Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`.
+
+GitHub Actions tests the release before deployment and preserves test artifacts. Native mobile installation/launcher behavior must still be verified on each target device.
+
+## Privacy and limitations
+
+Workspace data stays in the browser's IndexedDB and is NOT encrypted. The app-shell cache contains code/assets only. No model, analytics or upload endpoint receives your conversations. Text copied out, exported files and selected source links are deliberate user actions. Links are references, not automatically fetched.
+
+Export complete backups before clearing browser data or moving devices. Project packets include FULL source text and are private data. They provide manual transfer, not automatic synchronization or cryptographic authenticity. A sensitive-pattern warning is not proof of privacy. Follow-ups are checked while using the app, not sent as background push notifications. Source intake supports selected text/Markdown files, not PDFs or whole chat account ZIP/JSON exports.
 
 ## Development lineage
 
-Continuity existed before this GitHub repository. Preserved local history covers v0.1.0 through v0.8.1, including experimental event logs, HIGP, branching, provider isolation, consent, encryption, prospective memory and signed sync. See [Development History](docs/DEVELOPMENT_HISTORY.md). Those experiments must not be confused with the hosted application's capabilities. Historical documents and commits remain intact.
+Continuity existed before this repository. Preserved local history covers v0.1.0 through v0.8.1. See [Development History](docs/DEVELOPMENT_HISTORY.md). Earlier HIGP, encryption, policy, sync and provider experiments describe a broader research direction; they are not silently enabled in this hosted workspace. Original architecture documents and commits remain intact.
 
 ## Core doctrine
 
-1. Intent over interface state.
-2. Provenance over overwrite.
-3. Uncertainty over false certainty.
-4. Explicit authority over silent agency.
-5. Divergence over data loss.
-6. Portability over vendor custody.
-7. Relevance over arbitrary notification timing.
+Intent over interface state. Provenance over overwrite. Uncertainty over false certainty. Explicit authority over silent agency. Divergence over data loss. Portability over vendor custody. Relevance over arbitrary notification timing.
 
-## Architecture direction
+**Continuity is the product. The model is a replaceable reasoning engine.**
 
-The intended system separates the Continuity Kernel, Intent Graph, policy/Constitution, replaceable reasoning providers, capture surfaces, authenticated divergence-aware synchronization and web/mobile/desktop clients. These are design directions, not a claim that this release implements the full architecture.
-
-**Continuity is the product. The model is the current reasoning engine.**
-
-Experimental software. The current priority is a usable, evidence-backed source-to-resumption workflow with honest limits.
+Experimental software, advancing through runnable workflows and test-gated releases rather than feature claims alone.
