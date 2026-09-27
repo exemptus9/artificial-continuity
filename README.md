@@ -2,7 +2,7 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current workspace: v0.15.0
+## Current workspace: v0.16.0
 
 Live: https://exemptus9.github.io/artificial-continuity/
 
@@ -10,7 +10,13 @@ Live: https://exemptus9.github.io/artificial-continuity/
 
 This is a usable browser-local workspace, not a general autonomous AI or a simulation-only dashboard. No account, model subscription or production npm dependency is needed.
 
-### New in v0.15
+### New in v0.16
+
+**Phone ↔ desktop: reviewed project round trips.** Export one project, work on it in another browser, then review and apply a return file to the same project. Local changes and incoming changes are compared against a remembered baseline when available. Conflicts require choices; sources and locally confirmed checkpoints are preserved. Newly received checkpoints need review. Encryption is optional for the exported file, not enabled for local storage. No account, relay, model or automatic sync.
+
+See [v0.16 release notes](docs/V0_16_RELEASE.md) for exact transfer semantics and limits. Incoming follow-ups are added only by choice as separate versions; reminder status and deletions are not synchronized.
+
+### Preserved from v0.15
 
 **Install once, use as an app.** A dedicated phone/desktop setup screen, offline diagnostics, command navigation, focus layout and last-intention resumption. The installed web app uses the same browser profile's data; a different browser/device requires explicit transfer.
 
@@ -36,7 +42,7 @@ Add follow-ups for a date or the resolution of another intention. Ready items su
 
 Install/add to Home screen where supported. After the first successful online cache, the workspace can reload and capture offline. Updates wait for review instead of interrupting typing. Device & drafts rescues unsaved forms from other tabs. Unsaved drafts must be saved as records to enter a full backup.
 
-See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.15.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
+See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.16.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
 
 ### Test locally
 
@@ -46,7 +52,7 @@ Data: `node --test tests/*.test.cjs`.
 
 Browser tooling: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1` then `npx playwright install chromium`.
 
-Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`, plus `node tests/portability-browser.cjs` and `node tests/handoff-browser.cjs` and `node tests/platform-browser.cjs`.
+Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`, plus `node tests/portability-browser.cjs` and `node tests/handoff-browser.cjs` and `node tests/platform-browser.cjs` and `node tests/exchange-browser.cjs`.
 
 GitHub Actions tests the release before deployment and preserves test artifacts. Native mobile installation/launcher behavior must still be verified on each target device.
 

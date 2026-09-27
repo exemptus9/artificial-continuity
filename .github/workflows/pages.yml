@@ -1,7 +1,7 @@
 name: Test and deploy Continuity
 on:
   push:
-    branches: [main, work/app-platform-v015]
+    branches: [main, work/project-exchange-v016]
     paths: ['site/**', 'tests/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
@@ -21,12 +21,13 @@ jobs:
       - name: Syntax and data tests
         run: |
           for f in site/*.js; do node --check "$f"; done
-          node --test tests/*.test.cjs | tee data-tests.log
+          node --test tests/*.test.cjs > data-tests.log 2>&1 || { tail -n 120 data-tests.log; exit 1; }
+          tail -n 12 data-tests.log
         shell: bash
       - name: Install pinned browser test tooling
         run: |
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium > browser-install.log 2>&1 || { tail -n 100 browser-install.log; exit 1; }
       - name: Real browser and native IndexedDB tests
         run: |
           node tests/browser.cjs
@@ -34,15 +35,18 @@ jobs:
           node tests/portability-browser.cjs
           node tests/handoff-browser.cjs
           node tests/platform-browser.cjs
+          node tests/exchange-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: continuity-browser-evidence
           path: |
-            test-artifacts/
+            test-artifacts
             data-tests.log
+            browser-install.log
           retention-days: 7
+          if-no-files-found: ignore
   deploy:
     if: github.ref == 'refs/heads/main'
     needs: test
@@ -56,8 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload tested workspace
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - name: Deploy
