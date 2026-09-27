@@ -1,3 +1,6 @@
 .exchange-text{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:19rem;overflow:auto;border:1px solid var(--line,#334047);border-radius:8px;padding:12px;font:13px/1.6 ui-monospace,monospace}.exchange-row h4{margin-top:0}.exchange-row .two>div{min-width:0}#exchangeOutgoing input[type=password],#exchangeDecrypt input[type=password]{font-size:16px}#exchangeReview .check{align-items:flex-start;margin:14px 0}#exchangeReview .check input{flex:none}#exchangeReview{overflow-wrap:anywhere}#exchangeReview .two{gap:12px}#exchangeImportStatus,#exchangeApplyStatus,#exchangeExportStatus{min-height:1.5em}#main ol{padding-left:24px}@media(max-width:700px){.exchange-row .two{grid-template-columns:minmax(0,1fr)}#exchangeReview .toolbar{display:grid;grid-template-columns:1fr}#exchangeOutgoing .toolbar button{width:100%}}
 
 .exchange-inventory{display:grid;gap:8px;max-height:18rem;overflow:auto}.exchange-inventory button{text-align:left;overflow-wrap:anywhere}
+
+/* Give real conflict review the full reading width instead of a narrow side column. */
+.grid:has(#exchangeReview h3){grid-template-columns:minmax(0,1fr)}

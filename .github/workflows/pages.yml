@@ -21,12 +21,13 @@ jobs:
       - name: Syntax and data tests
         run: |
           for f in site/*.js; do node --check "$f"; done
-          node --test tests/*.test.cjs | tee data-tests.log
+          node --test tests/*.test.cjs > data-tests.log 2>&1 || { tail -n 120 data-tests.log; exit 1; }
+          tail -n 12 data-tests.log
         shell: bash
       - name: Install pinned browser test tooling
         run: |
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
-          npx playwright install --with-deps chromium
+          npx playwright install --with-deps chromium > browser-install.log 2>&1 || { tail -n 100 browser-install.log; exit 1; }
       - name: Real browser and native IndexedDB tests
         run: |
           node tests/browser.cjs
@@ -43,6 +44,7 @@ jobs:
           path: |
             test-artifacts
             data-tests.log
+            browser-install.log
           retention-days: 7
           if-no-files-found: ignore
   deploy:
