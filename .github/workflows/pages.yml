@@ -1,22 +1,17 @@
 name: Test and deploy Continuity
 on:
   push:
-    branches: [main]
+    branches: [main, work/app-platform-v015]
     paths: ['site/**', 'tests/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read
-  pages: write
-  id-token: write
 concurrency:
-  group: pages
+  group: continuity-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  deploy:
+  test:
     timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +21,8 @@ jobs:
       - name: Syntax and data tests
         run: |
           for f in site/*.js; do node --check "$f"; done
-          node --test tests/*.test.cjs
+          node --test tests/*.test.cjs | tee data-tests.log
+        shell: bash
       - name: Install pinned browser test tooling
         run: |
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
@@ -37,18 +33,31 @@ jobs:
           node tests/operations-browser.cjs
           node tests/portability-browser.cjs
           node tests/handoff-browser.cjs
+          node tests/platform-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: continuity-browser-evidence
-          path: test-artifacts
+          path: |
+            test-artifacts/
+            data-tests.log
           retention-days: 7
-          if-no-files-found: ignore
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-      - name: Upload tested workspace
-        uses: actions/upload-pages-artifact@v3
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: test
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - name: Deploy

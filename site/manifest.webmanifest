@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Artificial Continuity",
   "short_name": "Continuity",
-  "description": "Capture, review and resume your work. Local-first.",
+  "description": "Capture on your phone, review on your desktop, resume in your own app. Local-first; explicit transfers, no automatic sync.",
   "start_url": "./#now",
   "scope": "./",
   "display": "standalone",
@@ -28,8 +28,42 @@
       "url": "./#capture"
     },
     {
+      "name": "One-box intake",
+      "url": "./#fast-intake"
+    },
+    {
       "name": "Resume work",
       "url": "./#now"
+    },
+    {
+      "name": "Incoming shares",
+      "url": "./#incoming"
     }
-  ]
+  ],
+  "orientation": "any",
+  "categories": [
+    "productivity",
+    "utilities"
+  ],
+  "share_target": {
+    "action": "./share-in",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "text/plain",
+            "text/markdown",
+            ".txt",
+            ".md"
+          ]
+        }
+      ]
+    }
+  }
 }

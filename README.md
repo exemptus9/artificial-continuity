@@ -2,7 +2,7 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current workspace: v0.14.0
+## Current workspace: v0.15.0
 
 Live: https://exemptus9.github.io/artificial-continuity/
 
@@ -10,7 +10,15 @@ Live: https://exemptus9.github.io/artificial-continuity/
 
 This is a usable browser-local workspace, not a general autonomous AI or a simulation-only dashboard. No account, model subscription or production npm dependency is needed.
 
-### New in v0.14
+### New in v0.15
+
+**Install once, use as an app.** A dedicated phone/desktop setup screen, offline diagnostics, command navigation, focus layout and last-intention resumption. The installed web app uses the same browser profile's data; a different browser/device requires explicit transfer.
+
+**Share → local review inbox → save.** Supported Android installations register as a POST share target. Text, links and selected UTF-8 .txt/.md files are intercepted by the active service worker and staged locally, not sent to a model or automatically made into decisions. Desktop file drops use the same inbox. Source search/filtering and pagination keep larger collections usable.
+
+See [v0.15 release notes](docs/V0_15_RELEASE.md). This is a PWA, not a separately signed APK or desktop executable. Native install/share-sheet behavior still needs checking on the target device. Incoming shares are unencrypted and separate from workspace backups until saved.
+
+### Preserved from v0.14
 
 **One-box intake → review → save.** Paste rough text or labelled fields once. Preview and edit the name, goal, next action and optional details. Save the intention and exact original input together. Existing intention editors also support a selected-field fill preview from one text block.
 
@@ -28,7 +36,7 @@ Add follow-ups for a date or the resolution of another intention. Ready items su
 
 Install/add to Home screen where supported. After the first successful online cache, the workspace can reload and capture offline. Updates wait for review instead of interrupting typing. Device & drafts rescues unsaved forms from other tabs. Unsaved drafts must be saved as records to enter a full backup.
 
-See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.14.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
+See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.15.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
 
 ### Test locally
 
@@ -38,7 +46,7 @@ Data: `node --test tests/*.test.cjs`.
 
 Browser tooling: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1` then `npx playwright install chromium`.
 
-Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`, plus `node tests/portability-browser.cjs` and `node tests/handoff-browser.cjs`.
+Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`, plus `node tests/portability-browser.cjs` and `node tests/handoff-browser.cjs` and `node tests/platform-browser.cjs`.
 
 GitHub Actions tests the release before deployment and preserves test artifacts. Native mobile installation/launcher behavior must still be verified on each target device.
 
