@@ -2,74 +2,61 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current workspace: v0.16.0
+## Current workspace: v0.17.0
 
 Live: https://exemptus9.github.io/artificial-continuity/
 
-**Capture → preserve evidence → review decisions → resume → follow through.**
+**Capture → preserve evidence → review → act → record progress → resume.**
 
-This is a usable browser-local workspace, not a general autonomous AI or a simulation-only dashboard. No account, model subscription or production npm dependency is needed.
+A browser-local workspace with no account, model subscription or production npm dependency. Phone and desktop use the same installable web application, but do not automatically synchronize data.
 
-### New in v0.16
+### New: Review desk and Log progress
 
-**Phone ↔ desktop: reviewed project round trips.** Export one project, work on it in another browser, then review and apply a return file to the same project. Local changes and incoming changes are compared against a remembered baseline when available. Conflicts require choices; sources and locally confirmed checkpoints are preserved. Newly received checkpoints need review. Encryption is optional for the exported file, not enabled for local storage. No account, relay, model or automatic sync.
+**Review desk:** a searchable queue of pending imported checkpoints with exact quotations and source line references. Edit the interpretation, select each item deliberately, then confirm the selected batch. Original sources and prior imported wording remain preserved. Unselected items stay pending. Text drafts are recoverable; acceptance is never restored automatically. Changed previews and stale-tab writes are rejected.
 
-See [v0.16 release notes](docs/V0_16_RELEASE.md) for exact transfer semantics and limits. Incoming follow-ups are added only by choice as separate versions; reminder status and deletions are not synchronized.
+**Log progress:** open an intention and write where you stopped. Preview an optional next action, progress state and waiting reason. Save the exact input as a linked source and explicitly choose which intention fields, if any, to update. Work notes travel in backups and project files. No AI-generated decisions are manufactured.
 
-### Preserved from v0.15
+See [v0.17 release notes](docs/V0_17_RELEASE.md) for scope, safety boundaries and tests.
 
-**Install once, use as an app.** A dedicated phone/desktop setup screen, offline diagnostics, command navigation, focus layout and last-intention resumption. The installed web app uses the same browser profile's data; a different browser/device requires explicit transfer.
+### Existing operational workflows
 
-**Share → local review inbox → save.** Supported Android installations register as a POST share target. Text, links and selected UTF-8 .txt/.md files are intercepted by the active service worker and staged locally, not sent to a model or automatically made into decisions. Desktop file drops use the same inbox. Source search/filtering and pagination keep larger collections usable.
+- Reviewed phone ↔ desktop project round trips, optional encrypted files, explicit conflicts and recovery copies: [v0.16](docs/V0_16_RELEASE.md).
+- PWA installation, offline capture, local incoming-share inbox, command navigation, focus layout and source pagination: [v0.15](docs/V0_15_RELEASE.md).
+- One-box intake and a scoped ChatGPT handoff/selected-field reply bridge: [v0.14](docs/V0_14_RELEASE.md).
+- Selected conversation-export imports, project dossiers and password-protected backup files: [v0.13](docs/V0_13_RELEASE.md).
+- Follow-ups, file-batch import, transfer, draft rescue and selective Resume Packs: [v0.12](docs/V0_12_RELEASE.md).
+- Transactional storage, exact original sources and source-linked reviewed checkpoints: [v0.11](docs/V0_11_RELEASE.md).
 
-See [v0.15 release notes](docs/V0_15_RELEASE.md). This is a PWA, not a separately signed APK or desktop executable. Native install/share-sheet behavior still needs checking on the target device. Incoming shares are unencrypted and separate from workspace backups until saved.
+## Use it
 
-### Preserved from v0.14
+Create an intention or use One-box intake. Save a conversation or import selected text. Confirm only the evidence you accept. Record progress before leaving. Copy a selective Resume Pack to another conversation or exchange a project file with another browser.
 
-**One-box intake → review → save.** Paste rough text or labelled fields once. Preview and edit the name, goal, next action and optional details. Save the intention and exact original input together. Existing intention editors also support a selected-field fill preview from one text block.
+To update a cached installation: Device & drafts → Check for app update → Apply update after saving. **Do not clear browser data to update.** The application version is 0.17.0; the additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
 
-**ChatGPT bridge → reviewed field updates.** Select one intention, prepare a scoped analysis request, inspect/edit its text, then copy, share where supported, or download it. It includes a reply contract that lets an AI propose fields. Pasted replies must match a locally saved request and its unchanged baseline. No fields are selected automatically. Only the fields you accept can change; sources, reviewed checkpoints, external actions and unrelated projects are outside the contract. Pasted replies are not cryptographically authenticated as coming from a provider.
+## Test and release
 
-**Open separately.** A clean-address copy control and best-effort Android Chrome intent help move Continuity out of an embedded browser. Existing work may be in a different browser profile: export or transfer it before switching. This site cannot control ChatGPT's link handling or discover the currently open private conversation.
-
-See [v0.14 release notes](docs/V0_14_RELEASE.md). Existing chat import, source-linked Resume Packs, project dossiers, follow-ups, manual project transfer and encrypted export backups remain available.
-
-### Use it
-
-Create an intention. Save a conversation, or batch-import selected `.txt`/`.md` files after preview. Accept source-backed checkpoints yourself. Choose which checkpoints belong in a Resume Pack and copy or download the exact preview for another conversation.
-
-Add follow-ups for a date or the resolution of another intention. Ready items surface on Now when you use the app. Transfer a whole project to another browser through a previewed JSON packet; imports append copies rather than overwriting existing work. Incoming checkpoints require fresh review.
-
-Install/add to Home screen where supported. After the first successful online cache, the workspace can reload and capture offline. Updates wait for review instead of interrupting typing. Device & drafts rescues unsaved forms from other tabs. Unsaved drafts must be saved as records to enter a full backup.
-
-See [v0.12 release notes](docs/V0_12_RELEASE.md) for capabilities, exact limits, migration and the test gate. The application is version 0.16.0; its additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
-
-### Test locally
-
-Serve `site/` with a static server on localhost, for example `python3 -m http.server 8080 --directory site`. Remote hosting needs HTTPS for storage/clipboard/offline features. Do not rely on file-URL storage behavior.
+Serve `site/` using a static server on localhost. Remote hosts need HTTPS. Do not rely on file-URL storage behavior.
 
 Data: `node --test tests/*.test.cjs`.
 
-Browser tooling: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1` then `npx playwright install chromium`.
+Browser tooling: `npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1`, then `npx playwright install chromium`.
 
-Browser suites: `node tests/browser.cjs` and `node tests/operations-browser.cjs`, plus `node tests/portability-browser.cjs` and `node tests/handoff-browser.cjs` and `node tests/platform-browser.cjs` and `node tests/exchange-browser.cjs`.
+Run `node tests/browser.cjs` plus `operations-browser.cjs`, `portability-browser.cjs`, `handoff-browser.cjs`, `platform-browser.cjs`, `exchange-browser.cjs` and `workflow-browser.cjs` in `tests/`.
 
-GitHub Actions tests the release before deployment and preserves test artifacts. Native mobile installation/launcher behavior must still be verified on each target device.
+GitHub Actions tests work branches and main. Only a successful main build deploys. Test artifacts preserve logs and screenshots. Native Android launcher/share-picker behavior still requires physical-device checking.
 
 ## Privacy and limitations
 
-Workspace data stays in the browser's IndexedDB and is NOT encrypted. The app-shell cache contains code/assets only. No model, analytics or upload endpoint receives your conversations. Text copied out, exported files and selected source links are deliberate user actions. Links are references, not automatically fetched.
+The working database, drafts and incoming-share inbox remain unencrypted. Encryption protects exported files only. No remote model, analytics or upload endpoint receives your conversation text. Follow-ups surface while using the application, not via background push. Installed-app status does not imply automatic sync.
 
-Export complete backups before clearing browser data or moving devices. Project packets include FULL source text and are private data. They provide manual transfer, not automatic synchronization or cryptographic authenticity. A sensitive-pattern warning is not proof of privacy. Follow-ups are checked while using the app, not sent as background push notifications. Source intake supports selected text/Markdown files and supported extracted conversation JSON. No PDF, media, whole ZIP, or direct account access is enabled.
+Keep full backups before switching browser profiles, clearing data or moving devices. Project files include FULL original source text. Pending drafts and unsaved incoming shares must become records before they are included in workspace backups. Review Resume Packs before copying them elsewhere.
 
-## Development lineage
+This is not an autonomous agent, an independently audited vault or a controller for ChatGPT's sidebar. Original source attribution and user confirmation are not cryptographic proofs of authorship.
 
-Continuity existed before this repository. Preserved local history covers v0.1.0 through v0.8.1. See [Development History](docs/DEVELOPMENT_HISTORY.md). Earlier HIGP, encryption, policy, sync and provider experiments describe a broader research direction; they are not silently enabled in this hosted workspace. Original architecture documents and commits remain intact.
+## Development lineage and doctrine
 
-## Core doctrine
+Earlier experiments are preserved in [Development History](docs/DEVELOPMENT_HISTORY.md). HIGP, provider, cryptographic-kernel and synchronization documents describe the broader research direction; they are not silently enabled in the hosted client.
 
-Intent over interface state. Provenance over overwrite. Uncertainty over false certainty. Explicit authority over silent agency. Divergence over data loss. Portability over vendor custody. Relevance over arbitrary notification timing.
+Intent over interface state. Provenance over overwrite. Uncertainty over false certainty. Explicit authority over silent agency. Divergence over data loss. Portability over vendor custody.
 
 **Continuity is the product. The model is a replaceable reasoning engine.**
-
-Experimental software, advancing through runnable workflows and test-gated releases rather than feature claims alone.

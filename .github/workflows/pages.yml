@@ -1,7 +1,7 @@
 name: Test and deploy Continuity
 on:
   push:
-    branches: [main, work/project-exchange-v016]
+    branches: [main, 'work/**']
     paths: ['site/**', 'tests/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
@@ -36,6 +36,7 @@ jobs:
           node tests/handoff-browser.cjs
           node tests/platform-browser.cjs
           node tests/exchange-browser.cjs
+          node tests/workflow-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4

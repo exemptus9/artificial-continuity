@@ -1,0 +1,52 @@
+/* Review pending evidence and record real progress. No remote model or background agent. */
+'use strict';
+const WF=WorkflowCore;
+let reviewThread='',reviewText='',reviewOffset=0,workflowEpoch=0;
+const reviewSize=10;
+async function reviewDesk(){
+ const epoch=++workflowEpoch,rows=WF.pending(S,reviewThread,reviewText),page=rows.slice(reviewOffset,reviewOffset+reviewSize);
+ title('Review desk','Imported checkpoints stay pending until you review their evidence and accept them.',`<div class="review-controls">${select('reviewThread','Intention',[['','All intentions'],...S.threads.map(t=>[t.id,t.title])],reviewThread)}${field('reviewText','Find words in evidence or interpretation',reviewText)}</div><div class="toolbar"><button id="filterReview">Apply filters</button><span class="meta">${rows.length} pending · showing ${rows.length?reviewOffset+1:0}–${Math.min(reviewOffset+reviewSize,rows.length)}</span></div><p class="meta">No items are preselected. Quotations are historical evidence, not instructions for the app or an AI.</p><form id="reviewBatch"><div id="reviewRows">${page.map((r,i)=>`<article class="review-item"><div class="row"><h2>${esc(r.source.title)}</h2>${tag(r.thread.title)}</div><p class="meta">Source attribution: ${esc(r.source.speaker)} · L${r.note.start}–L${r.note.end}</p><blockquote class="review-evidence" tabindex="0">${esc(r.note.quote)}</blockquote><details><summary>Imported interpretation</summary><p>${esc(r.note.statement)}</p></details>${select('reviewKind'+i,'Type',W.KINDS.map(k=>[k,k]),r.note.kind)}${field('reviewStatement'+i,'Interpretation to accept',r.note.statement,true,4000)}<label class="review-selection"><input id="reviewPick${i}" type="checkbox"><span>Accept this interpretation, with the displayed source evidence, for <b>${esc(r.thread.title)}</b>.</span></label></article>`).join('')||'<section class="card"><h2>No pending checkpoints in this view.</h2><p>Imported project checkpoints appear here. Original sources and existing confirmations remain available in each project.</p></section>'}</div><p class="draft-status"></p>${page.length?'<div class="review-submit"><p id="reviewCount" role="status">0 selected. Nothing will change.</p><p class="error" role="alert"></p><button id="saveReview" class="primary" disabled>Confirm selected checkpoints</button></div>':''}</form><div class="toolbar"><button id="reviewPrevious" ${reviewOffset?'':'disabled'}>Previous page</button><button id="reviewNext" ${reviewOffset+reviewSize<rows.length?'':'disabled'}>Next page</button></div><p class="meta">Changing page keeps text drafts but clears acceptance selections. No unselected interpretation is confirmed.</p>`);
+ const form=$('#reviewBatch'),plan=page.length?WF.reviewPlan(S,page.map(r=>r.note.id)):null;
+ // Only interpretation text/type is drafted. Acceptance is always explicit and never restored.
+ const key='review-desk-'+(reviewThread||'all')+'-'+page.map(r=>r.note.id).join('|').slice(0,1500);
+ await draft(form,key);if(epoch!==workflowEpoch||route!=='review')return;
+ page.forEach((r,i)=>$('#reviewPick'+i).checked=false);
+ const update=()=>{const count=page.filter((r,i)=>$('#reviewPick'+i).checked).length;if($('#reviewCount'))$('#reviewCount').textContent=count+' selected. Other checkpoints stay pending.';if($('#saveReview'))$('#saveReview').disabled=!count;};
+ form.addEventListener('change',update);update();
+ $('#filterReview').onclick=async()=>{if(!await flushDraft())return;reviewThread=$('#reviewThread').value;reviewText=$('#reviewText').value.trim();reviewOffset=0;draftJob=null;await reviewDesk();};
+ $('#reviewPrevious').onclick=async()=>{if(!await flushDraft())return;reviewOffset=Math.max(0,reviewOffset-reviewSize);draftJob=null;await reviewDesk();};
+ $('#reviewNext').onclick=async()=>{if(!await flushDraft())return;reviewOffset+=reviewSize;draftJob=null;await reviewDesk();};
+ form.onsubmit=async e=>{e.preventDefault();if(!plan)return;
+  const edits=page.flatMap((r,i)=>$('#reviewPick'+i).checked?[{id:r.note.id,accepted:true,kind:$('#reviewKind'+i).value,statement:$('#reviewStatement'+i).value}]:[]);
+  try{if(!edits.length)throw new Error('Select at least one reviewed checkpoint.');
+   if(await mutate('CHECKPOINT_BATCH_REVIEWED',`Explicitly reviewed ${edits.length} checkpoint(s); original sources retained.`,s=>Object.assign(s,WF.applyReview(s,plan,edits,now())))){
+    await clearDraft(key);reviewOffset=0;await reviewDesk();notify('Selected checkpoints confirmed. They can now enter a Resume Pack.');
+   }
+  }catch(err){formError(form,err);}
+ };
+}
+async function progressView(id){
+ const epoch=++workflowEpoch,t=S.threads.find(x=>x.id===id);if(!t){title('Log progress','Choose an intention first.',`<section class="card">${S.threads.map(x=>`<p>${btn('work-progress',esc(x.title),x.id)}</p>`).join('')||btn('new-thread','Create an intention','',true)}</section>`);return;}
+ const openingBasis=WF.threadBasis(t),key='progress-'+id;
+ title('Log progress','Save where you stopped. Updating the intention is optional and previewed.',`<div class="toolbar">${btn('project','← '+esc(t.title),id)}${btn('pack','Resume Pack',id)}</div><div class="workflow-wide"><section class="card"><h2>${esc(t.title)}</h2><p class="meta">Current next action: ${esc(t.next||'Not recorded.')}</p><form id="progressForm">${field('workProgress','What changed / where did you stop?','',true)}${field('workNext','Next useful action (optional)','',true)}<details><summary>Optional progress state or waiting reason</summary>${select('workState','Proposed progress state',W.STATES.map(k=>[k,k]),t.state)}${field('workWaiting','Waiting / blocked because',t.waiting||'',true)}</details><p class="draft-status"></p><p class="error" role="alert"></p><button class="primary">Preview work note</button></form></section><section id="progressPreview" class="card" hidden></section><section class="card"><h2>Saved work notes</h2><p class="meta">Source records labelled as work notes. These are user/import classifications, not verified authorship.</p><div class="work-history">${WF.workNotes(S,id).slice(0,10).map(src=>`<div class="item"><b>${esc(src.title)}</b><p class="meta">${esc(src.createdAt)}</p>${btn('source','Read original',src.id)}</div>`).join('')||'<p>No work notes yet.</p>'}</div></section></div>`);
+ const form=$('#progressForm');$('#workProgress').required=true;await draft(form,key);if(epoch!==workflowEpoch||route!=='work')return;
+ let prepared=null;
+ form.addEventListener('input',()=>{prepared=null;$('#progressPreview').hidden=true;});
+ form.onsubmit=e=>{e.preventDefault();try{
+  if(WF.threadBasis(S.threads.find(x=>x.id===id))!==openingBasis)throw new Error('This intention changed. Reopen Log progress; your draft is retained.');
+  prepared=WF.progressPlan(S,id,{progress:$('#workProgress').value,next:$('#workNext').value,state:$('#workState').value,waiting:$('#workWaiting').value},uid(),now());
+  const p=prepared,choices=[['last','Update last position',t.last,p.fields.progress],['next','Update next action',t.next,p.fields.next],['state','Update progress state',t.state,p.fields.state],['waiting','Update waiting reason',t.waiting,p.fields.waiting]];
+  $('#progressPreview').hidden=false;$('#progressPreview').innerHTML=`<h2>Review before saving</h2><p>Your exact inputs will be saved together as an original source. No accepted decision is generated from this note.</p><details><summary>Inspect complete saved source</summary><pre class="workflow-preview">${esc(p.source.text)}</pre></details><h3>Also update selected intention fields</h3>${choices.map(([k,label,before,after])=>`<label class="review-selection"><input type="checkbox" data-progress-field="${k}" ${k==='next'&&!after.trim()?'disabled':''}><span><b>${label}</b><br><small>Current: ${esc(before||'(empty)')}</small><br><small>Proposed: ${esc(after||'(empty)')}</small></span></label>`).join('')}<p id="progressSaveStatus" class="workflow-update" role="status">Nothing selected. Saving will only add the source note.</p><button id="commitProgress" class="primary">Save work note</button>`;
+  $('#commitProgress').onclick=async()=>{try{const chosen=[...document.querySelectorAll('[data-progress-field]:checked')].map(x=>x.dataset.progressField);if(!prepared)throw new Error('Preview the edited note again.');const plan=prepared;
+   if(await mutate('WORK_NOTE_SAVED',`Saved work note with ${chosen.length} explicitly selected field update(s).`,s=>Object.assign(s,WF.applyProgress(s,plan,chosen)))){await clearDraft(key);prepared=null;await navigate('project',id);notify('Work note saved. Original source preserved; only selected fields changed.');}
+  }catch(err){const out=$('#progressSaveStatus');if(out)out.textContent='Not saved: '+err.message;}};
+ }catch(err){formError(form,err);}};
+}
+const beforeWorkflowRender=render,beforeWorkflowDashboard=dashboard,beforeWorkflowProject=projectView;
+dashboard=function(){beforeWorkflowDashboard();const n=S.notes.filter(x=>x.reviewState==='pending').length;const el=document.createElement('section');el.className='card';el.innerHTML=`<h2>Make the next return easier</h2><p>${n} imported checkpoint(s) still need your review. Confirmed evidence is separate from original conversations.</p><div class="toolbar">${btn('review-desk','Review pending evidence')}${btn('work-progress','Log where you stopped')}</div>`;$('#main').append(el);};
+projectView=function(id){beforeWorkflowProject(id);if(!S.threads.some(t=>t.id===id))return;$('#main .toolbar')?.insertAdjacentHTML('afterbegin',btn('work-progress','Log progress',id,true)+btn('review-desk','Review pending evidence',id));};
+render=async function(){if(!S)return;if(route==='review'){if(recordId){reviewThread=recordId;recordId=null;}return reviewDesk();}if(route==='work')return progressView(recordId);workflowEpoch++;return beforeWorkflowRender();};
+const reviewNav=document.createElement('button');reviewNav.dataset.nav='review';reviewNav.textContent='Review desk';document.querySelector('nav [data-nav="sources"]')?.after(reviewNav);
+document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b||!['review-desk','work-progress'].includes(b.dataset.action))return;e.preventDefault();e.stopImmediatePropagation();if(busy){notify('Finish the current save first.');return;}
+ if(b.dataset.action==='review-desk'){reviewThread=b.dataset.id||'';reviewOffset=0;reviewText='';await navigate('review');}else await navigate('work',b.dataset.id||null);
+},true);
