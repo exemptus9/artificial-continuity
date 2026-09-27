@@ -1,6 +1,6 @@
 /* Version-pinned app shell. Incoming shares are local POST intake, never cached or forwarded. */
 'use strict';
-const RELEASE='0.15.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE;
+const RELEASE='0.15.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE+'-2';
 importScripts('./platform-core.js?v='+RELEASE,'./share-inbox.js?v='+RELEASE);
 const ASSETS=['index.html','workspace.css?v=0.11.0','workspace-core.js?v=0.11.0','workspace-store.js?v=0.11.0','workspace.js?v=0.11.0','operations-core.js?v='+RELEASE,'operations.js?v='+RELEASE,'offline.js?v='+RELEASE,'operations.css?v='+RELEASE,'portability-core.js?v='+RELEASE,'sealed-backup.js?v='+RELEASE,'portability.js?v='+RELEASE,'portability.css?v='+RELEASE,'bootstrap-ready.js?v='+RELEASE,'handoff-core.js?v='+RELEASE,'handoff.js?v='+RELEASE,'handoff.css?v='+RELEASE,'platform-core.js?v='+RELEASE,'share-inbox.js?v='+RELEASE,'platform.js?v='+RELEASE,'platform.css?v='+RELEASE,'manifest.webmanifest','icon-192.png','icon-512.png'];
 const KEYS=new Set(ASSETS.map(x=>new URL(x,BASE).href));
