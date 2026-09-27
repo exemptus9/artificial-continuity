@@ -12,7 +12,11 @@ function noteBasis(s,n){const src=s.sources.find(x=>x.id===n.sourceId);return js
 function pending(s,threadId='',query=''){
  const words=query.trim().toLowerCase().split(/\s+/).filter(Boolean);
  const srcs=new Map(s.sources.map(x=>[x.id,x])),threads=new Map(s.threads.map(x=>[x.id,x]));
- return s.notes.filter(n=>n.reviewState==='pending'&&(!threadId||n.threadId===threadId)).map(n=>({note:copy(n),source:copy(srcs.get(n.sourceId)),thread:copy(threads.get(n.threadId))})).filter(r=>words.every(w=>[r.note.statement,r.note.quote,r.source.title,r.thread.title].join(' ').toLowerCase().includes(w)));
+ return s.notes.filter(n=>n.reviewState==='pending'&&(!threadId||n.threadId===threadId)).filter(n=>words.every(w=>[n.statement,n.quote,srcs.get(n.sourceId).title,threads.get(n.threadId).title].join(' ').toLowerCase().includes(w))).map(n=>{
+  const src=srcs.get(n.sourceId),t=threads.get(n.threadId);
+  // The queue needs the selected quotation, not a full transcript copy per row.
+  return {note:copy(n),source:{id:src.id,title:src.title,speaker:src.speaker},thread:{id:t.id,title:t.title}};
+ });
 }
 function reviewPlan(s,ids){
  s=W.validate(s);if(!Array.isArray(ids)||!ids.length||ids.length>20||new Set(ids).size!==ids.length)fail('Choose 1–20 distinct pending checkpoints.');
