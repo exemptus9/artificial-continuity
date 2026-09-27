@@ -37,6 +37,7 @@ jobs:
           node tests/platform-browser.cjs
           node tests/exchange-browser.cjs
           node tests/workflow-browser.cjs
+          node tests/review-layout-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
