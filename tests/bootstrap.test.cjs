@@ -1,0 +1,4 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
+const code=fs.readFileSync(__dirname+'/../site/bootstrap-ready.js','utf8');
+test('storage cannot open before all feature scripts finish registering',async()=>{let ready,calls=0;const ctx={document:{readyState:'loading',addEventListener:(event,fn)=>{assert.equal(event,'DOMContentLoaded');ready=fn;}},WorkspaceStorage:{openDB:async()=>{calls++;return 'db';}}};vm.runInNewContext(code,ctx);const pending=ctx.WorkspaceStorage.openDB();await Promise.resolve();assert.equal(calls,0);ready();assert.equal(await pending,'db');assert.equal(calls,1);});
+test('already-ready documents still open normally and preserve errors',async()=>{const ctx={document:{readyState:'complete'},WorkspaceStorage:{openDB:async()=>{throw new Error('Storage failed');}}};vm.runInNewContext(code,ctx);await assert.rejects(()=>ctx.WorkspaceStorage.openDB(),/Storage failed/);});
