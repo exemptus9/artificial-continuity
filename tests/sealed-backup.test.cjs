@@ -1,0 +1,15 @@
+'use strict';
+const {test}=require('node:test'),a=require('node:assert/strict'),{webcrypto}=require('node:crypto');
+if(!globalThis.crypto)globalThis.crypto=webcrypto;
+const V=require('../site/sealed-backup.js');
+const pass='a unique test passphrase ☀',raw=JSON.stringify({format:'ContinuityBackup/2',state:{secret:'A private poem — not plain text in a sealed file.'}});
+test('encrypted backup round trip including Unicode',async()=>{const blob=await V.seal(raw,pass);a.equal(await V.open(blob,pass),raw);a.doesNotMatch(blob,/private poem|test passphrase/);});
+test('fresh random salt and IV on repeated encryption',async()=>{const x=JSON.parse(await V.seal(raw,pass)),y=JSON.parse(await V.seal(raw,pass));a.notEqual(x.salt,y.salt);a.notEqual(x.iv,y.iv);a.notEqual(x.ciphertext,y.ciphertext);});
+test('wrong password does not reveal or return plaintext',async()=>{await a.rejects(V.open(await V.seal(raw,pass),'not the same passphrase'),/Could not decrypt/);});
+test('modified ciphertext fails authenticated decryption',async()=>{const x=JSON.parse(await V.seal(raw,pass));const b=Buffer.from(x.ciphertext,'base64');b[0]^=1;x.ciphertext=b.toString('base64');await a.rejects(V.open(JSON.stringify(x),pass),/Could not decrypt/);});
+test('modified IV fails rather than returning altered plaintext',async()=>{const x=JSON.parse(await V.seal(raw,pass));const b=Buffer.from(x.iv,'base64');b[0]^=1;x.iv=b.toString('base64');await a.rejects(V.open(JSON.stringify(x),pass),/Could not decrypt/);});
+test('unexpected KDF work factors fail before deriving any key',async()=>{const x=JSON.parse(await V.seal(raw,pass));x.iterations=999999999;a.throws(()=>V.inspect(JSON.stringify(x)),/parameters/);});
+test('unrecognized headers and fields are rejected',async()=>{const x=JSON.parse(await V.seal(raw,pass));x.extra='untrusted';a.throws(()=>V.inspect(JSON.stringify(x)),/format/);});
+test('bad base64 and wrong salt length rejected',async()=>{const x=JSON.parse(await V.seal(raw,pass));x.ciphertext='!!!!';a.throws(()=>V.inspect(JSON.stringify(x)),/encoding/);x.ciphertext='AAAA';x.salt='AAAA';a.throws(()=>V.inspect(JSON.stringify(x)),/length/);});
+test('short blank and oversized passphrases rejected',async()=>{for(const p of ['short',' '.repeat(12),'x'.repeat(1025)])await a.rejects(V.seal(raw,p),/passphrase/);});
+test('plaintext and encrypted-file limits checked',async()=>{await a.rejects(V.seal('x'.repeat(16000001),pass),/16 MB/);a.throws(()=>V.inspect(' '.repeat(24000001)),/24 MB/);});

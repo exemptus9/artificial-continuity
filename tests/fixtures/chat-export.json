@@ -1,0 +1,23 @@
+[
+  {
+    "id": "fictional-conversation-one",
+    "title": "Sample conversation: preserving the draft",
+    "create_time": 1700000000,
+    "current_node": "answer-current",
+    "mapping": {
+      "root": {"parent": null, "message": null},
+      "question": {"parent": "root", "message": {"author": {"role": "user"}, "content": {"parts": ["Please preserve my original opening.\nWhat should I review next?"]}}},
+      "answer-old": {"parent": "question", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Superseded suggestion: replace the opening."]}}},
+      "answer-current": {"parent": "question", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Keep the original opening and review the second paragraph."]}}}
+    }
+  },
+  {
+    "id": "fictional-conversation-two",
+    "title": "Sample conversation: research question",
+    "current_node": "research-answer",
+    "mapping": {
+      "research-user": {"parent": null, "message": {"author": {"role": "user"}, "content": {"parts": ["Which assumptions still need evidence?"]}}},
+      "research-answer": {"parent": "research-user", "message": {"author": {"role": "assistant"}, "content": {"parts": ["Treat the proposed interface benefit as a hypothesis until it is tested."]}}}
+    }
+  }
+]

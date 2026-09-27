@@ -1,7 +1,7 @@
 /* Cache only app-shell files. No workspace text is placed in the cache. */
 'use strict';
-const RELEASE='0.12.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE;
-const ASSETS=['index.html','workspace.css?v=0.11.0','workspace-core.js?v=0.11.0','workspace-store.js?v=0.11.0','workspace.js?v=0.11.0','operations-core.js?v='+RELEASE,'operations.js?v='+RELEASE,'offline.js?v='+RELEASE,'operations.css?v='+RELEASE,'manifest.webmanifest','icon-192.png','icon-512.png'];
+const RELEASE='0.13.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE;
+const ASSETS=['index.html','workspace.css?v=0.11.0','workspace-core.js?v=0.11.0','workspace-store.js?v=0.11.0','workspace.js?v=0.11.0','operations-core.js?v='+RELEASE,'operations.js?v='+RELEASE,'offline.js?v='+RELEASE,'operations.css?v='+RELEASE,'portability-core.js?v='+RELEASE,'sealed-backup.js?v='+RELEASE,'portability.js?v='+RELEASE,'portability.css?v='+RELEASE,'manifest.webmanifest','icon-192.png','icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS.map(x=>new Request(new URL(x,BASE),{cache:'reload'})));})()));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
 // Do not automatically skip waiting or reload pages while someone is writing.
