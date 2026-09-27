@@ -32,6 +32,6 @@ self.addEventListener('fetch',e=>{
  const url=new URL(e.request.url);if(url.origin!==BASE.origin||!url.pathname.startsWith(BASE.pathname))return;
  if(url.pathname===new URL('share-in',BASE).pathname&&e.request.method==='POST'){e.respondWith(receiveShare(e.request));return;}
  if(e.request.method!=='GET')return;
- if(e.request.mode==='navigate'){e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(new URL('index.html',BASE).href)||fetch(e.request);})());return;}
+ if(e.request.mode==='navigate'||url.pathname===BASE.pathname||url.pathname===new URL('index.html',BASE).pathname){e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(new URL('index.html',BASE).href)||fetch(e.request);})());return;}
  if(KEYS.has(url.href))e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(e.request)||fetch(e.request);})());
 });
