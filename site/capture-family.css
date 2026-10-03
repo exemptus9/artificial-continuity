@@ -1,0 +1,4 @@
+.capture-original{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:1rem 0}
+.capture-family input[type=checkbox]{flex-shrink:0}
+.capture-provenance{max-width:80ch;overflow-wrap:anywhere}
+#captureTextStatus{min-height:2.5em}

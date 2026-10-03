@@ -1,5 +1,6 @@
 const {test}=require('node:test'),a=require('node:assert/strict');
 const W=require('../site/workspace-core.js'),O=require('../site/operations-core.js'),X=require('../site/exchange-core.js'),B=require('../site/sealed-backup.js');
+const C=require('../site/capture-family-core.js');
 const at='2026-09-26T20:00:00.000Z';let n=0;const id=()=>`generated-${++n}`;
 function fixture(){const s=W.empty();s.threads.push({id:'project-1',title:'Fictional test project',objective:'Build something useful',last:'Decisions recorded',next:'Test it',open:['Is it recoverable?'],state:'CONTINUE',waiting:'',attention:false});s.sources.push(W.makeSource(s,{title:'Original source',text:'User: preserve the original\nAssistant: a suggestion',threadId:'project-1',speaker:'mixed'},'source-1',at));s.notes.push(W.checkpoint(s,{sourceId:'source-1',threadId:'project-1',kind:'constraint',statement:'Preserve original material',start:1,end:1,reviewed:true},'note-1',at));return W.validate(s);}
 async function pair(){const a0=fixture(),p=await X.makePacket(a0,'project-1','initial',at),a1=await X.rememberExport(a0,'project-1',p),b1=await X.apply(W.validate(W.empty()),await X.plan(W.validate(W.empty()),p),{},{evidence:true},id,at);return {a1,b1:b1.state,bid:b1.threadId,p};}
@@ -33,3 +34,22 @@ test('invalid exchange metadata rejected on backup validation',async()=>{const s
 test('oversized input rejected before parsing',async()=>{await a.rejects(()=>X.parse('x'.repeat(16000001)),/16 MB/);});
 test('old project packets do not masquerade as an update packet',async()=>{await a.rejects(()=>X.parse(JSON.stringify(O.createProject(fixture(),'project-1','p',at))),/Unsupported/);});
 test('encrypted project file round trip has no plaintext source',async()=>{const p=await X.makePacket(fixture(),'project-1','p',at),raw=await B.seal(JSON.stringify(p),'a long fictional passphrase');a.ok(!raw.includes('preserve the original'));a.deepEqual(await X.parse(await B.open(raw,'a long fictional passphrase')),p);await a.rejects(()=>B.open(raw,'a different long passphrase'),/Could not decrypt/);});
+test('project exchange preserves exact capture provenance without importing consent or captures',async()=>{
+ const plan=C.prepare({text:'Synthetic capture\r\n  trailing ',type:'note',context:'Fictional trace',method:'text',speaker:'user',inputBasis:'clipboard-text/plain',observedAt:'2026-09-26T15:00:00-04:00'},'exchange-capture',at);
+ const state=C.apply(fixture(),plan,true).state,original=state.sources.find(src=>src.id===plan.source.id);original.threadId='project-1';
+ const packet=await X.makePacket(state,'project-1','capture-packet',at),exported=packet.state.sources.find(src=>src.captureOrigin);
+ a.equal(exported.text,plan.fields.text);a.deepEqual(exported.captureOrigin,original.captureOrigin);a.deepEqual(await X.parse(JSON.stringify(packet)),packet);
+ const target=W.validate(W.empty()),out=await X.apply(target,await X.plan(target,packet),{},{evidence:true},id,at),saved=out.state.sources.find(src=>src.captureOrigin);
+ a.deepEqual(saved.captureOrigin,original.captureOrigin);a.equal(saved.text,original.text);a.notEqual(saved.id,original.id);a.equal(saved.threadId,out.threadId);
+ a.equal(out.state.captures.length,0);a.ok(out.state.notes.every(note=>note.reviewState==='pending'));a.equal(out.state.sources.length,2);
+ const withoutEvidence=await X.apply(target,await X.plan(target,packet),{},{evidence:false},id,at);a.equal(withoutEvidence.state.sources.length,0);
+});
+test('capture provenance changes are preserved variants and extra metadata is not exported or trusted',async()=>{
+ const p=C.prepare({text:'Synthetic original',type:'note',context:'Fictional trace',speaker:'unknown'},'variant-capture',at),state=C.apply(fixture(),p,true).state,src=state.sources.find(x=>x.captureOrigin);src.threadId='project-1';
+ src.captureOrigin.unrelatedSecret='PRIVATE_METADATA_SENTINEL';
+ const first=await X.makePacket(state,'project-1','capture-1',at);a.ok(!JSON.stringify(first).includes('PRIVATE_METADATA_SENTINEL'));
+ const originalId=first.state.sources.find(x=>x.captureOrigin).id;src.captureOrigin.observedAt='2026-09-26T14:00:00-04:00';
+ const second=await X.makePacket(state,'project-1','capture-2',at);a.notEqual(second.state.sources.find(x=>x.captureOrigin).id,originalId);
+ const tampered=W.copy(first);tampered.state.sources.find(x=>x.captureOrigin).captureOrigin.authorizeExternalActions=true;tampered.snapshotHash=await X.digest(tampered.state);
+ await a.rejects(()=>X.parse(JSON.stringify(tampered)),/Unsupported or noncanonical/);
+});
