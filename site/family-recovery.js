@@ -17,7 +17,7 @@ async function recoveryScreen(){
   try{
    if(busy)throw new Error('Finish the current save before exporting.');
    if(!await flushDraft())throw new Error('This tab has unsaved typing. Copy it before leaving; rescue export was stopped.');
-   const packet=await R.collect(store.db,()=>ShareInbox.list(),revision,{exportedAt:now(),origin:location.origin,appVersion:globalThis.CaptureFamilyCore?.APP_VERSION||'0.18.0'});
+   const packet=await R.collect(store.db,()=>ShareInbox.list(),revision,{exportedAt:now(),origin:location.origin,appVersion:globalThis.ArchiveCore?.VERSION||globalThis.CaptureFamilyCore?.APP_VERSION||'0.18.0'});
    const raw=JSON.stringify(packet),payload=encrypted?await SealedBackup.seal(raw,pass):raw;
    if(!active())return;
    download(payload,'continuity-rescue-'+packet.exportedAt.slice(0,10)+(encrypted?'-encrypted':'-READABLE')+'.json');

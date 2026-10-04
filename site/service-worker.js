@@ -1,8 +1,8 @@
 /* Version-pinned app shell. Incoming shares are local POST intake, never cached or forwarded. */
 'use strict';
-const RELEASE='0.18.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE+'-2';
+const RELEASE='0.19.0',BASE=new URL('./',self.location.href),CACHE='continuity-shell-'+RELEASE+'-2';
 importScripts('./platform-core.js?v='+RELEASE,'./share-inbox.js?v='+RELEASE);
-const ASSETS=['index.html','workspace.css?v=0.11.0','workspace-core.js?v=0.11.0','workspace-store.js?v=0.11.0','workspace.js?v=0.11.0','operations-core.js?v='+RELEASE,'operations.js?v='+RELEASE,'offline.js?v='+RELEASE,'operations.css?v='+RELEASE,'portability-core.js?v='+RELEASE,'sealed-backup.js?v='+RELEASE,'portability.js?v='+RELEASE,'portability.css?v='+RELEASE,'bootstrap-ready.js?v='+RELEASE,'handoff-core.js?v='+RELEASE,'handoff.js?v='+RELEASE,'handoff.css?v='+RELEASE,'platform-core.js?v='+RELEASE,'share-inbox.js?v='+RELEASE,'platform.js?v='+RELEASE,'platform.css?v='+RELEASE,'manifest.webmanifest','icon-192.png','icon-512.png','exchange-core.js?v='+RELEASE,'exchange.js?v='+RELEASE,'exchange.css?v='+RELEASE,'workflow-core.js?v='+RELEASE,'workflow.js?v='+RELEASE,'workflow.css?v='+RELEASE,'capture-family-core.js?v='+RELEASE,'capture-family.js?v='+RELEASE,'capture-family.css?v='+RELEASE,'family-recovery-core.js?v='+RELEASE,'family-recovery.js?v='+RELEASE];
+const ASSETS=['index.html','workspace.css?v=0.11.0','workspace-core.js?v=0.11.0','workspace-store.js?v=0.11.0','workspace.js?v=0.11.0','operations-core.js?v='+RELEASE,'operations.js?v='+RELEASE,'offline.js?v='+RELEASE,'operations.css?v='+RELEASE,'portability-core.js?v='+RELEASE,'sealed-backup.js?v='+RELEASE,'portability.js?v='+RELEASE,'portability.css?v='+RELEASE,'bootstrap-ready.js?v='+RELEASE,'handoff-core.js?v='+RELEASE,'handoff.js?v='+RELEASE,'handoff.css?v='+RELEASE,'platform-core.js?v='+RELEASE,'share-inbox.js?v='+RELEASE,'platform.js?v='+RELEASE,'platform.css?v='+RELEASE,'manifest.webmanifest','icon-192.png','icon-512.png','exchange-core.js?v='+RELEASE,'exchange.js?v='+RELEASE,'exchange.css?v='+RELEASE,'workflow-core.js?v='+RELEASE,'workflow.js?v='+RELEASE,'workflow.css?v='+RELEASE,'capture-family-core.js?v='+RELEASE,'capture-family.js?v='+RELEASE,'capture-family.css?v='+RELEASE,'family-recovery-core.js?v='+RELEASE,'family-recovery.js?v='+RELEASE,'archive-core.js?v='+RELEASE,'archive.js?v='+RELEASE,'archive.css?v='+RELEASE];
 const KEYS=new Set(ASSETS.map(x=>new URL(x,BASE).href));
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS.map(x=>new Request(new URL(x,BASE),{cache:'reload'})));})()));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
@@ -32,6 +32,6 @@ self.addEventListener('fetch',e=>{
  const url=new URL(e.request.url);if(url.origin!==BASE.origin||!url.pathname.startsWith(BASE.pathname))return;
  if(url.pathname===new URL('share-in',BASE).pathname&&e.request.method==='POST'){e.respondWith(receiveShare(e.request));return;}
  if(e.request.method!=='GET')return;
- if(e.request.mode==='navigate'||url.pathname===BASE.pathname||url.pathname===new URL('index.html',BASE).pathname){e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(new URL('index.html',BASE).href)||fetch(e.request);})());return;}
+ if(url.pathname===BASE.pathname||url.pathname===new URL('index.html',BASE).pathname){e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(new URL('index.html',BASE).href)||fetch(e.request);})());return;}
  if(KEYS.has(url.href))e.respondWith((async()=>{const c=await caches.open(CACHE);return await c.match(e.request)||fetch(e.request);})());
 });
