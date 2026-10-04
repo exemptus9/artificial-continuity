@@ -1,0 +1,38 @@
+name: Preserve source snapshots
+on:
+  push:
+    branches: ['work/sovereign-memory-v019']
+    paths: ['.github/workflows/source-snapshot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: de0923ae3d0b14bb2129afad6598f8a9bc594562
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 1e1430d37e7283b3838e606829f746dd74e1f551
+          path: baseline
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: |
+          mkdir snapshots
+          git -C candidate archive --format=tar.gz HEAD > snapshots/continuity-v018-source.tar.gz
+          git -C baseline archive --format=tar.gz HEAD > snapshots/continuity-main-source.tar.gz
+          git -C candidate rev-parse HEAD > snapshots/candidate-commit.txt
+          git -C baseline rev-parse HEAD > snapshots/baseline-commit.txt
+          cd snapshots
+          sha256sum *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: continuity-pinned-source
+          path: snapshots/
+          retention-days: 7
+          if-no-files-found: error
