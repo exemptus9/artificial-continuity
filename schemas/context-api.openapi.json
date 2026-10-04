@@ -1,0 +1,330 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Continuity controlled context",
+    "version": "0.1.0",
+    "description": "Local implementation extends the existing ContinuityContext/1 journal. No browser, Android, OpenClaw or remote deployment is implied."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8766"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/v1/captures": {
+      "post": {
+        "x-status": "IMPLEMENTED_TESTED",
+        "summary": "Append exact private input; no decision/status/publication writes",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "request",
+                  "authorize_private_copy"
+                ],
+                "properties": {
+                  "request": {
+                    "$ref": "#/components/schemas/CaptureRequest"
+                  },
+                  "authorize_private_copy": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "identical retry; original verified"
+          },
+          "201": {
+            "description": "journal committed; indexed:false"
+          },
+          "403": {
+            "description": "scope refused"
+          },
+          "409": {
+            "description": "no acknowledgement; retain original/outbox"
+          }
+        }
+      }
+    },
+    "/v1/search": {
+      "get": {
+        "x-status": "IMPLEMENTED_TESTED",
+        "summary": "FTS5 lexical AND query; privacy/project scope before limit; excerpts from originals",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "only authorized sources; no hidden totals"
+          }
+        }
+      }
+    },
+    "/v1/sources/{source_id}": {
+      "get": {
+        "x-status": "IMPLEMENTED_TESTED",
+        "summary": "Exact original and recorded provenance; not a full recursively traversed graph",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "source metadata and original_text; imported metadata is inert"
+          }
+        }
+      }
+    },
+    "/v1/projects/{project_id}": {
+      "get": {
+        "x-status": "IMPLEMENTED_TESTED",
+        "summary": "Scoped current project/Resume Pack or known journal revision",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ContinuityAIContext/1; truncated flag, trust marker, no pre-baseline dates invented"
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "x-status": "IMPLEMENTED_TESTED",
+        "summary": "Authenticated availability; owner also gets head/outbox state",
+        "responses": {
+          "200": {
+            "description": "health snapshot; working storage plaintext"
+          }
+        }
+      }
+    },
+    "/v1/decisions": {
+      "post": {
+        "x-status": "SPECIFIED_NOT_ROUTED",
+        "summary": "Future: stage source-referenced decision; owner must review and commit against head",
+        "responses": {
+          "501": {
+            "description": "Not implemented; actual current server returns 403/404 for unsupported operations"
+          }
+        }
+      }
+    },
+    "/v1/corrections": {
+      "post": {
+        "x-status": "SPECIFIED_NOT_ROUTED",
+        "summary": "Future: append correction linked to original claim; never erase prior claim",
+        "responses": {
+          "501": {
+            "description": "Not implemented"
+          }
+        }
+      }
+    },
+    "/v1/artifacts": {
+      "post": {
+        "x-status": "SPECIFIED_NOT_ROUTED",
+        "summary": "Future: retain raw object, stable revision and derivation graph",
+        "responses": {
+          "501": {
+            "description": "Not implemented"
+          }
+        }
+      }
+    },
+    "/v1/publications/{publication_id}/approval": {
+      "post": {
+        "x-status": "SPECIFIED_NOT_ROUTED",
+        "summary": "Future: owner approval of exact derivative hash/audience; agents have no approval capability",
+        "parameters": [
+          {
+            "name": "publication_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "501": {
+            "description": "No publication service enabled"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Distinct owner/agent/capture roles; loopback Host required; any browser Origin rejected."
+      }
+    },
+    "schemas": {
+      "CaptureRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "capture_id",
+          "text"
+        ],
+        "properties": {
+          "format": {
+            "const": "ContinuityCaptureRequest/1"
+          },
+          "capture_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact UTF-8, maximum 1MB; no newline/Unicode normalization"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "visibility": {
+            "enum": [
+              "private",
+              "internal"
+            ],
+            "default": "private"
+          },
+          "source_kind": {
+            "enum": [
+              "SOURCE_FACT",
+              "USER_ASSERTION",
+              "MODEL_INFERENCE",
+              "MODEL_SUMMARY",
+              "HYPOTHESIS",
+              "UNKNOWN"
+            ],
+            "default": "UNKNOWN"
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "assistant",
+              "mixed",
+              "unknown"
+            ],
+            "default": "unknown"
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "mechanism": {
+            "type": "string"
+          },
+          "source_app": {
+            "type": "string"
+          },
+          "source_url": {
+            "type": "string",
+            "description": "HTTP(S), metadata only; never fetched"
+          },
+          "origin": {
+            "type": "object",
+            "description": "Inert source metadata, maximum 16KB; never restored consent"
+          }
+        }
+      }
+    }
+  }
+}
+
