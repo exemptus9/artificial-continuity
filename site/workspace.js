@@ -40,12 +40,12 @@ async function flushDraft(){
 async function draft(form,key){
  // Keep the form inert until its saved draft and input listener are ready.
  // IndexedDB reads are asynchronous; accepting input earlier can lose the first edits.
- const controls=[...form.elements],disabled=controls.map(f=>f.disabled);
+ const controls=[...form.elements],disabled=controls.map(f=>f.disabled);let recovered=null;
  form.setAttribute('aria-busy','true');controls.forEach(f=>f.disabled=true);
- try{let old=await store.read('drafts',draftKey(key));if(!old&&key==='capture'&&S?.draft?.text)old={type:S.draft.type||'note',context:S.draft.context||'',text:S.draft.text};if(old){for(const [k,v] of Object.entries(old)){const f=form.elements.namedItem(k);if(f&&f.type!=='file')f.type==='checkbox'?f.checked=v===true:f.value=v;}draftStatus('Recovered an unfinished draft.');}}
+ try{let old=await store.read('drafts',draftKey(key));if(!old&&key==='capture'&&S?.draft?.text)old={type:S.draft.type||'note',context:S.draft.context||'',text:S.draft.text};if(old){for(const [k,v] of Object.entries(old)){const f=form.elements.namedItem(k);if(f&&f.type!=='file')f.type==='checkbox'?f.checked=v===true:f.value=v;}draftStatus('Recovered an unfinished draft.');}recovered=old;}
  catch(e){draftStatus('Draft recovery unavailable: '+e.message,true);}
  form.addEventListener('input',()=>{const value={};for(const f of form.elements)if(f.name&&f.type!=='file')value[f.name]=f.type==='checkbox'?f.checked:f.value;draftJob={key,value};draftDirty=true;draftStatus('Saving draft…');clearTimeout(draftTimer);draftTimer=setTimeout(flushDraft,300);});
- controls.forEach((f,i)=>f.disabled=disabled[i]);form.setAttribute('aria-busy','false');
+ controls.forEach((f,i)=>f.disabled=disabled[i]);form.setAttribute('aria-busy','false');return recovered;
 }
 async function clearDraft(key){await flushDraft();await store.draft(draftKey(key),null);draftDirty=false;draftJob=null;}
 async function navigate(v,id=null){if(!S)return;if(!await flushDraft())return;$('#dialog').close();draftJob=null;route=v;recordId=id;location.hash=v+(id?'/'+encodeURIComponent(id):'');activeHash=location.hash;await render();window.scrollTo(0,0);}
@@ -79,7 +79,7 @@ async function addSource(threadId){
  form.addEventListener('input',e=>{if(e.target===editor)raw.value=reconcile(raw.value,editor.value);});
  editor.addEventListener('paste',e=>{if(!e.clipboardData||!Array.from(e.clipboardData.types).includes('text/plain'))return;const insert=e.clipboardData.getData('text/plain'),start=editor.selectionStart,next=splice(reconcile(raw.value,editor.value),start,editor.selectionEnd,insert);if(new TextEncoder().encode(next).length>1000000){e.preventDefault();formError(form,new Error('Paste exceeds 1 MB. Nothing was pasted.'));return;}e.preventDefault();raw.value=next;editor.value=editorText(next);const caret=start+editorText(insert).length;editor.setSelectionRange(caret,caret);editor.dispatchEvent(new Event('input',{bubbles:true}));});
  form.inert=true;
- try{const saved=await store.read('drafts',draftKey('source'));if(saved)raw.value=String(saved.sourceRawText??saved.sourceText??'');await draft(form,'source');raw.value=reconcile(raw.value,editor.value);}finally{form.inert=false;}
+ try{const saved=await draft(form,'source');if(saved)raw.value=String(saved.sourceRawText??saved.sourceText??'');raw.value=reconcile(raw.value,editor.value);}finally{form.inert=false;}
  if(!form.isConnected)return;if(threadId)$('#sourceThread').value=threadId;
  $('#sourceFile').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(!/\.(txt|md)$/i.test(f.name)||f.size>1000000)throw new Error('Use a UTF-8 .txt or .md file up to 1 MB.');const before=editor.value,text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await f.arrayBuffer());if(!form.isConnected)return;if(editor.value!==before)throw new Error('Text changed while the file was read. Your edits remain; select the file again if you want to replace them.');if(text.includes('\0'))throw new Error('This appears to be a binary file.');raw.value=text;editor.value=editorText(text);if(!$('#sourceTitle').value)$('#sourceTitle').value=f.name.replace(/\.(txt|md)$/i,'');editor.dispatchEvent(new Event('input',{bubbles:true}));}catch(err){formError(form,err);}};
  form.onsubmit=async e=>{e.preventDefault();try{const d=Object.fromEntries(new FormData(form)),original=reconcile(raw.value,editor.value);if(new TextEncoder().encode(original).length>1000000)throw new Error('Selected text exceeds 1 MB. Import a shorter excerpt.');const src=W.makeSource(S,{title:d.sourceTitle,text:original,url:d.sourceURL,threadId:d.sourceThread,speaker:d.sourceSpeaker},uid(),now());if(await mutate('SOURCE_CREATED','Saved original source: '+src.title,s=>s.sources.push(src))){await clearDraft('source');$('#dialog').close();await navigate('sources',src.id);notify('Original saved. Review checkpoints to build a grounded handoff.');}}catch(err){formError(form,err);}};
