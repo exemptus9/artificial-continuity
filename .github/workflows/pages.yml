@@ -2,7 +2,9 @@ name: Test and deploy Continuity
 on:
   push:
     branches: [main, 'work/**']
-    paths: ['site/**', 'tests/**', '.github/workflows/pages.yml']
+    paths: ['site/**', 'tests/**', 'tools/**', '.github/workflows/pages.yml']
+  pull_request:
+    paths: ['site/**', 'tests/**', 'tools/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,6 +26,11 @@ jobs:
           node --test tests/*.test.cjs > data-tests.log 2>&1 || { tail -n 120 data-tests.log; exit 1; }
           tail -n 12 data-tests.log
         shell: bash
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Context and release boundary tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Install pinned browser test tooling
         run: |
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
@@ -41,6 +48,7 @@ jobs:
           node tests/family-browser.cjs
           node tests/family-recovery-browser.cjs
           node tests/archive-browser.cjs
+          node tests/release-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4

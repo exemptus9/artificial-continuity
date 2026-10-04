@@ -2,7 +2,10 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current candidate: v0.18.0
+## Integrated candidate: v0.19 browser archive and controlled context
+
+See [MAX05 release instructions](docs/MAX05_RELEASE.md) for setup, the demonstrated
+capture/reload/export/restore path, scoped access and device validation boundaries.
 
 Published v0.17 baseline: https://exemptus9.github.io/artificial-continuity/
 
