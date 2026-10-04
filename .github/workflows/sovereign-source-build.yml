@@ -5,6 +5,7 @@ on:
     paths: ['.github/workflows/sovereign-source-build.yml']
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: sovereign-archive-execution
   cancel-in-progress: false
@@ -16,32 +17,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fetch source-only delivery package
-        env:
-          SOURCE_PACKAGE: 'https://sdmntprcentralus.oaiusercontent.com/files/00000000-ac90-81f5-8e31-c5825a923d54/raw?se=2026-10-04T03%3A08%3A28Z&sp=r&sv=2026-02-06&sr=b&scid=e0c2d922-6713-50dd-8ca9-6f00e1669f1c&skoid=add8ee7d-5fc7-451e-b06e-a82b2276cf62&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-10-03T17%3A29%3A25Z&ske=2026-10-04T17%3A29%3A25Z&sks=b&skv=2026-02-06&sig=oEjvz10mpSjQ5yxk2q6kDms0OHPvfCLQ4Al4uVltP2k%3D'
-        run: |
-          echo "::add-mask::$SOURCE_PACKAGE"
-          curl --fail --silent --show-error --location "$SOURCE_PACKAGE" -o /tmp/continuity-source.tar.gz
-          echo '666f4192b4b73cf35e413efb4eb953978908b127179e2ac5254893992661e2be  /tmp/continuity-source.tar.gz' | sha256sum -c -
+      - uses: actions/download-artifact@v4
+        with:
+          name: sovereign-archive-evidence
+          run-id: 37172635121
+          github-token: ${{ github.token }}
+          path: /tmp/source-delivery
       - name: Preserve branch lineage and apply bounded source patch
         run: |
           test "$GITHUB_REF" = 'refs/heads/work/sovereign-memory-v019'
           git config user.name 'Continuity source integration'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
-          test "$(git rev-parse origin/main)" = '1e1430d37e7283b3838e606829f746dd74e1f551'
+          test "$(git rev-parse origin/main)" = '724ab357b714e45d1073b1989eff370bd31b66c2'
           git merge --no-commit --no-ff origin/main || true
           python3 - <<'PY'
-          import tarfile,pathlib
-          allow={'site/archive.js','site/operations-core.js','site/archive-core.js','site/service-worker.js','site/archive.css','site/workspace.js','site/family-recovery.js','site/index.html','tests/archive.test.cjs','tests/archive-browser.cjs','tests/operations.test.cjs','tests/platform.test.cjs','docs/V0_19_RELEASE.md','.github/workflows/pages.yml','site/proof-of-progress/index.html'}
-          with tarfile.open('/tmp/continuity-source.tar.gz') as t:
-              members=t.getmembers()
-              assert {m.name for m in members} == allow
-              assert all(m.isfile() and m.size < 200000 for m in members)
-              for m in members:
-                  if m.name.startswith('.github/'):
-                      continue
-                  p=pathlib.Path(m.name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(t.extractfile(m).read())
+          import tarfile,pathlib,hashlib
+          expected={'site/archive.js':'ba51c77db0265a9aded7911eedfba8fe7cc8fdc7b2e57c2e4b533bba1f614345','site/operations-core.js':'780dab1bc1cd68e4c91f05ce91dabe459a4e73f7db5a960c689dfca333751fa4','site/archive-core.js':'b9b91a6e6f66f69d60008dfd9125188c576392977de0dff2be230676864734ca','site/service-worker.js':'450545fd03ff4b1f239f1c634be03d39ad17e9735f30114456fdf427da30a881','site/archive.css':'f4c53c5d32eedd88f3224c3044cc154012feb0e4f3ec9e26aab4e321dd14a223','site/workspace.js':'f4f60652ded7f2b6b597f2736eac0ce9981a311aea5717c5700c1048adb58775','site/family-recovery.js':'08897d50d060b6d2be184752c41d79abecbc99544fc4e57a52aa2bea6a74888c','site/index.html':'9468510c107251896e600985a87525fca6e4a9815b9ea2cc273892a5a0537dbc','tests/archive.test.cjs':'e33f7cfc4e7357f245ede32e16f819f725d0db71d344db515051dbdb01efaf58','tests/archive-browser.cjs':'381a614149f0615208956a6a7609e427e53fa0b0d977bc91c349b57e88c8724f','tests/operations.test.cjs':'ece93cbd49858a457cd612ac356b6bfbd2eb8a61935cb8777bd454726df8376b','tests/platform.test.cjs':'54ac655dec683693fc4b027caee708cac29f5567b356dfd396a3297ad3487aa0','docs/V0_19_RELEASE.md':'cf855d60a2d7b1c4f7b5fb1f682c72d6faa2f81dacbdfef76091b00754c38798','site/proof-of-progress/index.html':'a7bd6238f087f9be721962d398391a105372f415c5cdbac38a58a8b82e922144'}
+          with tarfile.open('/tmp/source-delivery/tested-source.tar.gz') as t:
+              content={}
+              for name,digest in expected.items():
+                  m=t.getmember(name);assert m.isfile() and m.size < 200000
+                  content[name]=t.extractfile(m).read()
+                  assert hashlib.sha256(content[name]).hexdigest()==digest,name
+              for name,data in content.items():
+                  p=pathlib.Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
           PY
           git add site/archive.js site/archive-core.js site/archive.css site/operations-core.js site/service-worker.js site/workspace.js site/family-recovery.js site/index.html tests/archive.test.cjs tests/archive-browser.cjs tests/operations.test.cjs tests/platform.test.cjs docs/V0_19_RELEASE.md site/proof-of-progress/index.html
           test -z "$(git diff --name-only --diff-filter=U)"
@@ -59,6 +59,7 @@ jobs:
           for f in site/*.js; do node --check "$f"; done
           node --test tests/*.test.cjs > data-tests.log 2>&1 || { tail -n 150 data-tests.log; exit 1; }
           tail -n 12 data-tests.log
+          python3 -m unittest discover -s tests -p 'test_context_store.py' -v > context-tests.log 2>&1
       - name: Install pinned browser tooling
         run: |
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
