@@ -2,7 +2,7 @@
 (function(root){
 'use strict';
 const W=root.WorkspaceCore||(typeof require==='function'?require('./workspace-core.js'):null);
-const APP_VERSION='0.19.0',baseValidate=W.validate,basePack=W.resumePack;
+const APP_VERSION='0.20.0',baseValidate=W.validate,basePack=W.resumePack;
 const fail=m=>{throw new Error(m);},copy=W.copy;
 const text=(v,n=20000)=>typeof v==='string'&&v.length<=n;
 const bytes=s=>new TextEncoder().encode(s).length;

@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import shutil
 import sys
 import time
 import uuid
@@ -40,6 +41,36 @@ def now():
 
 def raw_hash(data):
     return hashlib.sha256(data).hexdigest()
+
+def file_hash(path):
+    """Hash objects without loading account archives into memory."""
+    h = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def copy_object_file(source, destination, expected):
+    """Durable no-overwrite copy, also usable for large raw-export objects."""
+    source, destination = Path(source), Path(destination)
+    if source.is_symlink() or destination.is_symlink():
+        raise C.ContextError('Unsafe object path.')
+    temp = destination.with_name(destination.name + '.tmp-' + str(uuid.uuid4()))
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, 'wb') as out, source.open('rb') as src:
+            shutil.copyfileobj(src, out, 1024 * 1024)
+            out.flush(); os.fsync(out.fileno())
+        if file_hash(temp) != expected:
+            raise C.ContextError('Source changed during copy; original is not committed.')
+        os.link(temp, destination)  # Atomic, refuses any existing destination.
+        fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        temp.unlink(missing_ok=True)
 
 def bounded_text(value, name, maximum=200):
     if not isinstance(value, str) or len(value) > maximum or "\x00" in value:
@@ -115,6 +146,21 @@ class Store:
                 raise C.ContextError("Object collision.")
         else:
             C.atomic_write(path, raw, replace=False)
+        return digest
+
+    def put_file(self, path, expected=None, maximum=1_000_000_000):
+        path = Path(path)
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
+            raise C.ContextError('Raw export is unsafe or exceeds the file limit.')
+        digest = file_hash(path)
+        if expected is not None and digest != expected:
+            raise C.ContextError('Raw export changed since preview.')
+        target = self.objects / digest
+        if target.exists():
+            if target.is_symlink() or file_hash(target) != digest:
+                raise C.ContextError('Existing raw object is corrupt.')
+        else:
+            copy_object_file(path, target, digest)
         return digest
 
     def request(self, value):
@@ -365,13 +411,13 @@ class Store:
                 for path in sorted((self.root / directory).glob("*")):
                     if path.is_symlink() or not path.is_file():
                         raise C.ContextError("Unsafe backup member.")
-                    content = path.read_bytes()
-                    if directory == "objects" and raw_hash(content) != path.name:
+                    digest = file_hash(path)
+                    if directory == "objects" and digest != path.name:
                         raise C.ContextError("Corrupt object detected during backup.")
                     relative = directory + "/" + path.name
                     private_directory(destination / directory)
-                    C.atomic_write(destination / relative, content, replace=False)
-                    manifest["files"][relative] = raw_hash(content)
+                    copy_object_file(path, destination / relative, digest)
+                    manifest["files"][relative] = digest
             for name in ("intake.json",):
                 path = self.root / name
                 if path.exists():
@@ -390,13 +436,13 @@ class Store:
             raise C.ContextError("Invalid backup format.")
         for name, digest in manifest["files"].items():
             p = directory / name
-            if Path(name).is_absolute() or ".." in Path(name).parts or p.is_symlink() or any(parent.is_symlink() for parent in p.parents) or not p.is_file() or raw_hash(p.read_bytes()) != digest:
+            if Path(name).is_absolute() or ".." in Path(name).parts or p.is_symlink() or any(parent.is_symlink() for parent in p.parents) or not p.is_file() or file_hash(p) != digest:
                 raise C.ContextError("Backup member missing, unsafe or changed.")
         data, head = C.load_store(C.read_json(directory / "Context_Store.json"))
         if head["store_sha256"] != manifest["journal_sha256"]:
             raise C.ContextError("Backup journal identity changed.")
         for s in data["sources"]:
-            if s.get("format") == SOURCE_FORMAT:
+            if s.get("format") == SOURCE_FORMAT or s.get('locator', '').startswith('continuity-object:sha256:'):
                 name = "objects/" + s["sha256"]
                 if manifest["files"].get(name) != s["sha256"]:
                     raise C.ContextError("Backup omits an authoritative capture object.")
