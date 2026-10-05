@@ -2,3 +2,5 @@ node_modules/
 test-artifacts/
 *.log
 .env
+__pycache__/
+*.pyc

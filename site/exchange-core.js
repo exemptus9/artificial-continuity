@@ -10,6 +10,15 @@ function canonical(x){if(x===null||typeof x!=='object')return JSON.stringify(x);
 async function digest(x){if(!root.crypto?.subtle)fail('Use HTTPS or localhost with Web Crypto available.');return [...new Uint8Array(await root.crypto.subtle.digest('SHA-256',utf.encode(canonical(x))))].map(n=>n.toString(16).padStart(2,'0')).join('');}
 function fields(t){return Object.fromEntries(FIELDS.map(k=>[k,copy(t[k]??(k==='open'?[]:''))]));}
 function checkedFields(f){const s=W.empty();s.threads=[{...f,id:'check',attention:false}];W.validate(s);if(Object.keys(f).sort().join('|')!==[...FIELDS].sort().join('|'))fail('Unsupported intention field.');return copy(f);}
+function captureProvenance(src){
+ if(src.captureOrigin===undefined)return {};
+ // The capture extension validates these records before snapshotting. Never
+ // turn a historical local-consent receipt into an import authorization, or
+ // export arbitrary sender metadata alongside the selected source.
+ if(!root.CaptureFamilyCore)fail('This source requires the capture provenance extension. Use a current family release or a full backup.');
+ const p=src.captureOrigin;
+ return {captureOrigin:{format:p.format,sourceVersion:p.sourceVersion,appVersion:p.appVersion,method:p.method,observedAt:p.observedAt,receivedAt:p.receivedAt,inputBasis:p.inputBasis,reviewState:p.reviewState,consentRecord:{scope:p.consentRecord.scope,confirmedAt:p.consentRecord.confirmedAt}}};
+}
 function metadata(s){for(const t of s.threads){if(t.exchangeProjectId!==undefined&&(!text(t.exchangeProjectId)||!t.exchangeProjectId))fail('Invalid project exchange identity.');
  if(t.exchangeAnchors!==undefined){if(!Array.isArray(t.exchangeAnchors)||t.exchangeAnchors.length>24)fail('Invalid exchange anchors.');for(const a of t.exchangeAnchors){if(!/^[a-f0-9]{64}$/.test(a.hash))fail('Invalid exchange anchor hash.');checkedFields(a.fields);}}
  if(t.exchangeBase!==undefined&&t.exchangeBase!==null){if(!/^[a-f0-9]{64}$/.test(t.exchangeBase.hash))fail('Invalid exchange baseline.');checkedFields(t.exchangeBase.fields);}
@@ -22,7 +31,7 @@ async function snapshot(s,threadId){
  state.threads=[{...fields(t),id:projectId,attention:false}];
  const ns=s.notes.filter(n=>n.threadId===threadId),used=new Set(ns.map(n=>n.sourceId));
  for(const src of s.sources.filter(x=>x.threadId===threadId||used.has(x.id))){
-  const content={title:src.title,text:src.text,url:src.url,speaker:src.speaker};
+  const content={title:src.title,text:src.text,url:src.url,speaker:src.speaker,...captureProvenance(src)};
   const id='src-'+await digest(content);sourceMap.set(src.id,id);
   if(!unique.has(id)){unique.set(id,true);state.sources.push({...content,id,threadId:projectId,createdAt:src.createdAt});}
  }

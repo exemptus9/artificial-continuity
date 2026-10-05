@@ -2,15 +2,28 @@
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
-## Current workspace: v0.17.0
+## Integrated candidate: v0.19 browser archive and controlled context
 
-Live: https://exemptus9.github.io/artificial-continuity/
+See [MAX05 release instructions](docs/MAX05_RELEASE.md) for setup, the demonstrated
+capture/reload/export/restore path, scoped access and device validation boundaries.
+
+Published v0.17 baseline: https://exemptus9.github.io/artificial-continuity/
+
+This branch is a review candidate; its existence does not update either deployed origin.
 
 **Capture → preserve evidence → review → act → record progress → resume.**
 
 A browser-local workspace with no account, model subscription or production npm dependency. Phone and desktop use the same installable web application, but do not automatically synchronize data.
 
-### New: Review desk and Log progress
+### New: one Continuity capture family
+
+Quick capture now commits an exact original source plus a linked unreviewed capture after fresh consent. Interrupted drafts remain recoverable; retries after draft-cleanup failure avoid duplicate captures. Search retrieves the original. An app-local target guard cancels a moved Save button; it does not intercept native Android or other apps.
+
+Recovery files include the saved workspace, unfinished drafts and pending incoming shares. Open them for preview, restore separate inert drafts, or explicitly extract the saved workspace. Readable and encrypted file exports are available; working browser storage remains plaintext.
+
+See [family architecture](docs/FAMILY_ARCHITECTURE.md), [migration](docs/FAMILY_MIGRATION.md), [storage and failure recovery](docs/FAMILY_SECURITY_RECOVERY.md), and [v0.18 release](docs/V0_18_RELEASE.md). Total Recall is the capture capability; MindVault/EchoLens remain aliases. The earlier private encrypted branch remains separate at the storage boundary.
+
+### Review desk and Log progress
 
 **Review desk:** a searchable queue of pending imported checkpoints with exact quotations and source line references. Edit the interpretation, select each item deliberately, then confirm the selected batch. Original sources and prior imported wording remain preserved. Unselected items stay pending. Text drafts are recoverable; acceptance is never restored automatically. Changed previews and stale-tab writes are rejected.
 
@@ -31,7 +44,7 @@ See [v0.17 release notes](docs/V0_17_RELEASE.md) for scope, safety boundaries an
 
 Create an intention or use One-box intake. Save a conversation or import selected text. Confirm only the evidence you accept. Record progress before leaving. Copy a selective Resume Pack to another conversation or exchange a project file with another browser.
 
-To update a cached installation: Device & drafts → Check for app update → Apply update after saving. **Do not clear browser data to update.** The application version is 0.17.0; the additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
+To update a cached installation: Device & drafts → Check for app update → Apply update after saving. **Do not clear browser data to update.** The application version is 0.18.0; the additive storage schema remains 0.11.0. Existing v0.9/v0.10 migration remains supported.
 
 ## Test and release
 
@@ -49,7 +62,7 @@ GitHub Actions tests work branches and main. Only a successful main build deploy
 
 The working database, drafts and incoming-share inbox remain unencrypted. Encryption protects exported files only. No remote model, analytics or upload endpoint receives your conversation text. Follow-ups surface while using the application, not via background push. Installed-app status does not imply automatic sync.
 
-Keep full backups before switching browser profiles, clearing data or moving devices. Project files include FULL original source text. Pending drafts and unsaved incoming shares must become records before they are included in workspace backups. Review Resume Packs before copying them elsewhere.
+Keep full backups before switching browser profiles, clearing data or moving devices. Project files include FULL original source text. Ordinary workspace backups omit drafts and pending incoming shares. Use the new Recovery files export to preserve these without promoting them to accepted records. Review Resume Packs before copying them elsewhere.
 
 This is not an autonomous agent, an independently audited vault or a controller for ChatGPT's sidebar. Original source attribution and user confirmation are not cryptographic proofs of authorship.
 
