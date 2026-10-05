@@ -84,7 +84,7 @@ def read_export(path):
         if not isinstance(chats, list) or not 1 <= len(chats) <= 10_000:
             raise C.ContextError('Expected 1–10,000 mapping conversations.')
         # Reject unpaired Unicode before any object or journal write.
-        json.dumps(value, ensure_ascii=False).encode('utf-8')
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise C.ContextError('Malformed or unsupported UTF-8 JSON.') from exc
     return {'path': path, 'sha256': original_hash, 'json_sha256': G.raw_hash(raw),

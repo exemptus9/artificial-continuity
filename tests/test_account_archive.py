@@ -151,7 +151,7 @@ class AccountTests(unittest.TestCase):
         with self.assertRaises(C.ContextError): A.ingest(self.store, self.input)
 
     def test_malformed_duplicate_keys_and_utf8_rejected(self):
-        for raw in [b'{', b'\xff', b'{"conversations":[],"conversations":[]}', b'[NaN]']:
+        for raw in [b'{', b'\xff', b'{"conversations":[],"conversations":[]}', b'[NaN]', b'[1e10000]']:
             self.input.write_bytes(raw)
             with self.assertRaises(C.ContextError): self.ingest()
         self.assertEqual(self.store.state()[1]['revision'], 0)
