@@ -372,7 +372,7 @@ class Store:
                     private_directory(destination / directory)
                     C.atomic_write(destination / relative, content, replace=False)
                     manifest["files"][relative] = raw_hash(content)
-            for name in ("intake.json",):
+            for name in ("intake.json", "phone-deletions.json"):
                 path = self.root / name
                 if path.exists():
                     content = path.read_bytes(); C.atomic_write(destination / name, content, replace=False)
