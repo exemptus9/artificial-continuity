@@ -70,6 +70,9 @@ class SemanticTests(unittest.TestCase):
         prov=S.get_provenance(p,"REL.PROJECT_IMPLEMENTS_CONTEXT")
         self.assertEqual(prov["object_type"],"relationships")
         self.assertIn("SRC.PR5",{x["id"] for x in prov["sources"]})
+        self.assertEqual(S.relationships_for(p,"SYSTEM.controlled-context",direction="in")[0]["subject_id"],"PROJECT.artificial-continuity")
+        dprov=S.get_provenance(p,"DECISION.REPLACEABLE_ENGINE")
+        self.assertEqual(dprov["object_type"],"decisions")
 
     def test_verified_work_requires_evidence(self):
         self.source("SRC.A","https://example.invalid/a",T0)
@@ -93,6 +96,18 @@ class SemanticTests(unittest.TestCase):
         self.store,_=S.append(self.store,r,h["store_sha256"],True)
         same,changed=S.append(self.store,r,S.replay(self.store)[1]["store_sha256"],True); self.assertFalse(changed); self.assertEqual(same,self.store)
         with self.assertRaises(S.ContinuityError): S.append(self.store,S.record("event_recorded","REC.X",{"project_id":"P","event_type":"x"},["SRC.A"],at=T1),h["store_sha256"],True)
+    def test_change_query_compares_actual_instants(self):
+        self.source("SRC.A","https://example.invalid/a","2026-10-07T13:00:00-04:00")
+        p,_=S.replay(self.store)
+        rows=S.query_changes(p,since="2026-10-07T16:59:59Z",until="2026-10-07T17:00:01Z")
+        self.assertEqual([x["id"] for x in rows],["REC.SRC.A"])
+
+    def test_work_evidence_must_resolve_and_be_declared(self):
+        self.source("SRC.A","https://example.invalid/a",T0)
+        self.add(S.record("entity_recorded","REC.P",{"id":"P","kind":"project","name":"P"},["SRC.A"],at=T0))
+        with self.assertRaises(S.ContinuityError):
+            self.add(S.record("work_state_set","REC.W.BAD",{"id":"W","project_id":"P","summary":"bad evidence","state":"verified","evidence_refs":["SRC.MISSING"]},["SRC.A"],at=T1))
+
     def test_export_import_reconstruction(self):
         self.seed(); exported=json.loads(json.dumps(self.store)); p1,h1=S.replay(self.store); p2,h2=S.replay(exported); self.assertEqual(p1,p2); self.assertEqual(h1,h2)
     def test_missing_source_is_rejected(self):
