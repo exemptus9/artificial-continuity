@@ -4,7 +4,7 @@ This slice adds a provider-independent semantic/event layer above Continuity's e
 
 ## Durable model
 
-`tools/continuity_semantics.py` uses an append-only hash-chained `ContinuitySemanticLedger/1`. Records are immutable events; current state is a replayed projection. Stable IDs survive renames. Sources are registered before claims reference them. Claims carry explicit epistemic origin (`user-confirmed`, `source-observed`, `imported`, `inferred`, `generated`), confidence, temporal validity, and canonical status (`possible`, `observed`, `provisional`, `user-confirmed`, `canonical`, `superseded`, `disputed`).
+`tools/continuity_semantics.py` uses an append-only hash-chained `ContinuitySemanticLedger/1`. Records are immutable events; current state is a replayed projection. Stable IDs survive renames. Sources are registered before claims reference them. Claims carry explicit epistemic origin (`user-confirmed`, `source-observed`, `imported`, `inferred`, `generated`), mandatory confidence, explicit authority, temporal validity, and canonical status (`possible`, `observed`, `provisional`, `user-confirmed`, `canonical`, `superseded`, `disputed`).
 
 Work state is deliberately finer than `done`: `idea → planned → started → implemented → tested → verified → released → deprecated`. Tested/verified/released transitions require evidence references. A claim resolution atomically marks a winner canonical and the explicitly named prior claims superseded; it never deletes them.
 
