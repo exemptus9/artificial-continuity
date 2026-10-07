@@ -30,10 +30,10 @@ class SemanticTests(unittest.TestCase):
         self.add(S.record("entity_recorded","REC.PROJECT",{"id":"PROJECT.artificial-continuity","kind":"project","name":"Artificial Continuity","aliases":["Continuity"]},["SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("entity_recorded","REC.CONTEXT.SYSTEM",{"id":"SYSTEM.controlled-context","kind":"system","name":"Controlled Context Core"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("relationship_recorded","REC.REL.IMPLEMENTS",{"id":"REL.PROJECT_IMPLEMENTS_CONTEXT","subject_id":"PROJECT.artificial-continuity","predicate":"implements","object_id":"SYSTEM.controlled-context","status":"canonical"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
-        self.add(S.record("claim_recorded","REC.CLAIM.OLD",{"id":"CLAIM.CONTEXT_ON_MAIN.OLD","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":False,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T0,"valid_to":T1},["SRC.MAIN_PREMERGE"],at=T0))
-        self.add(S.record("claim_recorded","REC.CLAIM.NEW",{"id":"CLAIM.CONTEXT_ON_MAIN.NEW","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":True,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T1},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
+        self.add(S.record("claim_recorded","REC.CLAIM.OLD",{"id":"CLAIM.CONTEXT_ON_MAIN.OLD","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":False,"status":"observed","origin":"source-observed","confidence":1.0,"authority":"repository-evidence","valid_from":T0,"valid_to":T1},["SRC.MAIN_PREMERGE"],at=T0))
+        self.add(S.record("claim_recorded","REC.CLAIM.NEW",{"id":"CLAIM.CONTEXT_ON_MAIN.NEW","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":True,"status":"observed","origin":"source-observed","confidence":1.0,"authority":"repository-evidence","valid_from":T1},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("claim_resolution","REC.RESOLVE.CONTEXT",{"winner":"CLAIM.CONTEXT_ON_MAIN.NEW","superseded":["CLAIM.CONTEXT_ON_MAIN.OLD"],"reason":"PR #5 merged into main; preserve earlier state as historical."},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
-        self.add(S.record("claim_recorded","REC.OBJECTIVE",{"id":"CLAIM.OBJECTIVE","subject_id":"PROJECT.artificial-continuity","predicate":"objective","value":"Continuity is the product; the model is a replaceable reasoning engine.","status":"canonical","origin":"source-observed","confidence":1.0},["SRC.MAIN_CURRENT"],at=T2))
+        self.add(S.record("claim_recorded","REC.OBJECTIVE",{"id":"CLAIM.OBJECTIVE","subject_id":"PROJECT.artificial-continuity","predicate":"objective","value":"Continuity is the product; the model is a replaceable reasoning engine.","status":"canonical","origin":"source-observed","confidence":1.0,"authority":"repository-doctrine"},["SRC.MAIN_CURRENT"],at=T2))
         self.add(S.record("decision_recorded","REC.DECISION.REPLACEABLE",{"id":"DECISION.REPLACEABLE_ENGINE","project_id":"PROJECT.artificial-continuity","key":"reasoning_engine","value":"replaceable","status":"canonical"},["SRC.MAIN_CURRENT"],at=T2))
         self.add(S.record("artifact_recorded","REC.ARTIFACT.CONTEXT",{"id":"ART.CONTEXT_CORE","project_id":"PROJECT.artificial-continuity","name":"Controlled capture/context core","locator":"https://github.com/exemptus9/artificial-continuity/pull/5","status":"released"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("work_state_set","REC.WORK.RELEASED",{"id":"WORK.CONTEXT_CORE","project_id":"PROJECT.artificial-continuity","summary":"Controlled text capture/store/FTS5/scoped retrieval/client/backup","state":"released","evidence_refs":["SRC.PR5","SRC.MAIN_CURRENT"]},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
@@ -46,11 +46,17 @@ class SemanticTests(unittest.TestCase):
         resolution_index=next(i for i,e in enumerate(self.store["events"],1) if e["record"]["id"]=="REC.RESOLVE.CONTEXT")
         earlier,_=S.replay(self.store,resolution_index-1)
         self.assertEqual(earlier["claims"]["CLAIM.CONTEXT_ON_MAIN.OLD"]["status"],"observed")
+    def test_claim_requires_confidence_and_authority(self):
+        self.source("SRC.A","https://example.invalid/a",T0)
+        self.add(S.record("entity_recorded","REC.P",{"id":"P","kind":"project","name":"P"},["SRC.A"],at=T0))
+        with self.assertRaises(S.ContinuityError):
+            self.add(S.record("claim_recorded","REC.BADCLAIM",{"id":"C","subject_id":"P","predicate":"x","value":1,"status":"observed","origin":"source-observed"},["SRC.A"],at=T0))
+
     def test_conflict_is_visible_until_resolved(self):
         self.source("SRC.A","https://example.invalid/a",T0); self.source("SRC.B","https://example.invalid/b",T1)
         self.add(S.record("entity_recorded","REC.P",{"id":"P","kind":"project","name":"P"},["SRC.A"],at=T0))
-        self.add(S.record("claim_recorded","REC.C1",{"id":"C1","subject_id":"P","predicate":"x","value":1,"status":"observed","origin":"source-observed"},["SRC.A"],at=T0))
-        self.add(S.record("claim_recorded","REC.C2",{"id":"C2","subject_id":"P","predicate":"x","value":2,"status":"observed","origin":"source-observed"},["SRC.B"],at=T1))
+        self.add(S.record("claim_recorded","REC.C1",{"id":"C1","subject_id":"P","predicate":"x","value":1,"status":"observed","origin":"source-observed","confidence":0.8,"authority":"test-source-a"},["SRC.A"],at=T0))
+        self.add(S.record("claim_recorded","REC.C2",{"id":"C2","subject_id":"P","predicate":"x","value":2,"status":"observed","origin":"source-observed","confidence":0.8,"authority":"test-source-b"},["SRC.B"],at=T1))
         p,_=S.replay(self.store); self.assertEqual(len(S.conflicts(p,"P")),1)
     def test_duplicate_entity_ingestion_is_rejected(self):
         self.source("SRC.A","https://example.invalid/a",T0)
