@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/continuity-semantic-ledger.schema.json",
+  "title": "ContinuitySemanticLedger/1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "created_at", "events"],
+  "properties": {
+    "format": {"const": "ContinuitySemanticLedger/1"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["revision", "parent", "record", "sha256"],
+        "properties": {
+          "revision": {"type": "integer", "minimum": 1},
+          "parent": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "record": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "at", "actor", "source_refs", "payload"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "maxLength": 192},
+              "type": {
+                "enum": [
+                  "source_recorded", "entity_recorded", "entity_renamed",
+                  "claim_recorded", "claim_resolution", "relationship_recorded",
+                  "artifact_recorded", "work_state_set", "decision_recorded",
+                  "event_recorded"
+                ]
+              },
+              "at": {"type": "string", "format": "date-time"},
+              "actor": {"type": "string", "minLength": 1},
+              "source_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+              "payload": {"type": "object"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$comment": "Runtime validation in tools/continuity_semantics.py applies type-specific payload invariants, source existence, hash-chain integrity, temporal values, canonical status, and evidence requirements for tested/verified/released work."
+}
