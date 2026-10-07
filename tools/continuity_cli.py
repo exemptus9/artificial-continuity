@@ -31,7 +31,10 @@ def main(argv=None):
                 out={**S.replay(new)[1],"changed":changed}
             elif a.cmd=="find-entity": out=S.find_entity(projection,a.value)
             elif a.cmd=="provenance": out=S.get_provenance(projection,a.value)
-            elif a.cmd=="resume":\n                out=S.resume_packet(store,a.value)\n                if a.markdown:\n                    print(S.resume_markdown(out),end=""); return 0
+            elif a.cmd=="resume":
+                out=S.resume_packet(store,a.value)
+                if a.markdown:
+                    print(S.resume_markdown(out),end=""); return 0
             elif a.cmd=="find-conflicts": out=S.conflicts(projection,a.project)
             elif a.cmd=="relations": out=S.relationships_for(projection,a.entity_id,a.predicate,a.direction)
             elif a.cmd=="work-items": out=S.work_items(projection,a.project,a.state)
