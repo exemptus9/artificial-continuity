@@ -13,6 +13,8 @@ def main(argv=None):
     for name in ("find-entity","provenance","resume"):
         p=sub.add_parser(name); p.add_argument("ledger",type=Path); p.add_argument("value")
     p=sub.add_parser("find-conflicts"); p.add_argument("ledger",type=Path); p.add_argument("--project")
+    p=sub.add_parser("relations"); p.add_argument("ledger",type=Path); p.add_argument("entity_id"); p.add_argument("--predicate"); p.add_argument("--direction",choices=["in","out","both"],default="both")
+    p=sub.add_parser("work-items"); p.add_argument("ledger",type=Path); p.add_argument("--project"); p.add_argument("--state",action="append",default=[])
     p=sub.add_parser("changes"); p.add_argument("ledger",type=Path); p.add_argument("--since"); p.add_argument("--until"); p.add_argument("--project")
     p=sub.add_parser("project-state"); p.add_argument("ledger",type=Path); p.add_argument("project_id")
     p=sub.add_parser("export"); p.add_argument("ledger",type=Path)
@@ -31,6 +33,8 @@ def main(argv=None):
             elif a.cmd=="provenance": out=S.get_provenance(projection,a.value)
             elif a.cmd=="resume":\n                out=S.resume_packet(store,a.value)\n                if a.markdown:\n                    print(S.resume_markdown(out),end=""); return 0
             elif a.cmd=="find-conflicts": out=S.conflicts(projection,a.project)
+            elif a.cmd=="relations": out=S.relationships_for(projection,a.entity_id,a.predicate,a.direction)
+            elif a.cmd=="work-items": out=S.work_items(projection,a.project,a.state)
             elif a.cmd=="changes": out=S.query_changes(projection,a.since,a.until,a.project)
             elif a.cmd=="project-state":
                 pid=a.project_id; entity=projection["entities"].get(pid)
