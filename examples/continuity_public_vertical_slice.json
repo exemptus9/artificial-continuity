@@ -19,6 +19,12 @@
       "locator": "https://github.com/exemptus9/artificial-continuity/commit/ea41a077e753f90fb78de8e2e406b5f5af05f052",
       "observed_at": "2026-10-05T13:57:34Z",
       "note": "Public main release commit: Continuity 0.20 private archive and account reconciliation."
+    },
+    {
+      "id": "SRC.SEMANTIC_PR9",
+      "locator": "https://github.com/exemptus9/artificial-continuity/pull/9",
+      "observed_at": "2026-10-07T17:39:45Z",
+      "note": "Public draft PR #9 carrying the semantic Continuity and voice-boundary implementation."
     }
   ]
 }
