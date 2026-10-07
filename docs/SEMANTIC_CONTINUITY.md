@@ -48,6 +48,8 @@ Synthetic `example.invalid` sources are used only for destructive edge-case test
 
 This permits Android speech APIs, Termux, whisper.cpp/faster-whisper, OS dictation, cloud STT, local TTS, or future voice models without changing Continuity's ledger semantics. Preserve original audio as a source object when audio itself matters; otherwise the transcript should record which STT adapter produced it and remain non-canonical until reviewed.
 
+`tools/continuity_voice_termux.py` is a concrete Android adapter for Termux:API. It invokes `termux-speech-to-text`, takes the final non-empty recognition candidate, routes it through the same safety boundary, and optionally speaks Continuity's response with `termux-tts-speak`. It never uses `shell=True`, and it still cannot commit a spoken write. Physical-device microphone/TTS behavior remains a device-validation gate.
+
 ## Build vs integrate
 
 - **Keep existing Continuity object storage + append-only journals + FTS5.** They are already implemented, dependency-light, inspectable, and tested.
