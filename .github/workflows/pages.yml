@@ -17,6 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the previous published source for the upgrade test
+        uses: actions/checkout@v4
+        with:
+          ref: ea41a077e753f90fb78de8e2e406b5f5af05f052
+          path: .release-baseline
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -49,6 +55,7 @@ jobs:
           node tests/family-recovery-browser.cjs
           node tests/archive-browser.cjs
           node tests/release-browser.cjs
+          CONTINUITY_BASELINE_SITE=.release-baseline/site node tests/update-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -82,3 +89,26 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify published bytes
+        env:
+          LIVE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python3 tools/verify_live_release.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned live-browser test tooling
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Verify published workflow in a fresh browser
+        env:
+          CONTINUITY_LIVE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: node tests/live-release-browser.cjs
+      - name: Preserve live verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: continuity-live-release-evidence
+          path: test-artifacts/
+          retention-days: 7
+          if-no-files-found: error

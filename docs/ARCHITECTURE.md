@@ -72,6 +72,10 @@ The architecture supports:
 - explicit conflict review
 - adoption through a provenance-bearing event
 
+## Intention semantics and assistant boundary
+
+The current seven browser intention fields summarize user-recorded project position, not independently proved truth. See [Intention fields and the ChatGPT bridge](INTENTIONS_AND_CHATGPT_BRIDGE.md) for precise distinctions between barriers, dependencies, genuine waiting and actionable next steps. Assistant output is non-canonical until the user selects proposed fields. Future typed relations and direct MCP integration must preserve this approval boundary; neither is silently enabled by the present UI changes.
+
 ## Design invariant
 
 **Reasoning may be replaceable. Continuity semantics should remain inspectable, portable, and user-governed.**
