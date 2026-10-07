@@ -171,3 +171,24 @@ def resume_packet(store,pid):
     arts=sorted([_copy(a) for a in p["artifacts"].values() if a["project_id"]==pid],key=lambda x:(x["recorded_at"],x["id"])); blockers=[_copy(r) for r in p["relationships"].values() if r["subject_id"]==pid and r["predicate"]=="blocked_by" and r.get("status")!="superseded"]; ev=set()
     for z in claims+decisions+arts+work+blockers: ev.update(z.get("source_refs",z.get("evidence_refs",[])))
     return {"format":RESUME_FORMAT,"generated_at":now(),"ledger":h,"project":{"id":pid,"name":project["name"],"aliases":project.get("aliases",[]),"name_history":project["name_history"]},"objective":next((c["value"] for c in claims if c["predicate"]=="objective"),None),"canonical_claims":claims,"canonical_decisions":decisions,"last_verified_accomplishment":done[-1] if done else None,"unresolved_conflicts":conflicts(p,pid),"blockers":blockers,"artifacts":arts,"evidence":[_copy(p["sources"][s]) for s in sorted(ev) if s in p["sources"]],"do_not_redo":[{"work_id":w["id"],"summary":w["summary"],"state":w["state"],"evidence_refs":w.get("evidence_refs",[])} for w in done],"next_actions":[{"work_id":w["id"],"summary":w["summary"],"state":w["state"]} for w in active]}
+
+def resume_markdown(packet):
+    if not isinstance(packet, dict) or packet.get("format") != RESUME_FORMAT:
+        raise ContinuityError("expected ContinuityResumePacket/1")
+    project=packet["project"]
+    lines=[f"# Resume — {project['name']}", "", f"Project ID: {project['id']}", f"Ledger revision: {packet['ledger']['revision']}", "", "## Objective", str(packet.get("objective") or "Not recorded."), ""]
+    last=packet.get("last_verified_accomplishment")
+    lines += ["## Last verified accomplishment", (f"{last['state'].upper()} — {last['summary']} ({last['id']})" if last else "None recorded."), ""]
+    sections=[
+        ("Canonical decisions", packet.get("canonical_decisions", []), lambda x: f"- {x['key']}: {json.dumps(x['value'], ensure_ascii=False)} [{x.get('status','unknown')}]"),
+        ("Unresolved conflicts", packet.get("unresolved_conflicts", []), lambda x: f"- {x['predicate']}: {json.dumps(x['values'], ensure_ascii=False)}"),
+        ("Blockers", packet.get("blockers", []), lambda x: f"- {x['predicate']} → {x['object_id']} ({x['id']})"),
+        ("Current artifacts", packet.get("artifacts", []), lambda x: f"- {x['name']} — {x['locator']} ({x['id']})"),
+        ("Do not redo", packet.get("do_not_redo", []), lambda x: f"- {x['summary']} — {x['state']} ({x['work_id']})"),
+        ("Next actions", packet.get("next_actions", []), lambda x: f"- {x['summary']} — {x['state']} ({x['work_id']})"),
+        ("Evidence pointers", packet.get("evidence", []), lambda x: f"- {x['id']} — {x['locator']}")
+    ]
+    for title,rows,render in sections:
+        lines += [f"## {title}"] + ([render(x) for x in rows] if rows else ["None recorded."]) + [""]
+    lines += ["## Resume rule", "Continue from the next actions above. Do not repeat evidence-backed work listed under Do not redo unless new evidence invalidates it.", ""]
+    return "\n".join(lines)
