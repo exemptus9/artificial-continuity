@@ -12,6 +12,7 @@ def main(argv=None):
     p=sub.add_parser("append"); p.add_argument("ledger",type=Path); p.add_argument("record",type=Path); p.add_argument("--expected-hash",required=True); p.add_argument("--approve",action="store_true")
     for name in ("find-entity","provenance","resume"):
         p=sub.add_parser(name); p.add_argument("ledger",type=Path); p.add_argument("value")
+        if name=="resume": p.add_argument("--markdown",action="store_true")
     p=sub.add_parser("find-conflicts"); p.add_argument("ledger",type=Path); p.add_argument("--project")
     p=sub.add_parser("relations"); p.add_argument("ledger",type=Path); p.add_argument("entity_id"); p.add_argument("--predicate"); p.add_argument("--direction",choices=["in","out","both"],default="both")
     p=sub.add_parser("work-items"); p.add_argument("ledger",type=Path); p.add_argument("--project"); p.add_argument("--state",action="append",default=[])
