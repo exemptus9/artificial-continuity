@@ -1,5 +1,6 @@
 import json
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 import sys
@@ -12,6 +13,7 @@ import continuity_voice as V
 T0="2026-10-04T03:10:50+00:00"
 T1="2026-10-05T13:57:36+00:00"
 T2="2026-10-07T17:29:00+00:00"
+T3="2026-10-07T17:39:45+00:00"
 
 class SemanticTests(unittest.TestCase):
     def setUp(self):
@@ -24,15 +26,16 @@ class SemanticTests(unittest.TestCase):
         self.source("SRC.MAIN_PREMERGE","https://github.com/exemptus9/artificial-continuity/tree/724ab357b714e45d1073b1989eff370bd31b66c2",T0)
         self.source("SRC.PR5","https://github.com/exemptus9/artificial-continuity/pull/5",T1)
         self.source("SRC.MAIN_CURRENT","https://github.com/exemptus9/artificial-continuity/commit/ea41a077e753f90fb78de8e2e406b5f5af05f052",T1)
+        self.source("SRC.SEMANTIC_PR9","https://github.com/exemptus9/artificial-continuity/pull/9",T3)
         self.add(S.record("entity_recorded","REC.PROJECT",{"id":"PROJECT.artificial-continuity","kind":"project","name":"Artificial Continuity","aliases":["Continuity"]},["SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("claim_recorded","REC.CLAIM.OLD",{"id":"CLAIM.CONTEXT_ON_MAIN.OLD","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":False,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T0,"valid_to":T1},["SRC.MAIN_PREMERGE"],at=T0))
         self.add(S.record("claim_recorded","REC.CLAIM.NEW",{"id":"CLAIM.CONTEXT_ON_MAIN.NEW","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":True,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T1},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("claim_resolution","REC.RESOLVE.CONTEXT",{"winner":"CLAIM.CONTEXT_ON_MAIN.NEW","superseded":["CLAIM.CONTEXT_ON_MAIN.OLD"],"reason":"PR #5 merged into main; preserve earlier state as historical."},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
-        self.add(S.record("claim_recorded","REC.OBJECTIVE",{"id":"CLAIM.OBJECTIVE","subject_id":"PROJECT.artificial-continuity","predicate":"objective","value":"Preserve and resume evidence-backed human work across models, tools, sessions, and time.","status":"canonical","origin":"user-confirmed","confidence":1.0},["SRC.MAIN_CURRENT"],at=T2))
+        self.add(S.record("claim_recorded","REC.OBJECTIVE",{"id":"CLAIM.OBJECTIVE","subject_id":"PROJECT.artificial-continuity","predicate":"objective","value":"Continuity is the product; the model is a replaceable reasoning engine.","status":"canonical","origin":"source-observed","confidence":1.0},["SRC.MAIN_CURRENT"],at=T2))
         self.add(S.record("decision_recorded","REC.DECISION.REPLACEABLE",{"id":"DECISION.REPLACEABLE_ENGINE","project_id":"PROJECT.artificial-continuity","key":"reasoning_engine","value":"replaceable","status":"canonical"},["SRC.MAIN_CURRENT"],at=T2))
         self.add(S.record("artifact_recorded","REC.ARTIFACT.CONTEXT",{"id":"ART.CONTEXT_CORE","project_id":"PROJECT.artificial-continuity","name":"Controlled capture/context core","locator":"https://github.com/exemptus9/artificial-continuity/pull/5","status":"released"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("work_state_set","REC.WORK.RELEASED",{"id":"WORK.CONTEXT_CORE","project_id":"PROJECT.artificial-continuity","summary":"Controlled text capture/store/FTS5/scoped retrieval/client/backup","state":"released","evidence_refs":["SRC.PR5","SRC.MAIN_CURRENT"]},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
-        self.add(S.record("work_state_set","REC.WORK.SEMANTICS",{"id":"WORK.SEMANTIC_LAYER","project_id":"PROJECT.artificial-continuity","summary":"Implement provenance-aware claims, canonical temporal state, conflicts, and resume packets","state":"implemented","evidence_refs":["SRC.MAIN_CURRENT"]},["SRC.MAIN_CURRENT"],at=T2))
+        self.add(S.record("work_state_set","REC.WORK.SEMANTICS",{"id":"WORK.SEMANTIC_LAYER","project_id":"PROJECT.artificial-continuity","summary":"Implement provenance-aware claims, canonical temporal state, conflicts, and resume packets","state":"implemented","evidence_refs":["SRC.SEMANTIC_PR9"]},["SRC.SEMANTIC_PR9"],at=T2))
     def test_temporal_supersession_preserves_history(self):
         self.seed(); p,_=S.replay(self.store)
         self.assertEqual(p["claims"]["CLAIM.CONTEXT_ON_MAIN.OLD"]["status"],"superseded")
@@ -62,8 +65,8 @@ class SemanticTests(unittest.TestCase):
         self.assertIn("WORK.SEMANTIC_LAYER",{x["work_id"] for x in packet["next_actions"]})
         fresh_input=json.loads(json.dumps(packet))
         self.assertEqual(fresh_input["project"]["id"],"PROJECT.artificial-continuity")
-        self.add(S.record("artifact_recorded","REC.ARTIFACT.RESUME",{"id":"ART.RESUME_RECEIPT","project_id":"PROJECT.artificial-continuity","name":"Fresh-agent resume receipt","locator":"continuity:test:resume-receipt","status":"verified"},["SRC.MAIN_CURRENT"],actor="fresh-agent",at=T2))
-        self.add(S.record("event_recorded","REC.EVENT.RESUMED",{"project_id":"PROJECT.artificial-continuity","event_type":"resumed_by_fresh_agent","details":{"resume_revision":fresh_input["ledger"]["revision"],"artifact_id":"ART.RESUME_RECEIPT"}},["SRC.MAIN_CURRENT"],actor="fresh-agent",at=T2))
+        self.add(S.record("artifact_recorded","REC.ARTIFACT.RESUME",{"id":"ART.RESUME_RECEIPT","project_id":"PROJECT.artificial-continuity","name":"Fresh-agent resume receipt","locator":"continuity:test:resume-receipt","status":"verified"},["SRC.SEMANTIC_PR9"],actor="fresh-agent",at=T2))
+        self.add(S.record("event_recorded","REC.EVENT.RESUMED",{"project_id":"PROJECT.artificial-continuity","event_type":"resumed_by_fresh_agent","details":{"resume_revision":fresh_input["ledger"]["revision"],"artifact_id":"ART.RESUME_RECEIPT"}},["SRC.SEMANTIC_PR9"],actor="fresh-agent",at=T2))
         p,h=S.replay(self.store); self.assertIn("ART.RESUME_RECEIPT",p["artifacts"]); self.assertGreater(h["revision"],fresh_input["ledger"]["revision"])
         packet2=S.resume_packet(self.store,"PROJECT.artificial-continuity")
         self.assertIn("ART.RESUME_RECEIPT",{a["id"] for a in packet2["artifacts"]})
@@ -87,6 +90,21 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual(packet["last_verified_accomplishment"],None)
         self.assertIn("W",{x["work_id"] for x in packet["next_actions"]})
         self.assertNotIn("W",{x["work_id"] for x in packet["do_not_redo"]})
+    def test_cli_verifies_serialized_ledger(self):
+        self.seed()
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/"ledger.json"; S.atomic_json(path,self.store,False)
+            cp=subprocess.run([sys.executable,str(TOOLS/"continuity_cli.py"),"verify",str(path)],capture_output=True,text=True)
+            self.assertEqual(cp.returncode,0,cp.stderr); self.assertTrue(json.loads(cp.stdout)["valid"])
+
+    def test_resume_has_machine_and_human_readable_forms(self):
+        self.seed(); packet=S.resume_packet(self.store,"PROJECT.artificial-continuity")
+        md=S.resume_markdown(packet)
+        self.assertEqual(packet["format"],"ContinuityResumePacket/1")
+        self.assertIn("# Resume — Artificial Continuity",md)
+        self.assertIn("## Do not redo",md); self.assertIn("WORK.CONTEXT_CORE",md)
+        self.assertIn("## Next actions",md); self.assertIn("WORK.SEMANTIC_LAYER",md)
+
     def test_voice_reads_and_stages_writes(self):
         self.seed()
         with tempfile.TemporaryDirectory() as d:
