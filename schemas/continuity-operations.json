@@ -3,23 +3,79 @@
   "interface": "provider-neutral-cli",
   "entrypoint": "python3 tools/continuity_cli.py",
   "operations": {
-    "get_project_state": {"command": "project-state <ledger> <project_id>", "mutates": false},
-    "get_resume_packet": {"command": "resume <ledger> <project_id> [--markdown]", "mutates": false, "machine_format": "ContinuityResumePacket/1"},
-    "find_entity": {"command": "find-entity <ledger> <id-name-or-alias>", "mutates": false},
-    "get_provenance": {"command": "provenance <ledger> <object_id>", "mutates": false},
-    "find_conflicts": {"command": "find-conflicts <ledger> [--project <project_id>]", "mutates": false},
-    "query_changes": {"command": "changes <ledger> [--since <iso8601>] [--until <iso8601>] [--project <project_id>]", "mutates": false},
-    "find_relationships": {"command": "relations <ledger> <entity_id> [--predicate <predicate>] [--direction in|out|both]", "mutates": false},
-    "get_work_items": {"command": "work-items <ledger> [--project <project_id>] [--state <state>]...", "mutates": false},
-    "record_event": {"command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve", "record_type": "event_recorded", "mutates": true, "concurrency": "optimistic hash check"},
-    "record_decision": {"command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve", "record_type": "decision_recorded", "mutates": true, "concurrency": "optimistic hash check"},
-    "record_artifact": {"command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve", "record_type": "artifact_recorded", "mutates": true, "concurrency": "optimistic hash check"},
-    "mark_verified": {"command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve", "record_type": "work_state_set", "required_payload": {"state": "verified", "evidence_refs": "one or more registered source IDs"}, "mutates": true, "concurrency": "optimistic hash check"}
+    "get_project_state": {
+      "command": "project-state <ledger> <project_id>",
+      "mutates": false
+    },
+    "get_resume_packet": {
+      "command": "resume <ledger> <project_id> [--markdown]",
+      "mutates": false,
+      "machine_format": "ContinuityResumePacket/1"
+    },
+    "find_entity": {
+      "command": "find-entity <ledger> <id-name-or-alias>",
+      "mutates": false
+    },
+    "get_provenance": {
+      "command": "provenance <ledger> <object_id>",
+      "mutates": false
+    },
+    "find_conflicts": {
+      "command": "find-conflicts <ledger> [--project <project_id>]",
+      "mutates": false
+    },
+    "query_changes": {
+      "command": "changes <ledger> [--since <iso8601>] [--until <iso8601>] [--project <project_id>]",
+      "mutates": false
+    },
+    "find_relationships": {
+      "command": "relations <ledger> <entity_id> [--predicate <predicate>] [--direction in|out|both]",
+      "mutates": false
+    },
+    "get_work_items": {
+      "command": "work-items <ledger> [--project <project_id>] [--state <state>]...",
+      "mutates": false
+    },
+    "record_event": {
+      "command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve",
+      "record_type": "event_recorded",
+      "mutates": true,
+      "concurrency": "optimistic hash check"
+    },
+    "record_decision": {
+      "command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve",
+      "record_type": "decision_recorded",
+      "mutates": true,
+      "concurrency": "optimistic hash check"
+    },
+    "record_artifact": {
+      "command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve",
+      "record_type": "artifact_recorded",
+      "mutates": true,
+      "concurrency": "optimistic hash check"
+    },
+    "mark_verified": {
+      "command": "append <ledger> <record.json> --expected-hash <store_sha256> --approve",
+      "record_type": "work_state_set",
+      "required_payload": {
+        "state": "verified",
+        "evidence_refs": "one or more registered source IDs"
+      },
+      "mutates": true,
+      "concurrency": "optimistic hash check"
+    }
   },
   "voice_boundary": {
     "entrypoint": "python3 tools/continuity_voice.py --ledger <ledger> --text <transcript>",
     "read_operations_execute": true,
-    "write_operations": "stage-only; explicit owner confirmation required"
+    "write_operations": "stage-only; explicit owner confirmation required",
+    "android_termux_entrypoint": "python3 tools/continuity_voice_termux.py --ledger <ledger>",
+    "android_requirements": [
+      "Termux:API app",
+      "termux-api package",
+      "termux-speech-to-text",
+      "termux-tts-speak"
+    ]
   },
   "mcp_mapping": "Expose each operation above as an MCP tool without changing ledger semantics or moving authority into the MCP server."
 }
