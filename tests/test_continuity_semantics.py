@@ -9,6 +9,7 @@ TOOLS=Path(__file__).resolve().parents[1]/"tools"
 sys.path.insert(0,str(TOOLS))
 import continuity_semantics as S
 import continuity_voice as V
+import continuity_voice_termux as VT
 
 T0="2026-10-04T03:10:50+00:00"
 T1="2026-10-05T13:57:36+00:00"
@@ -142,6 +143,10 @@ class SemanticTests(unittest.TestCase):
         self.assertIn("# Resume — Artificial Continuity",md)
         self.assertIn("## Do not redo",md); self.assertIn("WORK.CONTEXT_CORE",md)
         self.assertIn("## Next actions",md); self.assertIn("WORK.SEMANTIC_LAYER",md)
+
+    def test_termux_voice_uses_final_partial_match(self):
+        self.assertEqual(VT.final_transcript("partial\nfinal command\n"),"final command")
+        with self.assertRaises(S.ContinuityError): VT.final_transcript("\n")
 
     def test_voice_reads_and_stages_writes(self):
         self.seed()
