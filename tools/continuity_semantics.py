@@ -51,7 +51,8 @@ def _validate(r):
         if not _id(x.get("entity_id")) or not x.get("name"): raise ContinuityError("bad rename")
     elif t=="claim_recorded":
         if not _id(x.get("id")) or not _id(x.get("subject_id")) or not x.get("predicate") or "value" not in x or x.get("status") not in CANON or x.get("origin") not in ORIGIN: raise ContinuityError("bad claim")
-        if not 0<=x.get("confidence",1)<=1: raise ContinuityError("bad confidence")
+        if isinstance(x.get("confidence"),bool) or not isinstance(x.get("confidence"),(int,float)) or not 0<=x["confidence"]<=1: raise ContinuityError("claim confidence is required from 0 to 1")
+        if not isinstance(x.get("authority"),str) or not x["authority"].strip(): raise ContinuityError("claim authority is required")
         for k in ("valid_from","valid_to"):
             if x.get(k): _time(x[k])
     elif t=="claim_resolution":
@@ -177,7 +178,7 @@ def work_items(p,project_id=None,states=None):
     wanted=set(states or [])
     unknown=wanted-WORK
     if unknown: raise ContinuityError("unknown work state: "+",".join(sorted(unknown)))
-    return sorted([_copy(w) for w in p["work"].values() if (project_id is None or w["project_id"]==project_id) and (not wanted or w["state"] in wanted)],key=lambda x:(x["updated_at"],x["id"]),reverse=True)
+    return sorted([_copy(w) for w in p["work"].values() if (project_id is None or w["project_id"]==project_id) and (not wanted or w["state"] in wanted)],key=lambda x:(_time(x["updated_at"]).timestamp(),x["id"]),reverse=True)
 
 def _best(rows,key="status"):
     rank={"canonical":5,"user-confirmed":4,"observed":3,"provisional":2,"possible":1,"disputed":0,"superseded":-1}
@@ -195,8 +196,8 @@ def resume_packet(store,pid):
     for d in p["decisions"].get(pid,[]):
         if d.get("status")!="superseded": dg.setdefault(d["key"],[]).append(d)
     decisions=sorted([_copy(_best(v)) for v in dg.values()],key=lambda x:x["key"])
-    work=sorted([_copy(w) for w in p["work"].values() if w["project_id"]==pid],key=lambda x:(x["updated_at"],x["id"])); done=[w for w in work if w["state"] in {"tested","verified","released"}]; active=[w for w in work if w["state"] not in {"verified","released","deprecated"}]
-    arts=sorted([_copy(a) for a in p["artifacts"].values() if a["project_id"]==pid],key=lambda x:(x["recorded_at"],x["id"])); blockers=[_copy(r) for r in p["relationships"].values() if r["subject_id"]==pid and r["predicate"]=="blocked_by" and r.get("status")!="superseded"]; ev=set()
+    work=sorted([_copy(w) for w in p["work"].values() if w["project_id"]==pid],key=lambda x:(_time(x["updated_at"]).timestamp(),x["id"])); done=[w for w in work if w["state"] in {"tested","verified","released"}]; active=[w for w in work if w["state"] not in {"verified","released","deprecated"}]
+    arts=sorted([_copy(a) for a in p["artifacts"].values() if a["project_id"]==pid],key=lambda x:(_time(x["recorded_at"]).timestamp(),x["id"])); blockers=[_copy(r) for r in p["relationships"].values() if r["subject_id"]==pid and r["predicate"]=="blocked_by" and r.get("status")!="superseded"]; ev=set()
     for z in claims+decisions+arts+work+blockers: ev.update(z.get("source_refs",z.get("evidence_refs",[])))
     return {"format":RESUME_FORMAT,"generated_at":now(),"ledger":h,"project":{"id":pid,"name":project["name"],"aliases":project.get("aliases",[]),"name_history":project["name_history"]},"objective":next((c["value"] for c in claims if c["predicate"]=="objective"),None),"canonical_claims":claims,"canonical_decisions":decisions,"last_verified_accomplishment":done[-1] if done else None,"unresolved_conflicts":conflicts(p,pid),"blockers":blockers,"artifacts":arts,"evidence":[_copy(p["sources"][s]) for s in sorted(ev) if s in p["sources"]],"do_not_redo":[{"work_id":w["id"],"summary":w["summary"],"state":w["state"],"evidence_refs":w.get("evidence_refs",[])} for w in done],"next_actions":[{"work_id":w["id"],"summary":w["summary"],"state":w["state"]} for w in active]}
 
