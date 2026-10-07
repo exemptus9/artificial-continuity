@@ -20,6 +20,7 @@ def _time(v):
     try:
         d=datetime.fromisoformat(v.replace("Z","+00:00")); assert d.tzinfo
     except Exception as e: raise ContinuityError("timestamp requires timezone") from e
+    return d.astimezone(timezone.utc)
 def _copy(v): return json.loads(json.dumps(v,ensure_ascii=False,allow_nan=False))
 def read_json(path):
     from pathlib import Path
@@ -101,8 +102,12 @@ def _apply(p,r):
         p["relationships"][x["id"]]={**_copy(x),"source_refs":list(r["source_refs"]),"asserted_at":r["at"],"record_id":r["id"]}
     elif t=="artifact_recorded":
         if x["id"] in p["artifacts"]: raise ContinuityError("duplicate artifact")
+        if x.get("status") in {"verified","released"} and not r["source_refs"]: raise ContinuityError("verified/released artifact requires evidence")
         p["artifacts"][x["id"]]={**_copy(x),"source_refs":list(r["source_refs"]),"recorded_at":r["at"],"record_id":r["id"]}
     elif t=="work_state_set":
+        missing=[z for z in x.get("evidence_refs",[]) if z not in p["sources"]]
+        if missing: raise ContinuityError("missing work evidence: "+",".join(missing))
+        if not set(x.get("evidence_refs",[])) <= set(r["source_refs"]): raise ContinuityError("work evidence must be declared in record source_refs")
         old=p["work"].get(x["id"]); hist=[] if not old else old["history"]
         p["work"][x["id"]]={**_copy(x),"history":hist+[{"state":x["state"],"at":r["at"],"record_id":r["id"],"evidence_refs":list(x.get("evidence_refs",[]))}],"source_refs":list(r["source_refs"]),"updated_at":r["at"],"record_id":r["id"]}
     elif t=="decision_recorded": p["decisions"].setdefault(x["project_id"],[]).append({**_copy(x),"source_refs":list(r["source_refs"]),"decided_at":r["at"],"record_id":r["id"]})
@@ -144,18 +149,41 @@ def get_provenance(p,oid):
     for group in ("claims","relationships","artifacts","work"):
         if oid in p[group]:
             o=_copy(p[group][oid]); refs=o.get("source_refs",o.get("evidence_refs",[])); return {"object_type":group,"object":o,"sources":[_copy(p["sources"][s]) for s in refs if s in p["sources"]]}
+    for rows in p["decisions"].values():
+        for d in rows:
+            if d["id"]==oid:
+                o=_copy(d); return {"object_type":"decisions","object":o,"sources":[_copy(p["sources"][s]) for s in o.get("source_refs",[]) if s in p["sources"]]}
     raise ContinuityError("object not found")
 def query_changes(p,since=None,until=None,project_id=None):
-    if since:_time(since)
-    if until:_time(until)
+    start=_time(since) if since else None; end=_time(until) if until else None
     out=[]
     for r in p["events"]:
-        if since and r["at"]<since or until and r["at"]>until: continue
+        instant=_time(r["at"])
+        if start and instant<start or end and instant>end: continue
         x=r["payload"]; related=x.get("project_id")==project_id or x.get("id")==project_id or x.get("subject_id")==project_id
         if project_id is None or related: out.append(_copy(r))
     return out
+
+def relationships_for(p,entity_id,predicate=None,direction="both"):
+    if direction not in {"in","out","both"}: raise ContinuityError("direction must be in, out, or both")
+    rows=[]
+    for r in p["relationships"].values():
+        if predicate and r["predicate"]!=predicate: continue
+        match=(direction in {"out","both"} and r["subject_id"]==entity_id) or (direction in {"in","both"} and r["object_id"]==entity_id)
+        if match: rows.append(_copy(r))
+    return sorted(rows,key=lambda x:(x["predicate"],x["id"]))
+
+def work_items(p,project_id=None,states=None):
+    wanted=set(states or [])
+    unknown=wanted-WORK
+    if unknown: raise ContinuityError("unknown work state: "+",".join(sorted(unknown)))
+    return sorted([_copy(w) for w in p["work"].values() if (project_id is None or w["project_id"]==project_id) and (not wanted or w["state"] in wanted)],key=lambda x:(x["updated_at"],x["id"]),reverse=True)
+
 def _best(rows,key="status"):
-    rank={"canonical":5,"user-confirmed":4,"observed":3,"provisional":2,"possible":1,"disputed":0,"superseded":-1}; return sorted(rows,key=lambda x:(rank.get(x.get(key),0),x.get("asserted_at",x.get("decided_at","")),x["id"]),reverse=True)[0]
+    rank={"canonical":5,"user-confirmed":4,"observed":3,"provisional":2,"possible":1,"disputed":0,"superseded":-1}
+    def stamp(x):
+        v=x.get("asserted_at",x.get("decided_at")); return _time(v).timestamp() if v else float("-inf")
+    return sorted(rows,key=lambda x:(rank.get(x.get(key),0),stamp(x),x["id"]),reverse=True)[0]
 def resume_packet(store,pid):
     p,h=replay(store); project=p["entities"].get(pid)
     if not project or project["kind"]!="project": raise ContinuityError("project not found")
