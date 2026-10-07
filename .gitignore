@@ -1,4 +1,5 @@
 node_modules/
+.release-baseline/
 test-artifacts/
 *.log
 .env
