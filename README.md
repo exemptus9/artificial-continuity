@@ -31,7 +31,7 @@ See [family architecture](docs/FAMILY_ARCHITECTURE.md), [migration](docs/FAMILY_
 
 See [v0.17 release notes](docs/V0_17_RELEASE.md) for scope, safety boundaries and tests.
 
-**Step-by-step guide:** [Intention fields, ChatGPT handoff, examples, error recovery and future integration](docs/INTENTIONS_AND_CHATGPT_BRIDGE.md). The current ChatGPT exchange is user-driven and suggestions require explicit acceptance. General barriers are not automatically reasons to mark the entire intention as WAITING.
+**Step-by-step guide:** [Intention fields, the ChatGPT handoff, examples and error recovery](docs/INTENTIONS_AND_CHATGPT_BRIDGE.md). [Streamlined connection options](docs/CHATGPT_INTEGRATION_PATH.md) distinguish today's one-intention copy/share path from future in-app AI and remote MCP approaches. The current ChatGPT exchange is user-driven and suggestions require explicit acceptance. General barriers are not automatically reasons to mark the entire intention as WAITING.
 
 ### Existing operational workflows
 
