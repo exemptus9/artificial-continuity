@@ -31,6 +31,8 @@ See [family architecture](docs/FAMILY_ARCHITECTURE.md), [migration](docs/FAMILY_
 
 See [v0.17 release notes](docs/V0_17_RELEASE.md) for scope, safety boundaries and tests.
 
+**Step-by-step guide:** [Intention fields, ChatGPT handoff, examples, error recovery and future integration](docs/INTENTIONS_AND_CHATGPT_BRIDGE.md). The current ChatGPT exchange is user-driven and suggestions require explicit acceptance. General barriers are not automatically reasons to mark the entire intention as WAITING.
+
 ### Existing operational workflows
 
 - Reviewed phone ↔ desktop project round trips, optional encrypted files, explicit conflicts and recovery copies: [v0.16](docs/V0_16_RELEASE.md).
