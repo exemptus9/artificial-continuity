@@ -52,7 +52,7 @@ function checkRequests(s){
 function request(s,threadId,id,at){const t=s.threads.find(x=>x.id===threadId);if(!t)fail('Intention not found.');return {id,threadId,base:baseline(t),at,status:'OPEN'};}
 function parseReply(raw){
  if(typeof raw!=='string'||new TextEncoder().encode(raw).length>REPLY_LIMIT)fail('Reply exceeds 64 KB.');
- let text=raw.trim();if(text.startsWith('```')){const match=text.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);if(!match)fail('Paste a single JSON object or one JSON code block.');text=match[1];}
+ let text=raw.trim();if(text.includes('```')){const blocks=[...text.matchAll(/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim)];if(blocks.length!==1||(text.match(/```/g)||[]).length!==2)fail('Paste one JSON object, or a ChatGPT answer with exactly one JSON code block.');text=blocks[0][1].trim();}
  let x;try{x=JSON.parse(text);}catch{fail('Paste the JSON reply, not the surrounding conversation.');}
  if(!x||Array.isArray(x)||x.format!=='ContinuityFormReply/1')fail('Expected a ContinuityFormReply/1 object.');safe(x);
  if(Object.keys(x).some(k=>!['format','requestId','fields','explanation'].includes(k)))fail('Reply includes unsupported operations. Only intention fields are allowed.');
