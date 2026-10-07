@@ -18,6 +18,8 @@ The CLI supplies provider-neutral operations that map directly onto the requeste
 - `provenance`
 - `find-conflicts`
 - `changes`
+- `relations`
+- `work-items`
 - `resume`
 - `export`
 - append-only `append` for `record_event`, `record_decision`, `record_artifact`, relationships, claims, and work-state transitions
@@ -26,16 +28,17 @@ A later MCP adapter should expose these operations rather than inventing a secon
 
 ## Real vertical slice
 
-`examples/continuity_public_vertical_slice.json` records public evidence for this repository itself: the pre-merge main commit, PR #5, and the current v0.20 main release commit. Tests use those real public locators and exact commit/PR timestamps to prove:
+`examples/continuity_public_vertical_slice.json` records public evidence for this repository itself: the pre-merge main commit, PR #5, the current v0.20 main release commit, and draft PR #9 carrying this semantic slice. Tests use those real public locators and exact commit/PR timestamps to prove:
 
 1. old state remains reconstructable,
 2. a new contradictory observation can coexist before resolution,
 3. explicit resolution makes the new claim canonical and the old one superseded,
-4. released work cannot be claimed without evidence,
-5. a Resume Packet tells a fresh agent what not to redo and what remains,
-6. the fresh agent records a new artifact/event,
-7. the new state is replayed and appears in the next Resume Packet,
-8. export/import reconstruction preserves the same projection and hash identity.
+4. a source-backed project→system relationship is retrievable with provenance,
+5. released work cannot be claimed without evidence,
+6. a Resume Packet tells a fresh agent what not to redo and what remains,
+7. the fresh agent records a new artifact/event,
+8. the new state is replayed and appears in the next Resume Packet,
+9. export/import reconstruction preserves the same projection and hash identity.
 
 Synthetic `example.invalid` sources are used only for destructive edge-case tests, not as proof of the real project slice.
 
