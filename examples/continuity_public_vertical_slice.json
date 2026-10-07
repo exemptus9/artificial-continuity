@@ -1,0 +1,24 @@
+{
+  "format": "ContinuityPublicVerticalSliceSeed/1",
+  "project_id": "PROJECT.artificial-continuity",
+  "evidence": [
+    {
+      "id": "SRC.MAIN_PREMERGE",
+      "locator": "https://github.com/exemptus9/artificial-continuity/tree/724ab357b714e45d1073b1989eff370bd31b66c2",
+      "observed_at": "2026-10-04T03:10:50Z",
+      "note": "Public main commit before controlled-context PR #5 was merged."
+    },
+    {
+      "id": "SRC.PR5",
+      "locator": "https://github.com/exemptus9/artificial-continuity/pull/5",
+      "observed_at": "2026-10-05T13:57:36Z",
+      "note": "Public GitHub PR #5; merged_at 2026-10-05T13:57:36Z."
+    },
+    {
+      "id": "SRC.MAIN_CURRENT",
+      "locator": "https://github.com/exemptus9/artificial-continuity/commit/ea41a077e753f90fb78de8e2e406b5f5af05f052",
+      "observed_at": "2026-10-05T13:57:34Z",
+      "note": "Public main release commit: Continuity 0.20 private archive and account reconciliation."
+    }
+  ]
+}
