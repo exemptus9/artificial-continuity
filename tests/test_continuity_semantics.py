@@ -28,6 +28,8 @@ class SemanticTests(unittest.TestCase):
         self.source("SRC.MAIN_CURRENT","https://github.com/exemptus9/artificial-continuity/commit/ea41a077e753f90fb78de8e2e406b5f5af05f052",T1)
         self.source("SRC.SEMANTIC_PR9","https://github.com/exemptus9/artificial-continuity/pull/9",T3)
         self.add(S.record("entity_recorded","REC.PROJECT",{"id":"PROJECT.artificial-continuity","kind":"project","name":"Artificial Continuity","aliases":["Continuity"]},["SRC.MAIN_CURRENT"],at=T1))
+        self.add(S.record("entity_recorded","REC.CONTEXT.SYSTEM",{"id":"SYSTEM.controlled-context","kind":"system","name":"Controlled Context Core"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
+        self.add(S.record("relationship_recorded","REC.REL.IMPLEMENTS",{"id":"REL.PROJECT_IMPLEMENTS_CONTEXT","subject_id":"PROJECT.artificial-continuity","predicate":"implements","object_id":"SYSTEM.controlled-context","status":"canonical"},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("claim_recorded","REC.CLAIM.OLD",{"id":"CLAIM.CONTEXT_ON_MAIN.OLD","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":False,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T0,"valid_to":T1},["SRC.MAIN_PREMERGE"],at=T0))
         self.add(S.record("claim_recorded","REC.CLAIM.NEW",{"id":"CLAIM.CONTEXT_ON_MAIN.NEW","subject_id":"PROJECT.artificial-continuity","predicate":"controlled_context_on_main","value":True,"status":"observed","origin":"source-observed","confidence":1.0,"valid_from":T1},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
         self.add(S.record("claim_resolution","REC.RESOLVE.CONTEXT",{"winner":"CLAIM.CONTEXT_ON_MAIN.NEW","superseded":["CLAIM.CONTEXT_ON_MAIN.OLD"],"reason":"PR #5 merged into main; preserve earlier state as historical."},["SRC.PR5","SRC.MAIN_CURRENT"],at=T1))
@@ -41,7 +43,8 @@ class SemanticTests(unittest.TestCase):
         self.assertEqual(p["claims"]["CLAIM.CONTEXT_ON_MAIN.OLD"]["status"],"superseded")
         self.assertEqual(p["claims"]["CLAIM.CONTEXT_ON_MAIN.NEW"]["status"],"canonical")
         self.assertFalse(S.conflicts(p,"PROJECT.artificial-continuity"))
-        earlier,_=S.replay(self.store,6)
+        resolution_index=next(i for i,e in enumerate(self.store["events"],1) if e["record"]["id"]=="REC.RESOLVE.CONTEXT")
+        earlier,_=S.replay(self.store,resolution_index-1)
         self.assertEqual(earlier["claims"]["CLAIM.CONTEXT_ON_MAIN.OLD"]["status"],"observed")
     def test_conflict_is_visible_until_resolved(self):
         self.source("SRC.A","https://example.invalid/a",T0); self.source("SRC.B","https://example.invalid/b",T1)
@@ -49,11 +52,25 @@ class SemanticTests(unittest.TestCase):
         self.add(S.record("claim_recorded","REC.C1",{"id":"C1","subject_id":"P","predicate":"x","value":1,"status":"observed","origin":"source-observed"},["SRC.A"],at=T0))
         self.add(S.record("claim_recorded","REC.C2",{"id":"C2","subject_id":"P","predicate":"x","value":2,"status":"observed","origin":"source-observed"},["SRC.B"],at=T1))
         p,_=S.replay(self.store); self.assertEqual(len(S.conflicts(p,"P")),1)
+    def test_duplicate_entity_ingestion_is_rejected(self):
+        self.source("SRC.A","https://example.invalid/a",T0)
+        self.add(S.record("entity_recorded","REC.P1",{"id":"P","kind":"project","name":"P"},["SRC.A"],at=T0))
+        with self.assertRaises(S.ContinuityError):
+            self.add(S.record("entity_recorded","REC.P2",{"id":"P","kind":"project","name":"Renamed by duplicate"},["SRC.A"],at=T1))
+
     def test_rename_keeps_stable_identity(self):
         self.source("SRC.A","https://example.invalid/a",T0)
         self.add(S.record("entity_recorded","REC.P",{"id":"P","kind":"project","name":"Old"},["SRC.A"],at=T0))
         self.add(S.record("entity_renamed","REC.RENAME",{"entity_id":"P","name":"New"},["SRC.A"],at=T1))
         p,_=S.replay(self.store); self.assertEqual(S.find_entity(p,"Old")[0]["id"],"P"); self.assertEqual(S.find_entity(p,"New")[0]["id"],"P")
+    def test_relationship_and_provenance_are_retrievable(self):
+        self.seed(); p,_=S.replay(self.store)
+        rel=p["relationships"]["REL.PROJECT_IMPLEMENTS_CONTEXT"]
+        self.assertEqual(rel["predicate"],"implements")
+        prov=S.get_provenance(p,"REL.PROJECT_IMPLEMENTS_CONTEXT")
+        self.assertEqual(prov["object_type"],"relationships")
+        self.assertIn("SRC.PR5",{x["id"] for x in prov["sources"]})
+
     def test_verified_work_requires_evidence(self):
         self.source("SRC.A","https://example.invalid/a",T0)
         self.add(S.record("entity_recorded","REC.P",{"id":"P","kind":"project","name":"P"},["SRC.A"],at=T0))
