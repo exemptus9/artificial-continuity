@@ -1,0 +1,43 @@
+name: Verify Total Recall host core and transfer
+on:
+  push:
+    branches: [main, 'work/**']
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/android-host.yml']
+  pull_request:
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/android-host.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned transfer crypto
+        run: python3 -m pip install -r android/requirements-transfer.txt
+      - name: Fetch and verify pinned host JSON dependency
+        run: |
+          mkdir -p android/build
+          curl --fail --location --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json-20240303.jar
+          echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json-20240303.jar' | sha256sum --check
+      - name: Test Java capture core and Python transfer against current main
+        env:
+          RECALL_JSON_JAR: ${{ github.workspace }}/android/build/json-20240303.jar
+        run: bash android/tests/run-host-tests.sh > android/build/host-tests.log 2>&1 || { tail -n 120 android/build/host-tests.log; exit 1; }
+      - name: Preserve synthetic host evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-recall-host-evidence
+          path: |
+            android/build/evidence
+            android/build/host-tests.log
+          retention-days: 7
