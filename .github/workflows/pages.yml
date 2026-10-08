@@ -20,7 +20,7 @@ jobs:
       - name: Check out the previous published source for the upgrade test
         uses: actions/checkout@v4
         with:
-          ref: ea41a077e753f90fb78de8e2e406b5f5af05f052
+          ref: 80a3099ce20f20be2b99f94483e972c4f049c414
           path: .release-baseline
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -54,6 +54,7 @@ jobs:
           node tests/family-browser.cjs
           node tests/family-recovery-browser.cjs
           node tests/archive-browser.cjs
+          node tests/synchronization-browser.cjs
           node tests/release-browser.cjs
           CONTINUITY_BASELINE_SITE=.release-baseline/site node tests/update-browser.cjs
       - name: Preserve test evidence
