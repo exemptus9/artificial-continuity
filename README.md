@@ -1,4 +1,4 @@
-# Artificial Continuity · 0.20.1
+# Artificial Continuity · 0.21.0
 
 **Artificial Intelligence helps you think. Artificial Continuity helps your thinking survive time.**
 
@@ -20,7 +20,7 @@ This is the working **manual handoff**, not a direct ChatGPT account connection 
 
 Create an intention with One-box intake, attach original text, review evidence, and record where you stopped. Use a Resume Pack or the ChatGPT handoff to continue in another conversation.
 
-To update an installed copy: save your work, export a backup, then **Device & drafts → Check for app update → App update ready · save & apply**. Confirm the reload and look for **v0.20.1**. **Do not clear browser data.** The app version is 0.20.1; the storage schema remains 0.11.0. No data migration is needed for this iteration.
+To update an installed copy: save your work, export a backup, then **Device & drafts → Check for app update → App update ready · save & apply**. Confirm the reload and look for **v0.21.0**. **Do not clear browser data.** The app version is 0.21.0; the storage schema remains 0.11.0. No data migration is needed for this iteration.
 
 ## Preserved capabilities and boundaries
 
@@ -42,7 +42,7 @@ npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.1
 npx playwright install chromium
 ```
 
-The [test/deploy workflow](.github/workflows/pages.yml) runs the full browser suite and a real pinned 0.20.0 → 0.20.1 upgrade test before main deployment. It then compares published assets with source SHA-256 values and runs a fresh-browser workflow against the public URL. Source and verification artifacts are retained by GitHub Actions. Native Android launcher/app-switcher/share-picker behavior still needs physical-device validation.
+The [test/deploy workflow](.github/workflows/pages.yml) runs the full browser suite and a real pinned 0.20.0 → 0.21.0 upgrade test before main deployment. It then compares published assets with source SHA-256 values and runs a fresh-browser workflow against the public URL. Source and verification artifacts are retained by GitHub Actions. Native Android launcher/app-switcher/share-picker behavior still needs physical-device validation.
 
 A branch is not a release. A successful main deployment and live verification establish publication. Historical experiments and design directions remain in [Development History](docs/DEVELOPMENT_HISTORY.md) and [Architecture](docs/ARCHITECTURE.md); they are not silently enabled features.
 

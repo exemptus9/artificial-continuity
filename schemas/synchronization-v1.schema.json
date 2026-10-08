@@ -1,0 +1,587 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:continuity:synchronization:1",
+  "title": "Continuity synchronization receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "schemaVersion",
+    "privacy",
+    "state",
+    "stateHash",
+    "contentHash"
+  ],
+  "properties": {
+    "format": {
+      "const": "ContinuitySyncReceipt/1"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "privacy": {
+      "const": "PRIVATE"
+    },
+    "stateHash": {
+      "$ref": "#/$defs/hash"
+    },
+    "contentHash": {
+      "$ref": "#/$defs/hash"
+    },
+    "state": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "revision",
+        "entities",
+        "providerMaps",
+        "evidence",
+        "outbox",
+        "operations",
+        "conflicts",
+        "journal",
+        "grants",
+        "inbox"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "entities": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/entity"
+          }
+        },
+        "providerMaps": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "id",
+              "entityId",
+              "privacy",
+              "source",
+              "contentHash",
+              "verification"
+            ]
+          }
+        },
+        "operations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "outbox": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "entityId",
+              "fields",
+              "contentHash",
+              "expiresAt",
+              "entityVersion"
+            ]
+          }
+        },
+        "inbox": {
+          "type": "object"
+        },
+        "journal": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/journalEvent"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "privacy": {
+      "enum": [
+        "PUBLIC",
+        "PRIVATE",
+        "RESTRICTED"
+      ]
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "privacy",
+        "data",
+        "contentHash",
+        "lifecycle",
+        "version",
+        "evidenceIds",
+        "sourceRevisions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "project",
+            "source",
+            "event",
+            "decision",
+            "evidence",
+            "artifact"
+          ]
+        },
+        "privacy": {
+          "$ref": "#/$defs/privacy"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "data": {
+          "type": "object"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/lifecycle"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evidenceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceRevisions": {
+          "type": "object"
+        }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "required": [
+        "id",
+        "operationId",
+        "entityId",
+        "provider",
+        "externalId",
+        "expectedHash",
+        "patch",
+        "patchHash",
+        "sourceEvidenceId",
+        "status",
+        "phase",
+        "privacy",
+        "entityVersion",
+        "entityHash"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "entityId": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "externalId": {
+          "type": "string"
+        },
+        "expectedHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "patchHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "patch": {
+          "type": "object"
+        },
+        "sourceEvidenceId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "PREPARED",
+            "APPLYING",
+            "VERIFYING",
+            "VERIFIED",
+            "WAITING",
+            "CONFLICT",
+            "FAILED",
+            "BLOCKED"
+          ]
+        },
+        "privacy": {
+          "$ref": "#/$defs/privacy"
+        },
+        "phase": {
+          "enum": [
+            "PREPARED",
+            "APPLYING",
+            "VERIFYING",
+            "VERIFIED"
+          ]
+        },
+        "entityVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "entityHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "journalEvent": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "previousHash",
+        "hash",
+        "id",
+        "at",
+        "actor",
+        "operation",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previousHash": {
+          "$ref": "#/$defs/hash"
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "external",
+        "verification",
+        "publication"
+      ],
+      "properties": {
+        "task": {
+          "enum": [
+            "PROPOSED",
+            "DRAFT",
+            "READY",
+            "SUBMITTED",
+            "ACKNOWLEDGED",
+            "VERIFIED",
+            "COMPLETE",
+            "BLOCKED",
+            "WAITING",
+            "CONFLICT",
+            "FAILED",
+            "CANCELLED",
+            "ARCHIVED",
+            "UNKNOWN"
+          ]
+        },
+        "external": {
+          "enum": [
+            "UNKNOWN",
+            "PENDING",
+            "ACKNOWLEDGED",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED"
+          ]
+        },
+        "verification": {
+          "enum": [
+            "UNVERIFIED",
+            "PENDING",
+            "VERIFIED",
+            "FAILED",
+            "CONFLICT"
+          ]
+        },
+        "publication": {
+          "enum": [
+            "PRIVATE",
+            "AUTHORIZED",
+            "PUBLISHED",
+            "REVOKED"
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "externalId",
+        "ref",
+        "observedAt"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "externalId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revisionOrdinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "eventAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "privacy",
+        "source",
+        "data"
+      ],
+      "properties": {
+        "entityId": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "task",
+            "project",
+            "source",
+            "event",
+            "decision",
+            "evidence",
+            "artifact"
+          ]
+        },
+        "privacy": {
+          "$ref": "#/$defs/privacy"
+        },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/source"
+            },
+            {
+              "properties": {
+                "revision": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "data": {
+          "type": "object"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/observedLifecycle"
+        },
+        "baseHash": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "observedLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "enum": [
+            "PROPOSED",
+            "DRAFT",
+            "READY",
+            "SUBMITTED",
+            "ACKNOWLEDGED",
+            "BLOCKED",
+            "WAITING",
+            "CONFLICT",
+            "FAILED",
+            "CANCELLED",
+            "ARCHIVED",
+            "UNKNOWN"
+          ]
+        },
+        "external": {
+          "enum": [
+            "UNKNOWN",
+            "PENDING",
+            "ACKNOWLEDGED",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED"
+          ]
+        },
+        "verification": {
+          "enum": [
+            "UNVERIFIED",
+            "PENDING",
+            "FAILED",
+            "CONFLICT"
+          ]
+        },
+        "publication": {
+          "const": "PRIVATE"
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "required": [
+        "format",
+        "schemaVersion",
+        "purpose",
+        "createdAt",
+        "records",
+        "checkpoint",
+        "limitations",
+        "contentHash"
+      ],
+      "properties": {
+        "format": {
+          "const": "ContinuityContext/1"
+        },
+        "schemaVersion": {
+          "const": 1
+        },
+        "purpose": {
+          "enum": [
+            "private",
+            "public"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "records": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "data",
+              "contentHash"
+            ]
+          }
+        },
+        "checkpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "conflicts": {
+          "type": "array"
+        },
+        "pendingOperations": {
+          "type": "array"
+        },
+        "nextActions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "entityId",
+              "action"
+            ]
+          }
+        },
+        "permittedToolAccess": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contentHash": {
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

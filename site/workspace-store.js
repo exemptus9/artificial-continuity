@@ -20,6 +20,7 @@ class Store{
  tx.oncomplete=()=>resolve(result);tx.onabort=()=>reject(error||tx.error||new Error('Save aborted.'));tx.onerror=()=>{};
  });}
  draft(key,value){return new Promise((resolve,reject)=>{const tx=this.db.transaction('drafts','readwrite');const os=tx.objectStore('drafts');value===null?os.delete(key):os.put(value,key);tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error||new Error('Draft save aborted.'));tx.onerror=()=>{};});}
+ commitSyncCheckpoint(expected,cipher){return new Promise((resolve,reject)=>{const tx=this.db.transaction('recovery','readwrite'),os=tx.objectStore('recovery');let error;const q=os.get('sync-sealed-checkpoint');q.onsuccess=()=>{if((q.result||null)!==expected){error=new Error('Another tab saved newer synchronization evidence. Unlock the saved checkpoint before replacing it.');tx.abort();return;}if(typeof cipher!=='string'||cipher.length>24000000){error=new Error('Invalid encrypted checkpoint.');tx.abort();return;}os.put(cipher,'sync-sealed-checkpoint');};tx.oncomplete=()=>resolve();tx.onabort=()=>reject(error||tx.error||new Error('Checkpoint was not saved.'));tx.onerror=()=>{};});}
  close(){this.db.close();}
 }
 root.WorkspaceStorage={NAME,LEGACY,openDB,Store};if(typeof module!=='undefined')module.exports=root.WorkspaceStorage;

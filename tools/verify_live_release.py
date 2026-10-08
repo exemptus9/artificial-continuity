@@ -39,7 +39,7 @@ def main():
         if pending:
             time.sleep(5)
     out = Path('test-artifacts'); out.mkdir(exist_ok=True)
-    receipt = {'url': base, 'commit': os.environ.get('GITHUB_SHA'), 'version': '0.20.1',
+    receipt = {'url': base, 'commit': os.environ.get('GITHUB_SHA'), 'version': '0.21.0',
                'verifiedAssets': verified, 'failedAssets': list(pending),
                'allPublishedBytesMatch': not pending}
     (out / 'live-assets.json').write_text(json.dumps(receipt, indent=2) + '\n')
