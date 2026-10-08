@@ -418,7 +418,7 @@ class Store:
                     private_directory(destination / directory)
                     copy_object_file(path, destination / relative, digest)
                     manifest["files"][relative] = digest
-            for name in ("intake.json",):
+            for name in ("intake.json", "phone-deletions.json"):
                 path = self.root / name
                 if path.exists():
                     content = path.read_bytes(); C.atomic_write(destination / name, content, replace=False)

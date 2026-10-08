@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="7" android:versionName="0.7.0-test">
+ <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
+ <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
+ <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+ <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+ <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+ <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
+ <application android:label="Total Recall · Test" android:theme="@style/AppTheme" android:icon="@drawable/icon" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
+  <activity android:name="org.continuity.recall.MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+   <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+   <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="*/*"/></intent-filter>
+   <intent-filter><action android:name="android.intent.action.SEND_MULTIPLE"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="*/*"/></intent-filter>
+  </activity>
+  <service android:name="org.continuity.recall.UsageJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false"/>
+  <service android:name="org.continuity.recall.Notifications" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" android:exported="true" android:label="Total Recall metadata (allowlist only)"><intent-filter><action android:name="android.service.notification.NotificationListenerService"/></intent-filter></service>
+  <receiver android:name="org.continuity.recall.Boot" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter></receiver>
+  <provider android:name="org.continuity.recall.ShareProvider" android:authorities="org.continuity.recall.test.share" android:exported="false" android:grantUriPermissions="true"/>
+ </application>
+</manifest>

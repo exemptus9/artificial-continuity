@@ -5,3 +5,8 @@ test-artifacts/
 .env
 __pycache__/
 *.pyc
+
+# Android outputs and private signing material
+android/build/
+*.keystore
+*.jks
