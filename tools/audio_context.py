@@ -81,7 +81,7 @@ def ingest(store, audio, transcript_raw, *, approved=False, project=None, title=
         "settings": settings or {}, "audio_transcript_alignment_verified": False,
         "caution": "Unreviewed transcript. Supplied text, timing and speaker identity may be wrong. Hashes establish preserved bytes, not truth."
     }
-    identity = C.digest({"audio": audio_hash, "transcript": transcript_hash,
+    identity = C.digest({"audio": audio_hash, "audio_name": audio.name, "transcript": transcript_hash,
                          "project": project, "title": title or audio.name,
                          "mechanism": mechanism, "settings": settings or {},
                          "observed_at": observed_at})

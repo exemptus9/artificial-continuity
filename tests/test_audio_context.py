@@ -108,6 +108,27 @@ class AudioTests(unittest.TestCase):
         self.assertTrue(A.verify_audio(recovered, receipt["source_id"])["preserved_bytes_verified"])
         self.assertEqual(len(recovered.search("appointment", G.Principal("owner"))), 1)
 
+    def test_missing_audio_blocks_backup(self):
+        receipt = self.ingest()
+        (self.store.objects / receipt["audio_sha256"]).unlink()
+        with self.assertRaises(C.ContextError): self.store.backup(self.base / "incomplete")
+
+    def test_omitted_transcript_dependency_blocks_backup_verification(self):
+        receipt = self.ingest()
+        backup = self.base / "backup"
+        self.store.backup(backup)
+        manifest = C.read_json(backup / "MANIFEST.json")
+        del manifest["files"]["objects/" + receipt["transcript_sha256"]]
+        C.json_write(backup / "MANIFEST.json", manifest)
+        with self.assertRaises(C.ContextError): G.Store.verify_backup(backup)
+
+    def test_renamed_audio_with_fixed_title_is_separate_source(self):
+        first = self.ingest(title="Same title")
+        renamed = self.base / "renamed.wav"
+        self.audio.rename(renamed); self.audio = renamed
+        second = self.ingest(title="Same title")
+        self.assertNotEqual(first["source_id"], second["source_id"])
+
     def test_speech_adapter_consumes_generator_and_defaults_offline(self):
         seen = {}
         class FakeModel:

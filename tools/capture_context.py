@@ -398,12 +398,30 @@ class Store:
                 "permission_basis": "owner" if principal.role == "owner" else "explicit-startup-project-grant",
                 "trust": "untrusted-source-data", "historical_dates_before_baseline": "unknown"}
 
+    @staticmethod
+    def required_objects(source):
+        """Known source dependencies; provenance cannot claim absent originals."""
+        hashes = []
+        if source.get("format") == SOURCE_FORMAT or source.get("locator", "").startswith("continuity-object:sha256:"):
+            hashes.append(source.get("sha256"))
+        origin = source.get("origin", {})
+        if isinstance(origin, dict) and origin.get("format") == "ContinuityAudioTranscript/1":
+            hashes.extend(origin.get(key) for key in ("audio_sha256", "transcript_sha256"))
+        if any(not isinstance(digest, str) or not SHA.fullmatch(digest) for digest in hashes):
+            raise C.ContextError("Invalid source dependency checksum.")
+        return hashes
+
     def backup(self, destination):
         destination = private_directory(destination)
         if destination == self.root or self.root in destination.parents:
             raise C.ContextError("Backup must be outside the working data directory.")
         with C.locked(self.journal):
             raw = self.journal.read_bytes(); data, head = C.load_store(C.parse(raw))
+            for source in data["sources"]:
+                for digest in self.required_objects(source):
+                    path = self.objects / digest
+                    if path.is_symlink() or not path.is_file() or file_hash(path) != digest:
+                        raise C.ContextError("Backup source dependency is missing or changed.")
             manifest = {"format": "ContinuityObjectBackup/1", "journal_sha256": head["store_sha256"], "files": {"Context_Store.json": raw_hash(raw)}, "encrypted": False}
             C.atomic_write(destination / "Context_Store.json", raw, replace=False)
             # Include all objects, history, initial intake witness and pending outbox.
@@ -442,10 +460,10 @@ class Store:
         if head["store_sha256"] != manifest["journal_sha256"]:
             raise C.ContextError("Backup journal identity changed.")
         for s in data["sources"]:
-            if s.get("format") == SOURCE_FORMAT or s.get('locator', '').startswith('continuity-object:sha256:'):
-                name = "objects/" + s["sha256"]
-                if manifest["files"].get(name) != s["sha256"]:
-                    raise C.ContextError("Backup omits an authoritative capture object.")
+            for digest in Store.required_objects(s):
+                name = "objects/" + digest
+                if manifest["files"].get(name) != digest:
+                    raise C.ContextError("Backup omits an authoritative source dependency.")
         return {"verified": True, "files": len(manifest["files"]), "context": head, "encrypted": False}
 
     def browser_preview(self, raw):
