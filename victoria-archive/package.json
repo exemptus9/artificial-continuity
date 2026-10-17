@@ -1,0 +1,8 @@
+{
+  "name":"victoria-archive",
+  "version":"0.1.0",
+  "private":true,
+  "type":"module",
+  "engines":{"node":">=22"},
+  "dependencies":{"ai":"7.0.143","express":"5.1.0"}
+}
