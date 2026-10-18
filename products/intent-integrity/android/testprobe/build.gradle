@@ -1,0 +1,2 @@
+plugins { id 'com.android.application' }
+android { namespace 'com.intentintegrity.testprobe'; compileSdk 36; defaultConfig { applicationId 'com.intentintegrity.testprobe'; minSdk 26; targetSdk 36; versionCode 1; versionName 'test-only' } }

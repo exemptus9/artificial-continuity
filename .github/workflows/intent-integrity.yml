@@ -2,7 +2,7 @@ name: Build Intent Integrity
 on:
   push:
     branches: ['intent-integrity/**']
-    paths: ['products/intent-integrity/**', '.github/workflows/intent-integrity.yml']
+    paths: ['products/intent-integrity/android/**', '.github/workflows/intent-integrity.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,11 +17,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/upload-artifact@v4
-        with:
-          name: intent-integrity-source-snapshot
-          path: products/intent-integrity/
-          retention-days: 14
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -41,9 +36,9 @@ jobs:
           mkdir -p build/policy-tests
           javac -d build/policy-tests app/src/main/java/com/intentintegrity/app/Routes.java app/src/main/java/com/intentintegrity/app/Lease.java tests/RoutesTest.java
           java -cp build/policy-tests com.intentintegrity.app.RoutesTest
-      - name: Build APKs and unsigned store bundles
+      - name: Build APKs, store bundles and isolated test utilities
         working-directory: products/intent-integrity/android
-        run: gradle --no-daemon :app:assembleCoreDebug :app:assembleGuardDebug :app:bundleCoreRelease :app:bundleGuardRelease :fixture:assembleDebug
+        run: gradle --no-daemon :app:assembleCoreDebug :app:assembleGuardDebug :app:bundleCoreRelease :app:bundleGuardRelease :fixture:assembleDebug :testprobe:assembleDebug
       - name: Package and verify
         shell: bash
         run: |
@@ -53,6 +48,7 @@ jobs:
           cp products/intent-integrity/android/app/build/outputs/bundle/coreRelease/*.aab release/Intent-Integrity-Core-0.2.0-unsigned.aab
           cp products/intent-integrity/android/app/build/outputs/bundle/guardRelease/*.aab release/Intent-Integrity-Guard-0.2.0-unsigned.aab
           cp products/intent-integrity/android/fixture/build/outputs/apk/debug/*.apk release/Intent-Integrity-Fixture-debug.apk
+          cp products/intent-integrity/android/testprobe/build/outputs/apk/debug/*.apk release/Intent-Integrity-TestProbe-debug.apk
           for f in release/*.apk; do "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$f" >> release/signature-verification.txt; done
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/Intent-Integrity-Guard-0.2.0-test.apk > release/guard-package.txt
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions release/Intent-Integrity-Core-0.2.0-test.apk > release/core-permissions.txt

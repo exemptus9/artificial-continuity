@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="Intent Integrity TEST PROBE" android:allowBackup="false"/><instrumentation android:name=".Snapshot" android:targetPackage="com.intentintegrity.testprobe" android:functionalTest="true" android:label="CI only: non-suppressing UI snapshot"/></manifest>
