@@ -1,0 +1,58 @@
+name: Build Intent Integrity
+on:
+  push:
+    branches: ['intent-integrity/**']
+    paths: ['products/intent-integrity/**', '.github/workflows/intent-integrity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: intent-integrity-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Install Android platform
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Policy and lease unit tests
+        working-directory: products/intent-integrity/android
+        run: |
+          mkdir -p build/policy-tests
+          javac -d build/policy-tests app/src/main/java/com/intentintegrity/app/Routes.java app/src/main/java/com/intentintegrity/app/Lease.java tests/RoutesTest.java
+          java -cp build/policy-tests com.intentintegrity.app.RoutesTest
+      - name: Build two APKs, two unsigned store bundles and a test fixture
+        working-directory: products/intent-integrity/android
+        run: gradle --no-daemon :app:assembleCoreDebug :app:assembleGuardDebug :app:bundleCoreRelease :app:bundleGuardRelease :fixture:assembleDebug
+      - name: Package and verify
+        shell: bash
+        run: |
+          mkdir -p release
+          cp products/intent-integrity/android/app/build/outputs/apk/core/debug/*.apk release/Intent-Integrity-Core-0.2.0-test.apk
+          cp products/intent-integrity/android/app/build/outputs/apk/guard/debug/*.apk release/Intent-Integrity-Guard-0.2.0-test.apk
+          cp products/intent-integrity/android/app/build/outputs/bundle/coreRelease/*.aab release/Intent-Integrity-Core-0.2.0-unsigned.aab
+          cp products/intent-integrity/android/app/build/outputs/bundle/guardRelease/*.aab release/Intent-Integrity-Guard-0.2.0-unsigned.aab
+          cp products/intent-integrity/android/fixture/build/outputs/apk/debug/*.apk release/Intent-Integrity-Fixture-debug.apk
+          for f in release/*.apk; do "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$f" >> release/signature-verification.txt; done
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging release/Intent-Integrity-Guard-0.2.0-test.apk > release/guard-package.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump permissions release/Intent-Integrity-Core-0.2.0-test.apk > release/core-permissions.txt
+          git archive --format=zip --output=release/intent-integrity-android-source.zip HEAD products/intent-integrity .github/workflows/intent-integrity.yml
+          printf 'source_commit=%s\nbuild_run=%s\nphysical_device_test=NOT_RUN\nstore_publication=NOT_SUBMITTED\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > release/BUILD_RECEIPT.txt
+          (cd release && sha256sum *.apk *.aab *.zip > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intent-integrity-android-0.2.0
+          path: release/
+          retention-days: 14
+          if-no-files-found: error
