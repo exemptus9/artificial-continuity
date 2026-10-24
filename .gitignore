@@ -7,5 +7,7 @@ __pycache__/
 
 # Android outputs and private signing material
 android/build/
+build/
 *.keystore
 *.jks
+*.p12

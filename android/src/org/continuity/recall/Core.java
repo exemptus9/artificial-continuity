@@ -330,6 +330,16 @@ public final class Core {
       UUID.fromString(revision);
       if (revision.equals(e.getString("id"))) throw new Exception("Self-referencing revision");
     }
+    if ("user-review".equals(e.getString("capture_method"))) {
+      JSONObject meta = e.getJSONObject("metadata");
+      UUID.fromString(meta.getString("source_id"));
+      if (meta.getString("source_id").equals(e.getString("id"))
+          || !meta.getString("source_sha256").matches("[a-f0-9]{64}")
+          || !"user_interpretation".equals(meta.getString("review_role"))
+          || !Arrays.asList("observation", "inference", "decision", "intention", "next_step", "blocker", "canonical")
+              .contains(meta.getString("epistemic_status")))
+        throw new Exception("Invalid source-linked review");
+    }
     if (type.startsWith("auto.")) {
       Set<String> metaFields =
           new HashSet<>(
@@ -461,10 +471,41 @@ public final class Core {
   }
 
   public static void erase(JSONObject s, String id) throws Exception {
-    if (!contains(s.getJSONArray("deleted_ids"), id)) s.getJSONArray("deleted_ids").put(id);
-    s.getJSONObject("events").remove(id);
-    s.getJSONObject("annotations").remove(id);
-    s.getJSONObject("outbox").remove(id);
+    // A review may quote its source. Deleting the source must remove that derived copy too.
+    Set<String> removed = new HashSet<>();
+    removed.add(id);
+    boolean more;
+    do {
+      more = false;
+      for (String candidate : ids(s)) {
+        JSONObject e = s.getJSONObject("events").getJSONObject(candidate);
+        if ("user-review".equals(e.optString("capture_method"))
+            && removed.contains(e.getJSONObject("metadata").optString("source_id")))
+          more |= removed.add(candidate);
+      }
+    } while (more);
+    for (String remove : removed) {
+      if (!contains(s.getJSONArray("deleted_ids"), remove)) s.getJSONArray("deleted_ids").put(remove);
+      s.getJSONObject("events").remove(remove);
+      s.getJSONObject("annotations").remove(remove);
+      s.getJSONObject("outbox").remove(remove);
+    }
+  }
+
+  /** Deletion wins over linked interpretations, including when restoring older exports. */
+  static void pruneOrphanReviews(JSONObject s) throws Exception {
+    for (String id : ids(s)) {
+      JSONObject e = s.getJSONObject("events").optJSONObject(id);
+      if (e == null || !"user-review".equals(e.optString("capture_method"))) continue;
+      String source = e.getJSONObject("metadata").optString("source_id");
+      JSONObject original = s.getJSONObject("events").optJSONObject(source);
+      if (contains(s.getJSONArray("deleted_ids"), source)
+          || (original != null && deleted(s, original))) erase(s, id);
+      else if (original == null) throw new Exception("Review requires its original source; select both when exporting");
+      else if ("user-review".equals(original.optString("capture_method"))
+          || !digest(original).equals(e.getJSONObject("metadata").optString("source_sha256")))
+        throw new Exception("Review source integrity failure");
+    }
   }
 
   public static void gc(JSONObject s) throws Exception {
@@ -492,6 +533,9 @@ public final class Core {
     JSONObject blobs = new JSONObject();
     for (String id : selected) {
       JSONObject e = s.getJSONObject("events").getJSONObject(id);
+      if ("user-review".equals(e.optString("capture_method"))
+          && !selected.contains(e.getJSONObject("metadata").getString("source_id")))
+        throw new Exception("A review needs its original. Also select the linked source before exporting.");
       records.put(
           obj(
               "record",
@@ -593,7 +637,12 @@ public final class Core {
         byte[] raw = Base64.getDecoder().decode(blobs.getString(a.getString("sha256")));
         if (raw.length != a.getLong("bytes")) throw new Exception("Attachment length mismatch");
       }
-      if (deleted(next, e)) continue;
+      if (deleted(next, e)) {
+        // Remember identity even for a range deletion so dependent review rows
+        // later in this import cannot retain a deleted source's words.
+        erase(next, id);
+        continue;
+      }
       JSONObject events = next.getJSONObject("events");
       if (events.has(id)) {
         if (!digest(events.getJSONObject(id)).equals(digest(e)))
@@ -612,8 +661,11 @@ public final class Core {
         next.getJSONObject("blobs").put(h, blobs.getString(h));
       }
     }
-    for (String id : ids(next))
-      if (deleted(next, next.getJSONObject("events").getJSONObject(id))) erase(next, id);
+    for (String id : ids(next)) {
+      JSONObject e = next.getJSONObject("events").optJSONObject(id);
+      if (e != null && deleted(next, e)) erase(next, id);
+    }
+    pruneOrphanReviews(next);
     if (next.getJSONObject("events").length() > MAX_EVENTS)
       throw new Exception("Merged record limit");
     gc(next);
