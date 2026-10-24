@@ -47,6 +47,7 @@ public final class MemoryActivity extends Activity {
   private Button button(LinearLayout parent,String title,Runnable action) {
     Button b=new Button(this); b.setText(title); b.setAllCaps(false); b.setTextSize(16);
     b.setMinHeight(dp(52)); b.setPadding(dp(12),dp(8),dp(12),dp(8));
+    b.setTextColor(FG); b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff30454b));
     parent.addView(b,new LinearLayout.LayoutParams(-1,-2)); b.setOnClickListener(v->action.run()); return b;
   }
   private LinearLayout card() {
@@ -89,7 +90,9 @@ public final class MemoryActivity extends Activity {
     HorizontalScrollView nav=new HorizontalScrollView(this);nav.setHorizontalScrollBarEnabled(false);
     LinearLayout row=new LinearLayout(this);nav.addView(row);body.addView(nav);
     for(String tab:new String[]{"Now","Timeline","Desk","Privacy"}){
-      Button b=new Button(this);b.setText(tab);b.setAllCaps(false);b.setMinHeight(dp(48));row.addView(b);
+      Button b=new Button(this);b.setText(tab);b.setAllCaps(false);b.setMinHeight(dp(48));
+      boolean chosen=tab.toLowerCase(Locale.ROOT).equals(section);b.setTextColor(chosen?BG:FG);
+      b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(chosen?ACCENT:0xff30454b));row.addView(b);
       b.setOnClickListener(v->{if(tab.equals("Now")){startActivity(new Intent(this,VoiceActivity.class));finish();return;}
         section=tab.equals("Desk")?"desk":tab.toLowerCase(Locale.ROOT);recordId="";selected=null;project="";load();});
     }
@@ -129,7 +132,8 @@ public final class MemoryActivity extends Activity {
     LinearLayout dates=new LinearLayout(this);ribbon.addView(dates);body.addView(ribbon);
     for(String range:new String[]{"All time","Today","Yesterday","7 days","30 days"}){
       Button b=new Button(this);b.setAllCaps(false);b.setText(range.equals(period)?"● "+range:range);
-      b.setMinHeight(dp(48));dates.addView(b);b.setOnClickListener(v->{period=range;selected=null;limit=30;render();});
+      b.setMinHeight(dp(48));b.setTextColor(range.equals(period)?BG:FG);
+      b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(range.equals(period)?ACCENT:0xff30454b));dates.addView(b);b.setOnClickListener(v->{period=range;selected=null;limit=30;render();});
     }
     LocalDate today=LocalDate.now();ZoneId zone=ZoneId.systemDefault();long since=0,until=Long.MAX_VALUE;
     if(!period.equals("All time")){
@@ -139,7 +143,7 @@ public final class MemoryActivity extends Activity {
     }
     List<JSONObject> rows=MemoryWorkbench.records(state,query,since,until,project);
     if(selected!=null)rows.removeIf(e->!selected.contains(e.optString("id")));
-    text(body,rows.size()+" saved records · Times shown in "+zone.getId(),13,MUTED);
+    text(body,rows.size()+(rows.size()==1?" saved record · Times shown in ":" saved records · Times shown in ")+zone.getId(),13,MUTED);
     if(rows.isEmpty()){
       LinearLayout c=card();text(c,"No matching moments",21,FG);
       text(c,"A gap in capture is a gap in evidence. It doesn't mean nothing happened.",16,MUTED);
@@ -155,14 +159,25 @@ public final class MemoryActivity extends Activity {
       }
       LinearLayout c=card();text(c,when(time)+" · "+e.getString("source_type"),13,MUTED);
       String value=e.optString("text");text(c,value.isEmpty()?"Audio or attachment · no searchable transcript":excerpt(value),18,FG);
-      text(c,labelStatus(e)+" · "+e.optString("capture_method"),12,MUTED);
+      text(c,labelStatus(e)+" · "+captureLabel(e),12,MUTED);
       String id=e.getString("id");button(c,"Open original & context",()->{recordId=id;render();});previous=time;
     }
     if(rows.size()>limit)button(body,"Show 30 more",()->{limit+=30;render();});
   }
   private String labelStatus(JSONObject e) throws Exception {
-    if(e.optString("capture_method").equals("user-review"))return "Owner review · "+e.getJSONObject("metadata").optString("epistemic_status");
-    return MemoryWorkbench.status(state,e.getString("id"));
+    if(e.optString("capture_method").equals("user-review"))return "Owner review · "+e.getJSONObject("metadata").optString("epistemic_status").replace('_',' ');
+    String status=MemoryWorkbench.status(state,e.getString("id"));
+    return status.equals("unreviewed")?"Not yet reviewed":status.replace('_',' ');
+  }
+  private String captureLabel(JSONObject e) {
+    String method=e.optString("capture_method");
+    if(method.equals("user-review"))return "Your interpretation";
+    if(method.equals("android-on-device-speech"))return "Speech transcript";
+    if(method.equals("temporal-typed-input")||method.equals("manual-text"))return "Typed note";
+    if(method.contains("microphone"))return "Recorded audio";
+    if(method.equals("android-share"))return "Shared to this app";
+    if(method.equals("user-revision"))return "Linked revision";
+    return "Preserved source";
   }
   private void showRecord() throws Exception {
     JSONObject e=state.getJSONObject("events").optJSONObject(recordId);
@@ -171,9 +186,12 @@ public final class MemoryActivity extends Activity {
     button(body,"Back to timeline",()->{recordId="";section="timeline";render();});
     LinearLayout original=card();text(original,when(e.getLong("event_ms")),14,ACCENT);
     text(original,e.optString("text").isEmpty()?"No text transcript. Open archive tools to inspect the attachment.":e.getString("text"),20,FG).setTextIsSelectable(true);
-    text(original,"Original preserved · "+e.getString("capture_method"),13,MUTED);
+    text(original,"Original preserved · "+captureLabel(e),13,MUTED);
     JSONObject meta=e.getJSONObject("metadata");
-    if(meta.has("transcription"))text(original,"Transcript: "+meta.optString("transcription"),13,MUTED);
+    String transcript=meta.optString("transcription");
+    if(transcript.equals("unavailable"))text(original,"No transcript is available.",13,MUTED);
+    else if(!transcript.isEmpty()&&!transcript.equals("not-applicable"))
+      text(original,"Machine transcript · received words preserved; accuracy unverified.",13,MUTED);
     text(original,"Review status: "+labelStatus(e),14,ACCENT);
     if(meta.has("source_id")){
       String source=meta.getString("source_id");button(original,"View linked source",()->{recordId=source;render();});
@@ -182,7 +200,7 @@ public final class MemoryActivity extends Activity {
     button(body,"Add interpretation or next step",()->reviewDialog(id));
     List<JSONObject> reviews=MemoryWorkbench.reviews(state,id);
     for(JSONObject r:reviews){LinearLayout c=card();
-      text(c,"OWNER REVIEW · "+r.getJSONObject("metadata").optString("epistemic_status"),12,ACCENT);
+      text(c,"OWNER REVIEW · "+r.getJSONObject("metadata").optString("epistemic_status").replace('_',' '),12,ACCENT);
       text(c,r.getString("text"),17,FG);text(c,when(r.getLong("event_ms"))+" · Original unchanged",12,MUTED);
     }
     button(body,"Inspect provenance",()->new AlertDialog.Builder(this).setTitle("Source receipt")
@@ -197,7 +215,7 @@ public final class MemoryActivity extends Activity {
       LinearLayout form=column();form.setPadding(dp(20),dp(8),dp(20),dp(8));
       text(form,"Add your interpretation, decision or next step. The original words stay unchanged.",15,MUTED);
       EditText input=new EditText(this);input.setTextColor(FG);input.setHintTextColor(MUTED);input.setHint("What should future you know?");input.setMinLines(3);form.addView(input);
-      Spinner kind=new Spinner(this);String[] kinds={"observation","inference","decision","intention","next_step","blocker","canonical"};
+      Spinner kind=new Spinner(this);String[] kinds={"observation","inference","decision","intention","next step","blocker","canonical"};
       ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,kinds);kind.setAdapter(adapter);kind.setSelection(1);form.addView(kind);
       JSONObject annotation=state.getJSONObject("annotations").getJSONObject(id);
       EditText pid=new EditText(this);pid.setTextColor(FG);pid.setHintTextColor(MUTED);pid.setSingleLine(true);
@@ -210,7 +228,7 @@ public final class MemoryActivity extends Activity {
         String words=input.getText().toString();String projectId=pid.getText().toString().trim();
         if(words.trim().isEmpty()){input.setError("Add an interpretation first");return;}
         if(!projectId.isEmpty()&&!projectId.matches("P[0-9]{1,4}")){pid.setError("Use an established ID such as P29");return;}
-        String status=kind.getSelectedItem().toString();boolean star=important.isChecked();
+        String status=kind.getSelectedItem().toString().replace(' ','_');boolean star=important.isChecked();
         change(s->MemoryWorkbench.review(s,id,projectId,status,star,words,System.currentTimeMillis()),dialog::dismiss);
       }));dialog.show();
     }catch(Exception ex){error("This source is no longer available.");}

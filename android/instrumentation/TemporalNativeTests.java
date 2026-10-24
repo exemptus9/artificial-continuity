@@ -242,7 +242,7 @@ public final class TemporalNativeTests extends Instrumentation {
         }
       });
       click("Save review");
-      awaitText("OWNER REVIEW · next_step");
+      awaitText("OWNER REVIEW · next step");
       JSONObject reviewed = Vault.read(target);
       yes("Review UI preserves the exact original source hash",
           originalHash.equals(Core.digest(reviewed.getJSONObject("events").getJSONObject(originalId))));
