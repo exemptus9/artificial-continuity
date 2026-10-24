@@ -2,7 +2,7 @@
 
 **Status:** source integration and CI-build candidate, not a tested production assistant.
 Built on **work/max08x-convergence** with existing encryption and event provenance preserved.
-The production website and main branch are untouched.
+The production website and main branch are untouched. **The preview has its own Android application ID** (org.continuity.recall.temporal.preview) and therefore installs beside an older Total Recall test installation, with an independent empty encrypted vault. It will not automatically read the older app's files; use reviewed backups and the existing export/restore flow when needed.
 
 ## Implemented
 
@@ -47,7 +47,7 @@ The production website and main branch are untouched.
 
 The experimental GitHub Actions APK artifact is signed with a **different random
 test keystore on each CI run**. That makes it inappropriate as an enduring app
-identity: APKs from different runs cannot update each other in place. Do not
+identity: APKs from different runs cannot update each other in place. The preview is isolated from previously installed Total Recall test apps; it is still not suitable for irreplaceable personal records. Do not
 uninstall an app containing your only local archive. First export and validate a
 complete encrypted backup, preserve its passphrase, and only then evaluate
 another test build. An owner-held stable signing key and device migration tests
