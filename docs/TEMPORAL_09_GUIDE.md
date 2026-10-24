@@ -2,6 +2,8 @@
 
 This is an experimental offline capture and recall app. It can preserve your words, find notes by topic and date, read results aloud with an installed local voice, and keep your interpretations separate from the original evidence. It is not a general conversational AI and is not connected to ChatGPT or Lexidaimon.
 
+Supported baseline: Android 8 or newer for typed notes and archives. On-device speech requires Android 12 or newer plus a compatible installed recognition service/model. Voice command parsing is English; original Unicode text is preserved. Samsung hardware behavior still needs acceptance testing.
+
 ## Try it without risking your existing notes
 
 1. Keep your existing Total Recall or Temporal Voice installation. Do not uninstall it to resolve an update warning.

@@ -32,10 +32,10 @@ New native memory views offer date grouping, source inspection, project grouping
 
 ## Living status
 
-Implemented and host-tested: temporal retrieval, immutable source reviews, project desk, Now/Memory/Privacy UI, recognition session fences, microphone exclusion, foreground/background audio recovery, review-aware deletion/import, clean signed APK pipeline. Native runtime evidence remains a separate gate.
+Implemented and host-tested: temporal retrieval, immutable source reviews, project desk, Now/Memory/Privacy UI, recognition session fences, microphone exclusion, foreground/background audio recovery, review-aware deletion/import, clean signed APK pipeline. Synthetic Android 36 runtime acceptance passed: 30 assertions across archive, temporal UI and cold-process restart, with eight native decor images. Physical-phone acceptance remains a separate gate.
 
 Blocked externally: physical Samsung acceptance; real recognizer/TTS availability; Bluetooth/lock-screen/battery evidence; owner-controlled release signing; live Lexidaimon/OpenClaw connection.
 
 Not implemented or claimed: always-listening wake word, automatic audio transcription, general AI conversation, semantic embeddings, full graph visualization, automatic cross-device sync, app-store release.
 
-Final measured test results and artifact identifiers will be recorded in `TEMPORAL_ACCEPTANCE_2026-10-24.md` after verification.
+Final verification: 173 Java assertions, 169 Python tests and 30 Android 36 native assertions passed. All six applicable workflows passed for application commit `7defa86605e8ad52c2554487e810f3e2ebf38057`. The selected APK and eight native UI images come from push run `40072372864`. Exact hashes, feature status and outstanding physical-device gates are recorded in [TEMPORAL_ACCEPTANCE_2026-10-24.md](TEMPORAL_ACCEPTANCE_2026-10-24.md).
