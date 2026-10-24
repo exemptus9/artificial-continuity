@@ -129,6 +129,7 @@ public final class VoiceActivity extends Activity implements RecognitionListener
     button(column, "Open full Total Recall timeline", v ->
         startActivity(new Intent(this, MainActivity.class)));
     button(column, "Recover interrupted background recording", v -> recover());
+    button(column, "Discard interrupted background recording", v -> discardOrphan());
     text(column, "Limits: This is not an always-on wake word. Android's on-device recognizer "
         + "handles discrete requests while this screen is open. Audio captured in background "
         + "has no transcript until a separate reviewed transcription step exists. "
@@ -318,6 +319,26 @@ public final class VoiceActivity extends Activity implements RecognitionListener
           } catch (Exception e) { error("Recovery failed; file retained", e); }
         })
         .setNegativeButton("Cancel", null).show();
+  }
+
+  private void discardOrphan() {
+    File file = new File(getNoBackupFilesDir(), BackgroundVoiceService.FILE_NAME);
+    if (BackgroundVoiceService.running) {
+      status.setText("Stop or cancel the active recorder first.");
+      return;
+    }
+    if (!file.isFile()) {
+      status.setText("There is no interrupted recording to discard.");
+      return;
+    }
+    new AlertDialog.Builder(this)
+        .setTitle("Permanently discard incomplete audio?")
+        .setMessage("This is the uncommitted temporary file, not a saved archive entry. "
+            + "This cannot be undone.")
+        .setPositiveButton("Discard incomplete file", (d, w) -> status.setText(
+            file.delete() ? "Interrupted temporary recording discarded."
+                : "Could not delete file. Try again after checking storage."))
+        .setNegativeButton("Keep for recovery", null).show();
   }
 
   @Override
