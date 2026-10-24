@@ -18,9 +18,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - name: Install SDK platform 36 and build tools
-        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMGR="$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
+          test -x "$SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0"
+          test -s "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
       - name: Build with ephemeral non-release test key
         shell: bash
         run: |
