@@ -32,6 +32,7 @@ import org.json.JSONObject;
 public final class VoiceActivity extends Activity implements RecognitionListener {
   private static final int MIC_ONCE = 41;
   private static final int MIC_BACKGROUND = 42;
+  private static final int NOTICE_BACKGROUND = 43;
   private static final int BG = 0xff101c21, FG = 0xffeef2ed;
   private static final int MUTED = 0xffb3c4c8, ACCENT = 0xffb5edae;
   private SpeechRecognizer recognizer;
@@ -187,6 +188,12 @@ public final class VoiceActivity extends Activity implements RecognitionListener
       requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, MIC_BACKGROUND);
       return;
     }
+    if (Build.VERSION.SDK_INT >= 33 &&
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED) {
+      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTICE_BACKGROUND);
+      return;
+    }
     try {
       if (Vault.read(this).getJSONObject("policy").getBoolean("paused")) {
         status.setText("Capture paused. Resume it in Total Recall controls first.");
@@ -317,11 +324,14 @@ public final class VoiceActivity extends Activity implements RecognitionListener
   public void onRequestPermissionsResult(int code, String[] p, int[] grants) {
     super.onRequestPermissionsResult(code, p, grants);
     if (grants.length == 0 || grants[0] != PackageManager.PERMISSION_GRANTED) {
-      status.setText("Microphone permission not granted. Typed recall still works.");
+      status.setText(code == NOTICE_BACKGROUND
+          ? "Notification permission denied. Background recording was not started; "
+              + "Stop/Cancel controls must be visible before starting."
+          : "Microphone permission not granted. Typed recall still works.");
       return;
     }
     if (code == MIC_ONCE) requestSpeech();
-    if (code == MIC_BACKGROUND) requestBackground();
+    if (code == MIC_BACKGROUND || code == NOTICE_BACKGROUND) requestBackground();
   }
 
   @Override public void onReadyForSpeech(Bundle b) { status.setText("Speak now."); }
