@@ -275,6 +275,7 @@ public class MainActivity extends Activity {
               + " draft-backed.",
           14,
           ACCENT);
+    button(body, "Voice Recall · speak, search and remember", () -> startActivity(new Intent(this, VoiceActivity.class)));
     button(body, "Record voice note", () -> startRecording());
     recordState =
         label(

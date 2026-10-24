@@ -1,0 +1,62 @@
+name: Build Total Recall temporal voice (ephemeral test APK)
+on:
+  push:
+    branches: ['work/temporal-voice-*']
+    paths: ['android/**', '.github/workflows/voice-apk.yml']
+  pull_request:
+    paths: ['android/**', '.github/workflows/voice-apk.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK platform 36 and build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMGR="$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
+          test -x "$SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0"
+          test -s "$ANDROID_HOME/platforms/android-36/android.jar"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
+      - name: Build with ephemeral non-release test key
+        shell: bash
+        run: |
+          set -euo pipefail
+          PW="$(openssl rand -hex 24)"
+          echo "::add-mask::$PW"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export RECALL_KEYSTORE="$RUNNER_TEMP/voice-temporary-test.p12"
+          export RECALL_KEY_PASSWORD="$PW"
+          keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" \
+            -storetype PKCS12 -storepass "$PW" -keypass "$PW" \
+            -keyalg RSA -keysize 3072 -validity 14 \
+            -dname "CN=Disposable Total Recall Test Build, O=Local Only"
+          bash android/build.sh
+          test -s android/build/TotalRecall-0.8.0-test.apk
+          ! grep -q 'android.permission.INTERNET' android/AndroidManifest.xml
+          grep -F 'android.permission.FOREGROUND_SERVICE_MICROPHONE' android/AndroidManifest.xml
+          echo "WARNING: random CI signer; no in-place upgrades from other runs." \
+            > android/build/TEST-SIGNING-WARNING.txt
+          cat android/build/SHA256SUMS
+      - name: Publish test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: total-recall-voice-0.8.0-ephemeral-test
+          path: |
+            android/build/TotalRecall-0.8.0-test.apk
+            android/build/SHA256SUMS
+            android/build/signature.txt
+            android/build/package.txt
+            android/build/TEST-SIGNING-WARNING.txt
+          if-no-files-found: error
+          retention-days: 14
