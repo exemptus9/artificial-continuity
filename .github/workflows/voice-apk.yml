@@ -92,6 +92,10 @@ jobs:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      ANDROID_USER_HOME: ${{ runner.temp }}/temporal-android
+      ANDROID_EMULATOR_HOME: ${{ runner.temp }}/temporal-android
+      ANDROID_AVD_HOME: ${{ runner.temp }}/temporal-android/avd
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -111,7 +115,11 @@ jobs:
           yes | "$SDKMGR" --licenses >/dev/null || true
           "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-36;default;x86_64"
           AVDMGR="$(dirname "$SDKMGR")/avdmanager"
-          printf 'no\n' | "$AVDMGR" create avd --force --name temporal-synthetic --package 'system-images;android-36;default;x86_64' --device 'pixel_2'
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          printf 'no\n' | "$AVDMGR" create avd --force --name temporal-synthetic --package 'system-images;android-36;default;x86_64' --device 'pixel_2' --path "$ANDROID_AVD_HOME/temporal-synthetic.avd"
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.ini"
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx temporal-synthetic
           test -c /dev/kvm
           sudo chmod a+rw /dev/kvm
           "$ANDROID_HOME/emulator/emulator" -accel-check
@@ -124,6 +132,8 @@ jobs:
           set -euo pipefail
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           mkdir -p android/build/device-evidence
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx temporal-synthetic
           "$ANDROID_HOME/platform-tools/adb" start-server
           "$ANDROID_HOME/emulator/emulator" -avd temporal-synthetic -port 5554 \
             -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim \
