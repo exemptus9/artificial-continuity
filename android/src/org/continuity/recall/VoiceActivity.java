@@ -495,6 +495,14 @@ public final class VoiceActivity extends Activity {
       lastProvenance = provenance.toString();
       sourceIds.setText(lastProvenance);
       status.setText(save ? "Saved. You can return to it from Memory." : "Local recall complete. No new record saved.");
+      android.view.inputmethod.InputMethodManager keyboard =
+          (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+      if (keyboard != null) keyboard.hideSoftInputFromWindow(typed.getWindowToken(), 0);
+      // Put the result in view after submission; don't make the owner hunt below the controls.
+      answer.post(() -> {
+        if (visible && !destroyed) answer.requestRectangleOnScreen(
+            new android.graphics.Rect(0, 0, answer.getWidth(), Math.min(answer.getHeight(), dp(320))), true);
+      });
       if (readAloud.isChecked()) speak(lastAnswer);
     } catch (Exception failure) { error("No save was confirmed", failure); }
   }
