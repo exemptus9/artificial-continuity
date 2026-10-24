@@ -1,10 +1,10 @@
-name: Build Total Recall temporal voice (ephemeral test APK)
+name: Verify and build Temporal Voice preview
 on:
   push:
-    branches: ['work/temporal-voice-*']
-    paths: ['android/**', '.github/workflows/voice-apk.yml']
+    branches: ['work/temporal-voice-*', 'work/temporal-intelligence-*']
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/voice-apk.yml']
   pull_request:
-    paths: ['android/**', '.github/workflows/voice-apk.yml']
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/voice-apk.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,6 +18,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify host core and transfer before producing an APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install -r android/requirements-transfer.txt
+          mkdir -p android/build
+          curl --fail --location --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json-20240303.jar
+          echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json-20240303.jar' | sha256sum --check
+          export RECALL_JSON_JAR="$PWD/android/build/json-20240303.jar"
+          bash android/tests/run-host-tests.sh > android/build/host-tests.log 2>&1 || { tail -n 120 android/build/host-tests.log; exit 1; }
       - name: Install SDK platform 36 and build tools
         shell: bash
         run: |
@@ -28,7 +41,7 @@ jobs:
           "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0"
           test -s "$ANDROID_HOME/platforms/android-36/android.jar"
           test -x "$ANDROID_HOME/build-tools/36.0.0/aapt2"
-      - name: Build with ephemeral non-release test key
+      - name: Build isolated preview with ephemeral test key
         shell: bash
         run: |
           set -euo pipefail
@@ -37,26 +50,117 @@ jobs:
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           export RECALL_KEYSTORE="$RUNNER_TEMP/voice-temporary-test.p12"
           export RECALL_KEY_PASSWORD="$PW"
+          export RECALL_SIGNING_KIND=ephemeral-test
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" \
             -storetype PKCS12 -storepass "$PW" -keypass "$PW" \
-            -keyalg RSA -keysize 3072 -validity 14 \
-            -dname "CN=Disposable Total Recall Test Build, O=Local Only"
+            -keyalg RSA -keysize 3072 -validity 30 \
+            -dname "CN=Disposable Temporal Voice Preview, O=Synthetic Test Only"
           bash android/build.sh
-          test -s android/build/TotalRecall-0.8.0-test.apk
-          ! grep -q 'android.permission.INTERNET' android/AndroidManifest.xml
-          grep -F 'android.permission.FOREGROUND_SERVICE_MICROPHONE' android/AndroidManifest.xml
-          echo "WARNING: random CI signer; no in-place upgrades from other runs." \
-            > android/build/TEST-SIGNING-WARNING.txt
-          cat android/build/SHA256SUMS
-      - name: Publish test artifact
+          bash android/instrumentation/build-test.sh
+          test -s android/build/TotalRecall-0.9.0-preview.apk
+          ! grep -q 'android.permission.INTERNET' android/build/package.txt
+          grep -F 'android.permission.FOREGROUND_SERVICE_MICROPHONE' android/build/package.txt
+          (cd android/build && sha256sum --check SHA256SUMS)
+          rm -f "$RECALL_KEYSTORE"
+      - name: Preserve host verification evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: total-recall-voice-0.8.0-ephemeral-test
+          name: temporal-voice-host-evidence
           path: |
-            android/build/TotalRecall-0.8.0-test.apk
+            android/build/evidence
+            android/build/host-tests.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Publish verified compilation artifacts (device acceptance remains separate)
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-voice-0.9.0-ephemeral-preview
+          path: |
+            android/build/TotalRecall-0.9.0-preview.apk
             android/build/SHA256SUMS
             android/build/signature.txt
             android/build/package.txt
+            android/build/build-evidence.json
             android/build/TEST-SIGNING-WARNING.txt
+            android/build/instrumentation/test.apk
+            android/build/instrumentation/signature.txt
           if-no-files-found: error
+          retention-days: 14
+  instrumentation:
+    name: Synthetic Android 36 acceptance
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set isolated Android configuration paths
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/temporal-android/avd"
+          printf 'ANDROID_USER_HOME=%s\nANDROID_EMULATOR_HOME=%s\nANDROID_AVD_HOME=%s\n' \
+            "$RUNNER_TEMP/temporal-android" "$RUNNER_TEMP/temporal-android" \
+            "$RUNNER_TEMP/temporal-android/avd" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: temporal-voice-0.9.0-ephemeral-preview
+          path: android/build
+      - name: Install isolated emulator image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMGR="$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
+          test -x "$SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-36;default;x86_64"
+          AVDMGR="$(dirname "$SDKMGR")/avdmanager"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          printf 'no\n' | "$AVDMGR" create avd --force --name temporal-synthetic --package 'system-images;android-36;default;x86_64' --device 'pixel_2' --path "$ANDROID_AVD_HOME/temporal-synthetic.avd"
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.ini"
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx temporal-synthetic
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Run synthetic archive and temporal UI tests
+        shell: bash
+        env:
+          RECALL_SYNTHETIC_DEVICE: 'YES'
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          mkdir -p android/build/device-evidence
+          test -s "$ANDROID_AVD_HOME/temporal-synthetic.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx temporal-synthetic
+          "$ANDROID_HOME/platform-tools/adb" start-server
+          "$ANDROID_HOME/emulator/emulator" -avd temporal-synthetic -port 5554 \
+            -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim \
+            -no-snapshot -camera-back none -camera-front none \
+            > android/build/device-evidence/emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          trap 'kill "$EMULATOR_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for attempt in $(seq 1 60); do
+            kill -0 "$EMULATOR_PID" || { tail -n 80 android/build/device-evidence/emulator.log; exit 1; }
+            if [ "$("$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
+              READY=1
+              break
+            fi
+            sleep 5
+          done
+          test "$READY" = 1
+          "$ANDROID_HOME/platform-tools/adb" -s "$ANDROID_SERIAL" shell input keyevent 82
+          timeout 600 bash android/instrumentation/run-device-tests.sh
+      - name: Preserve device receipts and synthetic native UI images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-voice-api36-device-evidence
+          path: android/build/device-evidence
+          if-no-files-found: warn
           retention-days: 14

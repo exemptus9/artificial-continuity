@@ -35,8 +35,11 @@ public class MainActivity extends Activity {
   String captureMethod = "explicit-text";
   String revisionOf = "";
   MediaRecorder recorder;
+  boolean ownsForegroundMicrophoneLease;
+  static final String AUDIO_PREFS = "foreground-voice-state-v1";
   MediaPlayer player;
   long recordingAt;
+  long recordingElapsed;
   File recordingFile;
   String inputEvidence = "unknown";
   boolean savingDraft = false;
@@ -62,6 +65,9 @@ public class MainActivity extends Activity {
       shell();
       showCapture();
       receive(getIntent());
+      if ("controls".equals(getIntent().getStringExtra("section"))) showControls();
+      else if ("backup".equals(getIntent().getStringExtra("section"))) exportAll();
+      else if (getIntent().hasExtra("record_id")) showRecord(getIntent().getStringExtra("record_id"));
     } catch (Exception e) {
       fatal(e);
     }
@@ -297,8 +303,12 @@ public class MainActivity extends Activity {
           body,
           "Recover interrupted audio",
           () -> {
+            if (recorder != null || !MicrophoneLease.owner().isEmpty())
+              throw new Exception("Stop the current voice activity before recovering audio.");
             recordingFile = interrupted;
-            recordingAt = interrupted.lastModified();
+            recordingAt = getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE)
+                .getLong("started_ms", interrupted.lastModified());
+            inputEvidence = "Unknown after interruption; no input route is inferred";
             saveAudio("process-interrupted", true);
             showCapture();
           });
@@ -306,7 +316,10 @@ public class MainActivity extends Activity {
           body,
           "Discard interrupted audio",
           () -> {
-            interrupted.delete();
+            if (recorder != null || !MicrophoneLease.owner().isEmpty())
+              throw new Exception("Stop the current voice activity before discarding audio.");
+            if (interrupted.exists() && !interrupted.delete())
+              throw new Exception("Temporary audio could not be deleted. Try again.");
             showCapture();
           });
     }
@@ -1012,6 +1025,9 @@ public class MainActivity extends Activity {
           if (value && recorder != null) stopRecording(true, "pause");
           Vault.change(this, v -> Core.pause(v, value, System.currentTimeMillis()));
           if (value) {
+            Intent stopVoice = new Intent(this, BackgroundVoiceService.class);
+            stopVoice.setAction(BackgroundVoiceService.ACTION_CANCEL);
+            startService(stopVoice);
             pendingExport = null;
             pendingAttachments = new JSONArray();
             pendingBlobs = new JSONObject();
@@ -1179,6 +1195,8 @@ public class MainActivity extends Activity {
                     (d, w) ->
                         safe(
                             () -> {
+                              if (!MicrophoneLease.owner().isEmpty() || BackgroundVoiceService.running)
+                                throw new Exception("Stop or discard active microphone capture before resetting the archive.");
                               ((android.app.job.JobScheduler)
                                       getSystemService(JOB_SCHEDULER_SERVICE))
                                   .cancel(UsageJob.ID);
@@ -1383,9 +1401,19 @@ public class MainActivity extends Activity {
     recordingFile = new File(getNoBackupFilesDir(), "recording.m4a");
     if (recordingFile.exists())
       throw new Exception("Recover or discard the interrupted recording before starting another");
-    MediaRecorder r = new MediaRecorder();
+    if (!MicrophoneLease.acquire("foreground"))
+      throw new Exception("Another voice request or background note owns the microphone. Stop it first.");
+    ownsForegroundMicrophoneLease = true;
+    MediaRecorder candidate = null;
     try {
+      if (player != null) {
+        player.release();
+        player = null;
+      }
+      candidate = new MediaRecorder();
+      final MediaRecorder r = candidate;
       r.setAudioSource(MediaRecorder.AudioSource.MIC);
+      if (Build.VERSION.SDK_INT >= 30) r.setPrivacySensitive(true);
       r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
       r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
       r.setAudioEncodingBitRate(96000);
@@ -1395,14 +1423,23 @@ public class MainActivity extends Activity {
       r.setMaxDuration(10 * 60 * 1000);
       r.setOnInfoListener(
           (m, what, extra) -> {
+            if (recorder != r) return;
             if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED
                 || what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)
               safe(() -> stopRecording(false, "recording-limit"));
           });
+      r.setOnErrorListener((m, what, extra) -> {
+        if (recorder == r) safe(() -> stopRecording(false, "recorder-interrupted"));
+      });
+      recordingAt = System.currentTimeMillis();
+      if (!getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE).edit()
+          .putString("capture_id", UUID.randomUUID().toString())
+          .putLong("started_ms", recordingAt).remove("duration_ms").commit())
+        throw new Exception("Could not preserve recording identity. Recording did not start.");
       r.prepare();
+      recordingElapsed = SystemClock.elapsedRealtime();
       r.start();
       recorder = r;
-      recordingAt = System.currentTimeMillis();
       inputEvidence = "OS route unavailable";
       if (Build.VERSION.SDK_INT >= 28) {
         AudioDeviceInfo input = r.getRoutedDevice();
@@ -1414,8 +1451,12 @@ public class MainActivity extends Activity {
       }
       handler.post(tick);
     } catch (Exception e) {
-      r.release();
-      recordingFile.delete();
+      recorder = null;
+      if (candidate != null) try { candidate.release(); } catch (Exception ignored) {}
+      ownsForegroundMicrophoneLease = false;
+      MicrophoneLease.release("foreground");
+      // Preserve nonempty bytes for explicit recovery if startup partly succeeded.
+      if (recordingFile.isFile() && recordingFile.length() == 0) recordingFile.delete();
       throw e;
     }
   }
@@ -1440,17 +1481,27 @@ public class MainActivity extends Activity {
     MediaRecorder r = recorder;
     recorder = null;
     handler.removeCallbacks(tick);
+    long duration = Math.max(0, SystemClock.elapsedRealtime() - recordingElapsed);
     Exception failure = null;
     try {
       r.stop();
     } catch (Exception e) {
       failure = e;
     } finally {
-      r.release();
+      try { r.release(); } catch (Exception e) { if (failure == null) failure = e; }
+      if (ownsForegroundMicrophoneLease) {
+        ownsForegroundMicrophoneLease = false;
+        MicrophoneLease.release("foreground");
+      }
     }
+    getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE).edit().putLong("duration_ms",
+        failure == null && !"recorder-interrupted".equals(reason) ? duration : -1).commit();
     if (cancel) {
-      recordingFile.delete();
-      if (recordState != null) recordState.setText("Recording cancelled; no audio saved.");
+      boolean deleted = !recordingFile.exists() || recordingFile.delete();
+      if (recordState != null) recordState.setText(deleted
+          ? "Recording cancelled; unsaved audio discarded."
+          : "Microphone off; temporary audio could not be discarded. Retry from Capture.");
+      if (!deleted) throw new Exception("Temporary audio remains. Retry discarding it from Capture.");
       return;
     }
     if (failure != null) {
@@ -1459,62 +1510,32 @@ public class MainActivity extends Activity {
             "Recording interrupted; file retained for recovery. Completeness unknown.");
       throw new Exception("Recording did not finalize. Recovery is available in Capture.");
     }
-    saveAudio(reason, false);
+    saveAudio(reason, "recorder-interrupted".equals(reason));
   }
 
   void saveAudio(String reason, boolean incomplete) throws Exception {
+    if (recorder != null) throw new Exception("Stop recording before saving or recovery.");
     byte[] raw = Vault.bounded(new FileInputStream(recordingFile), Core.MAX_BLOB);
-    String h = Core.hash(raw);
-    JSONObject blobs = Core.obj(h, Base64.getEncoder().encodeToString(raw));
-    JSONArray at =
-        new JSONArray()
-            .put(
-                Core.obj(
-                    "sha256",
-                    h,
-                    "bytes",
-                    raw.length,
-                    "mime",
-                    "audio/mp4",
-                    "display_name",
-                    "voice-note.m4a"));
+    SharedPreferences prefs = getSharedPreferences(AUDIO_PREFS, MODE_PRIVATE);
+    boolean knownStart = prefs.contains("started_ms");
+    long when = knownStart ? prefs.getLong("started_ms", recordingAt) : recordingAt;
+    String captureId = prefs.getString("capture_id", "");
+    if (captureId.isEmpty()) captureId = UUID.nameUUIDFromBytes(raw).toString();
+    final String identity = captureId;
+    final long duration = incomplete ? -1 : prefs.getLong("duration_ms", -1);
+    final long now = System.currentTimeMillis();
     JSONObject[] record = new JSONObject[1];
-    long now = System.currentTimeMillis();
-    Vault.change(
-        this,
-        s -> {
-          JSONObject e =
-              Core.event(
-                  s,
-                  "audio",
-                  "user-microphone",
-                  "",
-                  recordingAt,
-                  now,
-                  "microphone",
-                  null,
-                  at,
-                  Core.obj(
-                      "transcription",
-                      "unavailable",
-                      "input_route",
-                      inputEvidence,
-                      "stop_reason",
-                      reason,
-                      "possibly_incomplete",
-                      incomplete,
-                      "duration_ms",
-                      Math.max(0, now - recordingAt)));
-          Core.add(s, e, blobs);
-          record[0] = e;
-        });
-    recordingFile.delete();
+    Vault.change(this, s -> record[0] = RecordedAudio.commit(s, raw, identity,
+        when, now, duration, knownStart, incomplete, reason,
+        "user-microphone", "explicit-visible-activity", inputEvidence));
+    boolean cleaned = recordingFile.delete();
     if (recordState != null)
-      recordState.setText(
-          "Audio saved · "
-              + record[0].getString("id")
-              + "\nTranscription unavailable; play from Timeline.");
-    status.setText("Original audio committed to encrypted store");
+      recordState.setText("Audio saved · " + record[0].getString("id")
+          + (incomplete ? "\nCompleteness unknown; review preserved audio." : "")
+          + "\nTranscription unavailable; play from Timeline."
+          + (cleaned ? "" : "\nTemporary audio remains; retry cleanup in Capture."));
+    status.setText(cleaned ? "Original audio committed to encrypted store"
+        : "Audio saved; temporary plaintext buffer still needs cleanup in Capture");
   }
 
   @Override
@@ -1574,6 +1595,14 @@ public class MainActivity extends Activity {
   protected void onDestroy() {
     handler.removeCallbacks(draftWrite);
     handler.removeCallbacks(tick);
+    if (recorder != null) {
+      try { stopRecording(false, "activity-destroyed"); }
+      catch (Exception ignored) { /* Uncommitted audio remains available in Capture. */ }
+    }
+    if (ownsForegroundMicrophoneLease) {
+      ownsForegroundMicrophoneLease = false;
+      MicrophoneLease.release("foreground");
+    }
     if (player != null) {
       player.release();
       player = null;

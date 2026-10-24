@@ -1,3 +1,5 @@
+> Historical 0.8 baseline. For the current 0.9 preview, see [the user guide](../docs/TEMPORAL_09_GUIDE.md), [data flows](../docs/TEMPORAL_DATA_FLOWS.md), and [signing/update instructions](SIGNING_AND_UPDATES.md).
+
 # Total Recall · Temporal Voice experimental Android build (0.8.0-test)
 
 **Status:** source integration and CI-build candidate, not a tested production assistant.
