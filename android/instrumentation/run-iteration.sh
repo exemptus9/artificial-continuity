@@ -6,6 +6,7 @@ test "$RECALL_SYNTHETIC_DEVICE" = YES
 ADB="$ANDROID_HOME/platform-tools/adb"
 test "$($ADB shell getprop ro.kernel.qemu | tr -d '\r')" = 1
 mkdir -p build/device-evidence
+trap '$ADB pull /sdcard/Android/data/org.continuity.recall.test/files/. build/device-evidence/ >/dev/null 2>&1 || true' EXIT
 $ADB install -r build/upgrade-base.apk
 $ADB install -r build/instrumentation/test.apk
 $ADB shell am instrument -w -e synthetic_emulator_only YES \

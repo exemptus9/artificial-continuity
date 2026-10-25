@@ -239,15 +239,16 @@ public final class MemoryActivity extends Activity {
       pid.setHint("Project ID, e.g. P29 (optional)");pid.setContentDescription("Existing project ID");pid.setText(annotation.optString("project_id"));form.addView(pid);
       CheckBox important=new CheckBox(this);important.setText("Keep this prominent");important.setTextColor(FG);important.setChecked(annotation.optBoolean("important"));form.addView(important);
       text(form,"“Canonical” records your designation; it does not rewrite a manuscript. A decision is established only because you explicitly label it.",12,MUTED);
+      ScrollView scroller=new ScrollView(this);scroller.addView(form);
       AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Keep the source. Add context.")
-          .setView(form).setNegativeButton("Cancel",null).setPositiveButton("Save review",null).create();
-      dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+          .setView(scroller).setNegativeButton("Cancel",null).setPositiveButton("Save review",null).create();
+      dialog.setOnShowListener(d->{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setContentDescription("Save review");dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
         String words=input.getText().toString();String projectId=pid.getText().toString().trim();
         if(words.trim().isEmpty()){input.setError("Add an interpretation first");return;}
         if(!projectId.isEmpty()&&!projectId.matches("P[0-9]{1,4}")){pid.setError("Use an established ID such as P29");return;}
         String status=kind.getSelectedItem().toString().replace(' ','_');boolean star=important.isChecked();
         change(s->MemoryWorkbench.review(s,id,projectId,status,star,words,System.currentTimeMillis()),dialog::dismiss);
-      }));dialog.show();
+      });});dialog.show();
     }catch(Exception ex){error("This source is no longer available.");}
   }
   private void desk() throws Exception {

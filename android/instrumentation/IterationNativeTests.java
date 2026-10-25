@@ -24,7 +24,7 @@ public final class IterationNativeTests extends Instrumentation {
   void click(Activity a,String label)throws Exception{Button b=UpgradeSeed.find(a.getWindow().getDecorView(),label);if(b==null)throw new Exception("Missing button: "+label);runOnMainSync(()->b.performClick());waitForIdleSync();}
   void await(Activity a,String text)throws Exception{for(int n=0;n<160;n++){final boolean[] found={false};runOnMainSync(()->found[0]=view(a.getWindow().getDecorView(),text)!=null);if(found[0])return;Thread.sleep(50);}throw new Exception("UI timeout: "+text);}
   AccessibilityNodeInfo node(AccessibilityNodeInfo root,String label){
-    if(root==null)return null;if(label.contentEquals(root.getText()==null?"":root.getText())||label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
+    if(root==null)return null;if(label.equalsIgnoreCase(root.getText()==null?"":root.getText().toString())||label.contentEquals(root.getContentDescription()==null?"":root.getContentDescription()))return root;
     for(int i=0;i<root.getChildCount();i++){AccessibilityNodeInfo found=node(root.getChild(i),label);if(found!=null)return found;}return null;
   }
   AccessibilityNodeInfo awaitNode(String label)throws Exception{for(int n=0;n<100;n++){AccessibilityNodeInfo found=node(getUiAutomation().getRootInActiveWindow(),label);if(found!=null)return found;Thread.sleep(50);}throw new Exception("Visible node missing: "+label);}
