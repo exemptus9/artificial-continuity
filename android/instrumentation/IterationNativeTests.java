@@ -50,6 +50,12 @@ public final class IterationNativeTests extends Instrumentation {
       MainActivity a=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
       click(a,"Test");click(a,"Verify durable test record");
       yes("verify success is immediately visible",awaitNode("Saved test record verified")!=null);uiClick("OK");
+      JSONObject wizard=Core.copy(Vault.read(c).getJSONObject("wizard"));
+      Vault.change(c,s->s.getJSONObject("wizard").remove("nonce"));
+      click(a,"Verify durable test record");
+      yes("verify failure gives an immediate corrective dialog",awaitNode("Test not verified")!=null);uiClick("OK");
+      yes("failed verification is retained in diagnostic result",Vault.read(c).getJSONObject("wizard").getString("durable-text").startsWith("FAIL"));
+      Vault.change(c,s->s.put("wizard",wizard));
       click(a,"Capture");String note="SYNTHETIC lighthouse poem\n\nKeep both lines. e\u0301 / é / 🧠";
       runOnMainSync(()->a.editor.setText(note));click(a,"Save capture");
       final boolean[] receiptVisible={false};runOnMainSync(()->{View v=view(a.getWindow().getDecorView(),"Saved on this phone");receiptVisible[0]=v!=null&&v.getGlobalVisibleRect(new Rect());});

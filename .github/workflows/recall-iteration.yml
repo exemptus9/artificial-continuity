@@ -48,6 +48,7 @@ jobs:
           PW="$(openssl rand -hex 24)"
           echo "::add-mask::$PW"
           export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12" RECALL_KEY_PASSWORD="$PW"
+          export RECALL_SIGNING_KIND=ephemeral-test
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass "$PW" -keypass "$PW" -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Total Recall Upgrade Test'
           git worktree add --detach "$RUNNER_TEMP/recall-base" 92a89f26de5218b97263f959f6e9aa9eec68e08d
           (cd "$RUNNER_TEMP/recall-base" && bash android/build.sh)
@@ -86,4 +87,5 @@ jobs:
             android/build/host-tests.log
             android/build/package.txt
             android/build/signature.txt
+            android/build/build-receipt.json
           retention-days: 14
