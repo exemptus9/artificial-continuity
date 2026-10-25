@@ -355,6 +355,7 @@ public class MainActivity extends Activity {
                   pendingAttachments,
                   Core.obj("link_is_archived_page", false, "revision_of", revisionOf));
           Core.add(s, e, pendingBlobs);
+          DurableTextTest.saved(s, e);
           s.put("draft", "");
           accepted[0] = e;
         });
@@ -1584,6 +1585,28 @@ public class MainActivity extends Activity {
     Vault.change(this, s -> s.getJSONObject("wizard").put(name, result));
   }
 
+  void verifyDurableTest() throws Exception {
+    JSONObject verified;
+    try {
+      verified = DurableTextTest.verify(Vault.read(this));
+    } catch (Exception e) {
+      String reason = e.getMessage() == null ? "The saved record could not be checked." : e.getMessage();
+      setTest("durable-text", "FAIL — " + reason);
+      showWizard();
+      message("Test not verified", reason);
+      return;
+    }
+    setTest("durable-text", "PASS — reread encrypted disk data and compared the exact UTF-8 "
+        + "text SHA-256. App closure/force-stop was not independently detected.");
+    showWizard();
+    message("Saved test record verified", "PASS — the saved text matches the prepared phrase."
+        + "\n\nRecord: " + verified.getString("id")
+        + "\nSaved: " + local(verified.getLong("ingested_ms"))
+        + "\nSHA-256: " + verified.getString("text_sha256")
+        + "\n\nRead again from encrypted storage. Closing or force-stopping the app "
+        + "is a separate manual step; this check does not prove that it happened.");
+  }
+
   void showWizard() throws Exception {
     screen("test", "Test my phone");
     JSONObject s = Vault.read(this), w = s.getJSONObject("wizard");
@@ -1607,24 +1630,20 @@ public class MainActivity extends Activity {
         14,
         ACCENT);
     label(body, "1  Save, close, reopen, verify", 21, FG);
+    label(body, "Saved-text test: " + w.optString("durable-text", "NOT RUN"), 15, ACCENT);
     button(
         body,
         "Prepare a unique multiline test phrase",
         () -> {
           String nonce = UUID.randomUUID().toString().substring(0, 8);
-          String phrase =
-              "Total Recall test "
-                  + nonce
-                  + "\nOne newline.\n\nTwo newlines.\nPoetry keeps its shape. e\u0301 / é / 🧠\t…";
+          String[] phrase = new String[1];
           Vault.change(
               this,
               v -> {
-                v.getJSONObject("wizard")
-                    .put("nonce", nonce)
-                    .put("expected_hash", Core.hash(Core.utf8(phrase)));
+                phrase[0] = DurableTextTest.prepare(v, nonce);
               });
           showCapture();
-          editor.setText(phrase);
+          editor.setText(phrase[0]);
           label(
               body,
               "Press Save capture. Close the app, reopen it, then use Test → Verify durable test"
@@ -1635,27 +1654,7 @@ public class MainActivity extends Activity {
     button(
         body,
         "Verify durable test record",
-        () -> {
-          JSONObject disk = Vault.read(this);
-          String nonce = disk.getJSONObject("wizard").optString("nonce", "");
-          if (nonce.isEmpty()) throw new Exception("Prepare and save the test phrase first");
-          String expected = disk.getJSONObject("wizard").getString("expected_hash");
-          boolean found = false;
-          for (String id : Core.ids(disk)) {
-            JSONObject e = disk.getJSONObject("events").getJSONObject(id);
-            if (e.getString("text").contains(nonce)) {
-              if (!Core.hash(Core.utf8(e.getString("text"))).equals(expected))
-                throw new Exception("Test text differs from expected received string");
-              found = true;
-            }
-          }
-          if (!found) throw new Exception("Saved test phrase not found");
-          setTest(
-              "durable-text",
-              "PASS — reopened encrypted disk data and compared SHA-256; user closure/force-stop"
-                  + " not independently detected");
-          showWizard();
-        });
+        () -> verifyDurableTest());
     label(body, "2  Share, attach, speak", 21, FG);
     label(
         body,
@@ -1837,6 +1836,7 @@ public class MainActivity extends Activity {
         tests = Core.copy(s.getJSONObject("wizard"));
     tests.remove("nonce");
     tests.remove("expected_hash");
+    tests.remove("durable_record_id");
     tests.remove("pause_test_start");
     JSONObject out =
         Core.obj(

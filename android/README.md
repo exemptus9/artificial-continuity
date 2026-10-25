@@ -1,6 +1,6 @@
-# Total Recall for Android · 0.7.0 test release
+# Total Recall for Android · 0.7.1 test release
 
-Install the supplied `TotalRecall-0.7.0-test.apk`. This is one native companion
+Install the supplied `TotalRecall-0.7.1-test.apk`. This is one native companion
 inside the existing `artificial-continuity` repository, not a new product service.
 It has no Internet permission, analytics SDK, paid dependency, or required desktop.
 It requests special permissions only for optional app history, notifications and
@@ -16,6 +16,23 @@ user-triggered recording. Everything begins off with empty allowlists.
 3. Press **Save capture**. The receipt includes the record ID, time and text hash.
 4. Close/reopen the app → **Test** → **Verify durable test record**.
 5. **Timeline** shows it. Tap the item to inspect the original and annotate it.
+
+Version 0.7.1 fixes the saved-text test feedback: Verify now immediately opens a
+PASS or failure dialog, and its latest result also appears beside the test controls.
+In 0.7.0, successful verification only appeared in Diagnostic results at the bottom
+of the page, making the button look unresponsive. The check now binds new test
+captures to their record ID and still recognizes exact test records from 0.7.0;
+an unrelated note mentioning the test nonce no longer invalidates the original.
+Preparing a new phrase clears the previous test result, without deleting notes.
+Draft-only and edited phrases receive specific corrective instructions.
+
+For the supplied owner-signed 0.7.1 artifact, install over 0.7.0 without uninstalling
+or clearing app data. Export a backup first if you have important captures. The
+package ID, data schema and signing certificate remain unchanged; versionCode is
+8. If Android reports a signature/package conflict, keep the existing app and
+report the exact error. This targeted update does not replace a newer Temporal
+preview. Reopen **Test** and tap **Verify durable test record** first; there is no
+need to prepare another phrase if you already saved the current one.
 
 Revoke the install-source permission afterward. This is a test-signed sideload,
 not a Play Store release. Do not use it for sensitive everyday material yet.
