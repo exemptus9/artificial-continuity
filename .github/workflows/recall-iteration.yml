@@ -1,0 +1,89 @@
+name: Total Recall 0.8 upgrade and native UI acceptance
+on:
+  push:
+    branches: ['work/max07-next-*']
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/recall-iteration.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Host regression gates
+        run: |
+          set -euo pipefail
+          python3 -m pip install -r android/requirements-transfer.txt
+          mkdir -p android/build
+          curl -fsSL --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json.jar
+          echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json.jar' | sha256sum --check
+          RECALL_JSON_JAR="$PWD/android/build/json.jar" bash android/tests/run-host-tests.sh > android/build/host-tests.log 2>&1 || { tail -100 android/build/host-tests.log; exit 1; }
+      - name: Set isolated emulator directories
+        run: |
+          mkdir -p "$RUNNER_TEMP/recall-android/avd"
+          printf 'ANDROID_USER_HOME=%s\nANDROID_EMULATOR_HOME=%s\nANDROID_AVD_HOME=%s\n' "$RUNNER_TEMP/recall-android" "$RUNNER_TEMP/recall-android" "$RUNNER_TEMP/recall-android/avd" >> "$GITHUB_ENV"
+      - name: Install SDK and synthetic Android 36 image
+        run: |
+          set -euo pipefail
+          SDKMGR="$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -1)"
+          yes | "$SDKMGR" --licenses >/dev/null || true
+          "$SDKMGR" --install 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-36;default;x86_64'
+          printf 'no\n' | "$(dirname "$SDKMGR")/avdmanager" create avd --force --name recall-upgrade --package 'system-images;android-36;default;x86_64' --device pixel_2 --path "$ANDROID_AVD_HOME/recall-upgrade.avd"
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Build old and new APKs with one disposable CI signing identity
+        run: |
+          set -euo pipefail
+          PW="$(openssl rand -hex 24)"
+          echo "::add-mask::$PW"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12" RECALL_KEY_PASSWORD="$PW"
+          keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass "$PW" -keypass "$PW" -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Total Recall Upgrade Test'
+          git worktree add --detach "$RUNNER_TEMP/recall-base" 92a89f26de5218b97263f959f6e9aa9eec68e08d
+          (cd "$RUNNER_TEMP/recall-base" && bash android/build.sh)
+          cp "$RUNNER_TEMP/recall-base/android/build/TotalRecall-0.7.1-test.apk" android/build/upgrade-base.apk
+          bash android/build.sh
+          bash android/instrumentation/build-test.sh
+          ! grep -q android.permission.INTERNET android/build/package.txt
+          rm -f "$RECALL_KEYSTORE"
+      - name: Native update, visible receipt, review, retrieval, restore and restart
+        env:
+          RECALL_SYNTHETIC_DEVICE: YES
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          set -euo pipefail
+          mkdir -p android/build/device-evidence
+          "$ANDROID_HOME/platform-tools/adb" start-server
+          "$ANDROID_HOME/emulator/emulator" -avd recall-upgrade -port 5554 -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -camera-front none > android/build/device-evidence/emulator.log 2>&1 &
+          EMULATOR_PID=$!
+          trap 'kill "$EMULATOR_PID" 2>/dev/null || true' EXIT
+          READY=0
+          for attempt in $(seq 1 60); do
+            kill -0 "$EMULATOR_PID" || { tail -50 android/build/device-evidence/emulator.log; exit 1; }
+            if [ "$("$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then READY=1; break; fi
+            sleep 5
+          done
+          test "$READY" = 1
+          "$ANDROID_HOME/platform-tools/adb" shell input keyevent 82
+          timeout 480 bash android/instrumentation/run-iteration.sh
+      - name: Save synthetic evidence; CI APK is not the owner-signed download
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recall-08-upgrade-evidence
+          path: |
+            android/build/device-evidence
+            android/build/host-tests.log
+            android/build/package.txt
+            android/build/signature.txt
+          retention-days: 14

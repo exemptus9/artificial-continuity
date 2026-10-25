@@ -17,6 +17,52 @@ MAX_BLOB = 5 * 1024 * 1024
 MAX_TOTAL = 20 * 1024 * 1024
 MAX_EVENTS = 3000
 AAD = b'TotalRecall sealed v1'
+REVIEW_STATUSES = frozenset({'observation','inference','decision','intention','next_step','blocker','canonical'})
+
+def is_review(event):
+    return event.get('capture_method') == 'user-review'
+
+def validate_review(event, records):
+    """Validate a relational owner interpretation; its label is not proof of truth.
+
+    A missing original is an omitted dependency, never a reason to retrieve an
+    unapproved copy from the destination or to accept the review as raw evidence.
+    """
+    meta=event.get('metadata')
+    if not isinstance(meta,dict):raise C.ContextError('Invalid event metadata')
+    if not is_review(event):
+        if meta.get('review_role')=='user_interpretation':raise C.ContextError('Inconsistent owner review mechanism')
+        return
+    required={'source_id','source_sha256','review_role','epistemic_status'}
+    if (not required<=set(meta) or set(meta)-required-{'review_sequence','original_unchanged'}
+        or meta['review_role']!='user_interpretation' or not isinstance(meta['epistemic_status'],str)
+        or meta['epistemic_status'] not in REVIEW_STATUSES
+        or event['source_type']!='note' or event['attachments']
+        or not event['text'].strip() or len(event['text'].encode('utf-8'))>8000):
+        raise C.ContextError('Invalid owner review fields')
+    try:
+        if str(uuid.UUID(meta['source_id']))!=meta['source_id']:raise ValueError('Noncanonical UUID')
+    except (ValueError,TypeError,AttributeError) as exc:
+        raise C.ContextError('Invalid review source identity') from exc
+    if (not isinstance(meta['source_sha256'],str) or not re.fullmatch('[a-f0-9]{64}',meta['source_sha256'])
+        or ('review_sequence' in meta and (type(meta['review_sequence']) is not int or not 1<=meta['review_sequence']<=2**31-1))
+        or ('original_unchanged' in meta and meta['original_unchanged'] is not True)):
+        raise C.ContextError('Invalid review provenance')
+    source=records.get(meta['source_id'])
+    if source is None:return
+    if (source['id']==event['id'] or is_review(source) or source['source_type'].startswith('auto.')
+        or C.digest(source)!=meta['source_sha256']):
+        raise C.ContextError('Review source relationship or hash mismatch')
+
+def eligible_rows(rows, blocked, ranges):
+    """Deletion wins over interpretations as well as their direct source records."""
+    live={row['record']['id']:row for row in rows
+          if row['record']['id'] not in blocked and not in_ranges(ranges,row['record']['event_ms'])}
+    return [row for row in rows if row['record']['id'] in live
+            and (not is_review(row['record']) or row['record']['metadata']['source_id'] in live)]
+
+def omitted_review_count(body, rows):
+    return sum(is_review(row['record']) for row in body['records'])-sum(is_review(row['record']) for row in rows)
 
 def parse(raw):
     if len(raw)>MAX_ARCHIVE: raise C.ContextError('Archive size limit')
@@ -40,6 +86,27 @@ def decrypt(raw, password=None):
 def in_ranges(ranges,t):
     return any(r['start_ms']<=t<r['end_ms'] for r in ranges)
 
+def deletion_ledger(value):
+    """Validate local tombstones and keep repeat transfers byte-stable."""
+    if not isinstance(value,dict) or set(value)!={'deleted_ids','delete_ranges'}:
+        raise C.ContextError('Invalid deletion ledger')
+    ids=value['deleted_ids'];ranges=value['delete_ranges']
+    if not isinstance(ids,list) or not isinstance(ranges,list):
+        raise C.ContextError('Invalid deletion ledger')
+    if len(ids)>20000 or len(ranges)>2000:raise C.ContextError('Deletion ledger count limit')
+    for id_ in ids:
+        if not isinstance(id_,str):raise C.ContextError('Invalid deletion identity')
+        try:uuid.UUID(id_)
+        except ValueError as exc:raise C.ContextError('Invalid deletion identity') from exc
+    for r in ranges:
+        if (not isinstance(r,dict) or set(r)!={'start_ms','end_ms'}
+            or type(r['start_ms']) is not int or type(r['end_ms']) is not int
+            or not 0<=r['start_ms']<r['end_ms']):
+            raise C.ContextError('Invalid deletion range')
+    return {'deleted_ids':sorted(set(ids)), 'delete_ranges':[
+        {'start_ms':start,'end_ms':end}
+        for start,end in sorted({(r['start_ms'],r['end_ms']) for r in ranges})]}
+
 def validate(bundle):
     if not isinstance(bundle,dict) or set(bundle)!={'format','payload','payload_sha256'} or bundle['format']!='TotalRecallBundle/1':raise C.ContextError('Unsupported bundle')
     body=bundle['payload']
@@ -55,13 +122,14 @@ def validate(bundle):
         raw=base64.b64decode(b,validate=True);total+=len(raw)
         if len(raw)>MAX_BLOB or total>MAX_TOTAL or G.raw_hash(raw)!=h:raise C.ContextError('Attachment hash/size mismatch')
         binary[h]=raw
-    seen=set();accepted=[]
+    seen=set();accepted=[];records={}
     for row in rows:
         e=row['record'];id_=e['id'];uuid.UUID(id_);uuid.UUID(e['device_id'])
         fields={'schema','id','device_id','source_type','capture_method','event_ms','observed_ms','ingested_ms','event_at','observed_at','ingested_at','timezone','offset_seconds','privacy_scope','consent_policy_version','evidence','app','text','text_sha256','attachments','metadata','integrity_boundary'}
         if set(e)!=fields:raise C.ContextError('Unknown or missing event fields')
         if id_ in seen or e['schema']!='TotalRecallEvent/1' or C.digest(e)!=row['record_sha256']:raise C.ContextError('Record ID/hash/schema mismatch')
         seen.add(id_)
+        records[id_]=e
         text=e['text'];raw=text.encode('utf-8',errors='strict')
         if len(raw)>500000 or '\x00' in text or G.raw_hash(raw)!=e['text_sha256'] or e['privacy_scope']!='private':raise C.ContextError('Invalid text or privacy')
         if e['source_type'] not in {'note','link','image','file','audio','auto.usage','auto.notification'}:raise C.ContextError('Unknown source')
@@ -77,13 +145,16 @@ def validate(bundle):
         annotation=row['annotation']
         if annotation and annotation.get('project_id') and not re.fullmatch(r'P[0-9]{1,4}',annotation['project_id']):raise C.ContextError('Invalid project annotation')
         if id_ not in deleted and not in_ranges(ranges,e['event_ms']):accepted.append(row)
-    return body,accepted,binary
+    for row in rows:validate_review(row['record'],records)
+    return body,eligible_rows(accepted,deleted,ranges),binary
 
 def preview(bundle):
     body,rows,binary=validate(bundle)
     return {'format':'TotalRecallImportPreview/1','eligible_records':len(rows),'attachments':len(binary),
             'bytes':sum(map(len,binary.values())),'privacy':'private','target_storage':'plaintext Continuity working store',
-            'sync':False,'requires_explicit_non_sensitive_test_copy':True,'source_types':sorted({r['record']['source_type'] for r in rows})}
+            'sync':False,'requires_explicit_non_sensitive_test_copy':True,'source_types':sorted({r['record']['source_type'] for r in rows}),
+            'omitted_review_records':omitted_review_count(body,rows),
+            'review_source_policy':'Original must be present in the same bundle and not deleted; owner classifications remain unverified.'}
 
 def ingest(store,bundle,*,project='P29',approved=False,non_sensitive=False):
     body,rows,blobs=validate(bundle)
@@ -93,8 +164,13 @@ def ingest(store,bundle,*,project='P29',approved=False,non_sensitive=False):
     # Old copies with tombstones cannot silently reappear. Current ledger is local and authoritative.
     ledger_path=store.root/'phone-deletions.json'
     if ledger_path.is_symlink():raise C.ContextError('Unsafe deletion ledger')
-    ledger=C.read_json(ledger_path) if ledger_path.exists() else {'deleted_ids':[],'delete_ranges':[]}
-    blocked=set(ledger['deleted_ids'])|set(body['deleted_ids']);ranges=ledger['delete_ranges']+body['delete_ranges']
+    ledger=deletion_ledger(C.read_json(ledger_path)) if ledger_path.exists() else {'deleted_ids':[],'delete_ranges':[]}
+    incoming=deletion_ledger({'deleted_ids':body['deleted_ids'],'delete_ranges':body['delete_ranges']})
+    blocked=set(ledger['deleted_ids'])|set(incoming['deleted_ids'])
+    pairs={(r['start_ms'],r['end_ms']) for r in ledger['delete_ranges']+incoming['delete_ranges']}
+    merged=deletion_ledger({'deleted_ids':sorted(blocked),'delete_ranges':[
+        {'start_ms':start,'end_ms':end} for start,end in sorted(pairs)]})
+    ranges=merged['delete_ranges']
     # This adapter does not rewrite historical journals to erase past imports.
     # Refuse partial deletion claims; owner must rebuild/migrate the destination or keep transfer local.
     known={s.get('capture_id') for s in data['sources']}
@@ -102,7 +178,14 @@ def ingest(store,bundle,*,project='P29',approved=False,non_sensitive=False):
     for s in data['sources']:
         t=s.get('origin',{}).get('event_ms')
         if t is not None and in_ranges(ranges,t):raise C.ContextError('Time deletion intersects previous import; destination rebuild required')
-    C.json_write(ledger_path,{'deleted_ids':sorted(blocked),'delete_ranges':ranges})
+        review=s.get('origin',{}).get('review')
+        if review and (review['source_event_id'] in blocked or in_ranges(ranges,review['source_event_ms'])):
+            raise C.ContextError('Deletion intersects already imported review sources. Remote deletion unsupported; no new transfer applied.')
+    rows=eligible_rows(rows,blocked,ranges)
+    # A failed/interruptible transfer must never commit a review before its source.
+    rows.sort(key=lambda row:is_review(row['record']))
+    originals={row['record']['id']:row['record'] for row in rows}
+    C.json_write(ledger_path,merged)
     receipts=[]
     for row in rows:
         e=row['record'];id_=e['id']
@@ -120,8 +203,15 @@ def ingest(store,bundle,*,project='P29',approved=False,non_sensitive=False):
              'event_ms':e['event_ms'],'text_is_original':is_text,'original_text_sha256':e['text_sha256'],
              'attachment_sha256':[a['sha256'] for a in e['attachments']], 'privacy_scope':'private',
              'trust':'untrusted-source-data','phone_consent_does_not_grant_model_or_public_access':True}}
+        if is_review(e):
+            meta=e['metadata'];source=originals[meta['source_id']]
+            req['origin']['text_role']='owner-interpretation'
+            req['origin']['review']={'source_event_id':source['id'],'source_record_sha256':meta['source_sha256'],
+                'source_event_ms':source['event_ms'],'epistemic_status':meta['epistemic_status'],
+                'role':'user_interpretation','classification_authority':'owner-supplied-unverified'}
         receipts.append(store.accept(req,True,'capture-adapter'))
-    return {'format':'TotalRecallImportReceipt/1','receipts':receipts,'manual_transfer':True,'remote_sync':False,'core_storage':'plaintext','publication_approved':False}
+    return {'format':'TotalRecallImportReceipt/1','receipts':receipts,'manual_transfer':True,'remote_sync':False,'core_storage':'plaintext','publication_approved':False,
+            'omitted_review_records':omitted_review_count(body,rows)}
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('archive',type=Path);p.add_argument('--root',type=Path);p.add_argument('--project',default='P29');p.add_argument('--approve-non-sensitive-test-copy',action='store_true');p.add_argument('--receipt',type=Path)

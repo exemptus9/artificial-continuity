@@ -11,7 +11,7 @@ export PATH="$JAVA_HOME/bin:$PATH"
 rm -rf build/classes build/dex build/generated
 mkdir -p build/classes build/dex build/generated/org/continuity/recall
 COMMIT=$(git rev-parse HEAD)
-printf 'package org.continuity.recall; public final class BuildInfo { public static final String VERSION="0.7.1-test"; public static final String COMMIT="%s"; }\n' "$COMMIT" > build/generated/org/continuity/recall/BuildInfo.java
+printf 'package org.continuity.recall; public final class BuildInfo { public static final String VERSION="0.8.0-test"; public static final String COMMIT="%s"; }\n' "$COMMIT" > build/generated/org/continuity/recall/BuildInfo.java
 "$TOOLS/aapt2" compile --dir res -o build/resources.zip
 "$TOOLS/aapt2" link -o build/unsigned.apk --manifest AndroidManifest.xml -I "$PLATFORM" build/resources.zip
 find src build/generated -name '*.java' -print > build/sources.list
@@ -25,8 +25,9 @@ with ZipFile('build/unsigned.apk','a',ZIP_DEFLATED) as z:
  for f in sorted(Path('build/dex').glob('*.dex')):z.write(f,f.name)
 PY
 "$TOOLS/zipalign" -f -p 4 build/unsigned.apk build/aligned.apk
-"$TOOLS/apksigner" sign --ks "$RECALL_KEYSTORE" --ks-key-alias recall-test --ks-pass env:RECALL_KEY_PASSWORD --key-pass env:RECALL_KEY_PASSWORD --out build/TotalRecall-0.7.1-test.apk build/aligned.apk
-"$TOOLS/apksigner" verify --verbose --print-certs build/TotalRecall-0.7.1-test.apk > build/signature.txt
-"$TOOLS/aapt2" dump badging build/TotalRecall-0.7.1-test.apk > build/package.txt
-sha256sum build/TotalRecall-0.7.1-test.apk > build/SHA256SUMS
-printf 'Built: android/build/TotalRecall-0.7.1-test.apk\n'
+"$TOOLS/apksigner" sign --ks "$RECALL_KEYSTORE" --ks-key-alias recall-test --ks-pass env:RECALL_KEY_PASSWORD --key-pass env:RECALL_KEY_PASSWORD --out build/TotalRecall-0.8.0-test.apk build/aligned.apk
+"$TOOLS/apksigner" verify --verbose --print-certs build/TotalRecall-0.8.0-test.apk > build/signature.txt
+"$TOOLS/aapt2" dump badging build/TotalRecall-0.8.0-test.apk > build/package.txt
+sha256sum build/TotalRecall-0.8.0-test.apk > build/SHA256SUMS
+python3 build-receipt.py
+printf 'Built: android/build/TotalRecall-0.8.0-test.apk\n'

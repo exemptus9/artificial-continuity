@@ -27,7 +27,8 @@ public class MainActivity extends Activity {
       MUTED = 0xffb3c4c8,
       ACCENT = 0xffb5edae;
   LinearLayout page, body, nav;
-  TextView status, recordState;
+  TextView status, recordState, draftState;
+  ScrollView scroll;
   EditText editor;
   Handler handler = new Handler();
   JSONArray pendingAttachments = new JSONArray();
@@ -62,6 +63,7 @@ public class MainActivity extends Activity {
       shell();
       showCapture();
       receive(getIntent());
+      navigate(getIntent());
     } catch (Exception e) {
       fatal(e);
     }
@@ -181,7 +183,7 @@ public class MainActivity extends Activity {
     status = label(page, "Private inbox · local only · test release", 13, MUTED);
     nav = new LinearLayout(this);
     page.addView(nav);
-    String[] tabs = {"Capture", "Timeline", "Controls", "Test"};
+    String[] tabs = {"Capture", "Recall", "Controls", "Test"};
     for (String t : tabs) {
       Button b = new Button(this);
       b.setAllCaps(false);
@@ -195,12 +197,12 @@ public class MainActivity extends Activity {
                   () -> {
                     saveDraft();
                     if (t.equals("Capture")) showCapture();
-                    else if (t.equals("Timeline")) showTimeline("", "all", "", "", false, false);
+                    else if (t.equals("Recall")) openMemory("timeline", "");
                     else if (t.equals("Controls")) showControls();
                     else showWizard();
                   }));
     }
-    ScrollView scroll = new ScrollView(this);
+    scroll = new ScrollView(this);
     page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
     body = vertical();
     scroll.addView(body);
@@ -211,6 +213,7 @@ public class MainActivity extends Activity {
     saveDraft();
     handler.removeCallbacks(draftWrite);
     editor = null;
+    draftState = null;
     currentScreen = which;
     body.removeAllViews();
     JSONObject s = Vault.read(this);
@@ -221,6 +224,30 @@ public class MainActivity extends Activity {
                 + s.getJSONObject("events").length()
                 + " records · no cloud connection");
     label(body, title, 28, FG).setTypeface(null, Typeface.BOLD);
+    scroll.post(() -> scroll.scrollTo(0, 0));
+  }
+
+  void openMemory(String section, String record) throws Exception {
+    saveDraft();
+    startActivity(new Intent(this, MemoryActivity.class).putExtra("section", section)
+        .putExtra("record_id", record));
+  }
+
+  /** Navigation only: every share/export still requires its existing preview and chooser. */
+  void navigate(Intent intent) throws Exception {
+    if (intent == null || Intent.ACTION_SEND.equals(intent.getAction())
+        || Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) return;
+    ArrayList<String> ids = intent.getStringArrayListExtra("context_ids");
+    String record = intent.getStringExtra("record_id"), section = intent.getStringExtra("section");
+    if (ids != null) {
+      if (ids.size() > 30) throw new Exception("Preview up to 30 selected records at a time");
+      for (String id : ids) UUID.fromString(id);
+      contextPacket(ids);
+    } else if (record != null && !record.isEmpty()) {
+      UUID.fromString(record);
+      showRecord(record);
+    } else if ("controls".equals(section)) showControls();
+    else if ("timeline".equals(section)) showTimeline("", "all", "", "", false, false);
   }
 
   String local(long ms) {
@@ -234,9 +261,8 @@ public class MainActivity extends Activity {
     screen("capture", "Keep the spark.");
     label(
         body,
-        "Non-sensitive testing first. No automatic source is enabled by default. Your keyboard is"
-            + " separate software; its privacy settings still apply.",
-        14,
+        "Private inbox · local only · non-sensitive test release",
+        13,
         MUTED);
     editor =
         field(
@@ -252,11 +278,12 @@ public class MainActivity extends Activity {
           public void onTextChanged(CharSequence s, int st, int before, int count) {
             handler.removeCallbacks(draftWrite);
             handler.postDelayed(draftWrite, 600);
+            if (draftState != null && !savingDraft) draftState.setText(s.length() == 0 ? "Ready for a new capture" : "Keeping your draft…");
           }
 
           public void afterTextChanged(Editable e) {}
         });
-    label(body, "Private inbox · no title or project required", 13, ACCENT);
+    draftState = label(body, editor.length() == 0 ? "No title or project required" : "Recovered local draft · tap Save capture to commit it", 13, ACCENT);
     button(body, "Save capture", () -> saveCapture());
     button(
         body,
@@ -310,20 +337,34 @@ public class MainActivity extends Activity {
           });
     }
     button(body, "Test my phone →", () -> showWizard());
+    button(body, "Open unreviewed inbox", () -> {
+      saveDraft(); startActivity(new Intent(this, MemoryActivity.class).putExtra("kind", "Inbox"));
+    });
+    button(body, "Resume My Thread", () -> openMemory("desk", ""));
+    for (JSONObject e : MemoryWorkbench.records(Vault.read(this), "", 0, Long.MAX_VALUE, "")) {
+      if (MemoryWorkbench.isReview(e)) continue;
+      button(body, "Open most recent capture · " + local(e.getLong("event_ms")),
+          () -> openMemory("timeline", e.getString("id")));
+      break;
+    }
   }
 
   void saveDraft() {
     if (editor == null || savingDraft) return;
     try {
       String text = editor.getText().toString();
-      Vault.change(
+      if (Core.utf8(text).length > Core.MAX_TEXT) throw new Exception("Draft text exceeds the capture limit");
+      JSONObject after = Vault.change(
           this,
           s -> {
-            if (!s.getJSONObject("policy").getBoolean("paused")
-                && Core.utf8(text).length <= Core.MAX_TEXT) s.put("draft", text);
+            if (!s.getJSONObject("policy").getBoolean("paused")) s.put("draft", text);
           });
+      if (draftState != null) draftState.setText(after.getJSONObject("policy").getBoolean("paused")
+          ? "Paused · draft changes are not being saved"
+          : text.isEmpty() ? "Ready for a new capture" : "Draft kept on this phone · tap Save capture to commit");
     } catch (Exception e) {
       status.setText("Draft not saved — keep this screen open or copy your text");
+      if (draftState != null) draftState.setText("Draft save failed · keep this text open or copy it");
     }
   }
 
@@ -372,8 +413,12 @@ public class MainActivity extends Activity {
   }
 
   void receipt(JSONObject e) throws Exception {
+    LinearLayout saved = vertical();
+    saved.setPadding(dp(12), dp(8), dp(12), dp(8));
+    GradientDrawable background = new GradientDrawable();background.setColor(CARD);background.setCornerRadius(dp(12));saved.setBackground(background);
+    body.addView(saved, Math.min(1, body.getChildCount()));
     label(
-            body,
+            saved,
             "Saved on this phone\n"
                 + e.getString("id")
                 + "\n"
@@ -383,7 +428,12 @@ public class MainActivity extends Activity {
             13,
             ACCENT)
         .setTextIsSelectable(true);
+    button(saved, "Open saved capture", () -> openMemory("timeline", e.getString("id")));
     status.setText("Durable encrypted save confirmed · " + local(e.getLong("ingested_ms")));
+    View focus = getCurrentFocus();
+    if (focus != null) ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE))
+        .hideSoftInputFromWindow(focus.getWindowToken(), 0);
+    scroll.post(() -> scroll.scrollTo(0, 0));
   }
 
   void receive(Intent i) throws Exception {
@@ -444,6 +494,7 @@ public class MainActivity extends Activity {
         () -> {
           showCapture();
           receive(i);
+          navigate(i);
         });
   }
 
@@ -751,6 +802,8 @@ public class MainActivity extends Activity {
             MUTED)
         .setTextIsSelectable(true);
     label(body, e.getString("text"), 19, FG).setTextIsSelectable(true);
+    if (!e.getString("source_type").startsWith("auto."))
+      button(body, "Review source & add a next step", () -> openMemory("timeline", id));
     label(
             body,
             "Text SHA-256\n"
@@ -881,6 +934,7 @@ public class MainActivity extends Activity {
     if (selected.isEmpty()) throw new Exception("No records selected by this view");
     if (s.getJSONObject("policy").getBoolean("paused"))
       throw new Exception("Sharing is disabled while paused");
+    selected = MemoryWorkbench.contextIds(s, selected);
     screen("context", "Review before sharing");
     JSONObject packet =
         Core.obj(
@@ -903,6 +957,7 @@ public class MainActivity extends Activity {
                 + " or attention.\n\n");
     int bytes = 0;
     for (String id : selected) {
+      if (packet.getJSONArray("records").length() >= 30) break;
       JSONObject e = s.getJSONObject("events").getJSONObject(id);
       bytes += Core.utf8(e.getString("text")).length;
       if (bytes > 60000) break;
@@ -924,6 +979,8 @@ public class MainActivity extends Activity {
               e.getString("text"),
               "text_sha256",
               e.getString("text_sha256"),
+              "record_sha256",
+              Core.digest(e),
               "metadata",
               e.getJSONObject("metadata"),
               "annotation",
@@ -961,11 +1018,13 @@ public class MainActivity extends Activity {
     button(
         body,
         "Share readable packet…",
-        () -> shareBytes("context.txt", Core.utf8(readable.toString())));
+        () -> {MemoryWorkbench.validateContextSnapshot(Vault.read(this), packet.getJSONArray("records"));
+          shareBytes("context.txt", Core.utf8(readable.toString()));});
     button(
         body,
         "Share machine-readable packet…",
-        () -> shareBytes("context.json", Core.utf8(packet.toString(2))));
+        () -> {MemoryWorkbench.validateContextSnapshot(Vault.read(this), packet.getJSONArray("records"));
+          shareBytes("context.json", Core.utf8(packet.toString(2)));});
     label(
         body,
         "This is an attached context packet, not a connected ChatGPT memory. Direct ChatGPT"
