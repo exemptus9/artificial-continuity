@@ -101,6 +101,8 @@ class Principal:
 class Store:
     def __init__(self, root):
         self.root = private_directory(root)
+        if (self.root / "RESTORE_INCOMPLETE.json").exists():
+            raise C.ContextError("Restore is incomplete; retain this directory and restore into a new destination.")
         self.journal = self.root / "Context_Store.json"
         self.objects = private_directory(self.root / "objects")
         self.outbox = private_directory(self.root / "outbox")
@@ -404,6 +406,10 @@ class Store:
             raise C.ContextError("Backup must be outside the working data directory.")
         with C.locked(self.journal):
             raw = self.journal.read_bytes(); data, head = C.load_store(C.parse(raw))
+            for digest in self.backup_objects(data, self.root):
+                path = self.objects / digest
+                if path.is_symlink() or not path.is_file() or file_hash(path) != digest:
+                    raise C.ContextError("Authoritative original missing or corrupt; no complete backup can be created.")
             manifest = {"format": "ContinuityObjectBackup/1", "journal_sha256": head["store_sha256"], "files": {"Context_Store.json": raw_hash(raw)}, "encrypted": False}
             C.atomic_write(destination / "Context_Store.json", raw, replace=False)
             # Include all objects, history, initial intake witness and pending outbox.
@@ -429,24 +435,103 @@ class Store:
             return manifest
 
     @staticmethod
+    def backup_objects(data, directory):
+        """Objects required by known source-preserving adapters, not arbitrary hashes.
+
+        Browser imports predate explicit raw-export source records. Their archive
+        reference is still authoritative: drafts and unsupported fields survive
+        only there. Imported metadata never grants access or publication rights.
+        """
+        required = []
+        for source in data["sources"]:
+            if source.get("format") == SOURCE_FORMAT or source.get("locator", "").startswith("continuity-object:sha256:"):
+                required.append(source.get("sha256"))
+            origin = source.get("origin", {})
+            if (source.get("mechanism") == "reviewed-browser-export"
+                    and isinstance(origin, dict) and origin.get("adapter") == "browser-source-copy/1"):
+                required.append(origin.get("archive_sha256"))
+        intake = Path(directory) / "intake.json"
+        if intake.is_symlink() or not intake.is_file():
+            raise C.ContextError("Missing or unsafe intake witness; restore the initialization evidence first.")
+        witness = C.read_json(intake)
+        if not isinstance(witness, dict) or witness.get("format") != "ContinuityIntake/1":
+            raise C.ContextError("Invalid intake witness.")
+        required.append(witness.get("original_journal_sha256"))
+        if any(not isinstance(digest, str) or not SHA.fullmatch(digest) for digest in required):
+            raise C.ContextError("Invalid authoritative object reference.")
+        return set(required)
+
+    @staticmethod
     def verify_backup(directory):
         directory = Path(directory)
+        if (directory / "MANIFEST.json").is_symlink() or any(p.is_symlink() for p in (directory, *directory.parents)):
+            raise C.ContextError("Unsafe backup directory or manifest.")
         manifest = C.read_json(directory / "MANIFEST.json")
-        if manifest.get("format") != "ContinuityObjectBackup/1":
+        if (not isinstance(manifest, dict) or manifest.get("format") != "ContinuityObjectBackup/1"
+                or not isinstance(manifest.get("files"), dict)
+                or not {"Context_Store.json", "intake.json"} <= set(manifest["files"])):
             raise C.ContextError("Invalid backup format.")
         for name, digest in manifest["files"].items():
+            if (not isinstance(name, str) or not isinstance(digest, str) or not SHA.fullmatch(digest)
+                    or not (name in {"Context_Store.json", "intake.json"}
+                            or re.fullmatch(r"(?:objects|history|outbox)/[^/\\]+", name))):
+                raise C.ContextError("Invalid backup member name or checksum.")
             p = directory / name
             if Path(name).is_absolute() or ".." in Path(name).parts or p.is_symlink() or any(parent.is_symlink() for parent in p.parents) or not p.is_file() or file_hash(p) != digest:
                 raise C.ContextError("Backup member missing, unsafe or changed.")
         data, head = C.load_store(C.read_json(directory / "Context_Store.json"))
         if head["store_sha256"] != manifest["journal_sha256"]:
             raise C.ContextError("Backup journal identity changed.")
-        for s in data["sources"]:
-            if s.get("format") == SOURCE_FORMAT or s.get('locator', '').startswith('continuity-object:sha256:'):
-                name = "objects/" + s["sha256"]
-                if manifest["files"].get(name) != s["sha256"]:
-                    raise C.ContextError("Backup omits an authoritative capture object.")
+        for digest in Store.backup_objects(data, directory):
+            if manifest["files"].get("objects/" + digest) != digest:
+                raise C.ContextError("Backup omits an authoritative original object.")
         return {"verified": True, "files": len(manifest["files"]), "context": head, "encrypted": False}
+
+    @staticmethod
+    def restore_backup(directory, destination):
+        """Verified copy into a new root; never replace a working store.
+
+        A failed copy keeps an explicit incomplete marker and is unusable as a
+        Store. Retry into another new directory; preserve the failed copy until
+        its cause is understood. The original checkpoint remains untouched.
+        """
+        directory, destination = Path(directory).absolute(), Path(destination).absolute()
+        if (directory / "RESTORE_INCOMPLETE.json").exists():
+            raise C.ContextError("Cannot restore from an incomplete restore.")
+        raw_manifest = (directory / "MANIFEST.json").read_bytes()
+        verified = Store.verify_backup(directory)
+        if (directory / "MANIFEST.json").read_bytes() != raw_manifest:
+            raise C.ContextError("Checkpoint manifest changed during verification; retry the stable backup.")
+        manifest = C.parse(raw_manifest)
+        if any(p.is_symlink() for p in (destination, *destination.parents)):
+            raise C.ContextError("Restore destination must not traverse symlinks.")
+        directory, destination = directory.resolve(), destination.resolve()
+        if destination == directory or directory in destination.parents:
+            raise C.ContextError("Restore destination must be outside the backup.")
+        if any(p.is_symlink() for p in (destination, *destination.parents)) or any((p / ".git").exists() for p in (destination, *destination.parents)):
+            raise C.ContextError("Restore requires a private destination outside source repositories and symlinks.")
+        # Exclusive mkdir reserves the destination, including against a racing
+        # writer. Even an existing empty directory is never reused.
+        destination.mkdir(mode=0o700, parents=False, exist_ok=False)
+        marker = destination / "RESTORE_INCOMPLETE.json"
+        C.json_write(marker, {"format": "ContinuityIncompleteRestore/1", "started_at": now()}, replace=False)
+        for name, digest in manifest["files"].items():
+            target = destination / name
+            if target.parent != destination:
+                private_directory(target.parent)
+            copy_object_file(directory / name, target, digest)
+        copy_object_file(directory / "MANIFEST.json", destination / "MANIFEST.json", raw_hash(raw_manifest))
+        restored = Store.verify_backup(destination)
+        if restored["context"] != verified["context"]:
+            raise C.ContextError("Checkpoint changed during restore; incomplete copy retained.")
+        marker.unlink()
+        descriptor = os.open(destination, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return {"restored": True, **restored, "new_destination_only": True,
+                "index": "rebuilds on first search", "outbox_ingested": False}
 
     def browser_preview(self, raw):
         value = C.parse(raw)
@@ -590,6 +675,7 @@ def main(argv=None):
     p = sub.add_parser("project"); p.add_argument("id"); p.add_argument("--revision", type=int)
     p = sub.add_parser("backup"); p.add_argument("destination", type=Path)
     p = sub.add_parser("verify-backup"); p.add_argument("directory", type=Path)
+    p = sub.add_parser("restore-backup"); p.add_argument("directory", type=Path)
     p = sub.add_parser("import-browser"); p.add_argument("file", type=Path); p.add_argument("--project", required=True); p.add_argument("--approve", action="store_true")
     p = sub.add_parser("serve"); p.add_argument("--port", type=int, default=8766); p.add_argument("--agent-project", action="append", default=[]); p.add_argument("--agent-ttl-seconds", type=int, default=3600)
     args = parser.parse_args(argv)
@@ -598,6 +684,8 @@ def main(argv=None):
             s = Store.initialize(args.root, args.context); result = s.state()[1]
         elif args.command == "verify-backup":
             result = Store.verify_backup(args.directory)
+        elif args.command == "restore-backup":
+            result = Store.restore_backup(args.directory, args.root)
         else:
             s = Store(args.root); owner = Principal("owner")
             if args.command == "spool": result = s.spool(C.read_json(args.request))
