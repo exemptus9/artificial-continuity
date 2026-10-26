@@ -50,9 +50,9 @@ jobs:
           export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12" RECALL_KEY_PASSWORD="$PW"
           export RECALL_SIGNING_KIND=ephemeral-test
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass "$PW" -keypass "$PW" -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Total Recall Upgrade Test'
-          git worktree add --detach "$RUNNER_TEMP/recall-base" 92a89f26de5218b97263f959f6e9aa9eec68e08d
+          git worktree add --detach "$RUNNER_TEMP/recall-base" 29218f0b3ad1bb26a59a4a69d4907c41f88fef55
           (cd "$RUNNER_TEMP/recall-base" && bash android/build.sh)
-          cp "$RUNNER_TEMP/recall-base/android/build/TotalRecall-0.7.1-test.apk" android/build/upgrade-base.apk
+          cp "$RUNNER_TEMP/recall-base/android/build/TotalRecall-0.8.0-test.apk" android/build/upgrade-base.apk
           bash android/build.sh
           bash android/instrumentation/build-test.sh
           ! grep -q android.permission.INTERNET android/build/package.txt

@@ -37,6 +37,7 @@ public final class IterationNativeTests extends Instrumentation {
   @Override public void onStart(){Bundle result=new Bundle();try{
     if(!"YES".equals(gate)||!(Build.HARDWARE.contains("ranchu")||Build.HARDWARE.contains("goldfish")))throw new Exception("Synthetic emulator required");
     Context c=getTargetContext();JSONObject seed=new JSONObject(Core.decodeUtf8(java.nio.file.Files.readAllBytes(new File(c.getExternalFilesDir(null),"upgrade-seed.json").toPath())));
+    yes("upgrade baseline is the current 0.8.0 candidate",seed.getString("source_version").equals("0.8.0-test"));
     JSONObject initial=Vault.read(c),original=initial.getJSONObject("events").getJSONObject(seed.getString("id"));
     yes("previous APK source retained after update",Core.digest(original).equals(seed.getString("event_sha256")));
     yes("old encrypted store opens with same key",original.getString("text_sha256").equals(seed.getString("text_sha256")));
