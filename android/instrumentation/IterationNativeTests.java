@@ -30,6 +30,11 @@ public final class IterationNativeTests extends Instrumentation {
   AccessibilityNodeInfo awaitNode(String label)throws Exception{for(int n=0;n<100;n++){AccessibilityNodeInfo found=node(getUiAutomation().getRootInActiveWindow(),label);if(found!=null)return found;Thread.sleep(50);}throw new Exception("Visible node missing: "+label);}
   void uiClick(String label)throws Exception{if(!awaitNode(label).performAction(AccessibilityNodeInfo.ACTION_CLICK))throw new Exception("Click failed: "+label);waitForIdleSync();}
   void uiText(String label,String value)throws Exception{Bundle b=new Bundle();b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value);if(!awaitNode(label).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,b))throw new Exception("Text failed: "+label);waitForIdleSync();}
+  void visibleLabels(AccessibilityNodeInfo node,JSONArray labels) {
+    if(node==null||labels.length()>=120)return;
+    if(node.getText()!=null)labels.put(node.getText().toString());
+    for(int i=0;i<node.getChildCount();i++)visibleLabels(node.getChild(i),labels);
+  }
   void render(Activity a,String name)throws Exception{
     File out=new File(getTargetContext().getExternalFilesDir(null),name+".png");
     runOnMainSync(()->{try{View v=a.getWindow().getDecorView();Bitmap b=Bitmap.createBitmap(v.getWidth(),v.getHeight(),Bitmap.Config.ARGB_8888);v.draw(new Canvas(b));try(FileOutputStream f=new FileOutputStream(out)){b.compress(Bitmap.CompressFormat.PNG,100,f);}b.recycle();}catch(Exception e){throw new RuntimeException(e);}});
@@ -49,6 +54,7 @@ public final class IterationNativeTests extends Instrumentation {
       yes("in-place update retained original record count",Core.ids(initial).size()==seed.getInt("count"));
       yes("automatic sources stay off",!initial.getJSONObject("policy").getBoolean("usage")&&!initial.getJSONObject("policy").getBoolean("notifications"));
       MainActivity a=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
+      yes("upgraded baseline test verifies before UI interaction",DurableTextTest.verify(initial).getString("id").equals(seed.getString("id")));
       click(a,"Test");click(a,"Verify durable test record");
       yes("verify success is immediately visible",awaitNode("Saved test record verified")!=null);uiClick("OK");
       JSONObject wizard=Core.copy(Vault.read(c).getJSONObject("wizard"));
@@ -102,5 +108,14 @@ public final class IterationNativeTests extends Instrumentation {
     JSONObject receipt=Core.obj("format","TotalRecallIterationNative/1","status","PASS","phase",phase,"commit",BuildInfo.COMMIT,"version",BuildInfo.VERSION,"assertions",count,"cases",cases,"physical_phone",false,"signing","CI disposable key; owner-signed delivery verified separately");
     try(FileOutputStream f=new FileOutputStream(new File(c.getExternalFilesDir(null),"iteration-"+(phase.equals("restart")?"restart":"ui")+".json"))){f.write(Core.utf8(receipt.toString(2)));}
     result.putString("stream","\nITERATION_PASS "+count+"\n");finish(Activity.RESULT_OK,result);
-  }catch(Exception ex){result.putString("stream","\nITERATION_FAIL "+ex+"\n");ex.printStackTrace();finish(Activity.RESULT_CANCELED,result);}}
+  }catch(Exception ex){
+    if("YES".equals(gate))try{
+      JSONArray labels=new JSONArray();visibleLabels(getUiAutomation().getRootInActiveWindow(),labels);
+      JSONObject failure=Core.obj("format","SyntheticNativeFailure/1","commit",BuildInfo.COMMIT,
+          "phase",phase,"error",ex.toString(),"cases",cases,"visible_labels",labels,
+          "wizard",Vault.read(getTargetContext()).getJSONObject("wizard"));
+      try(FileOutputStream f=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"iteration-failure.json"))){f.write(Core.utf8(failure.toString(2)));}
+    }catch(Exception ignored){}
+    result.putString("stream","\nITERATION_FAIL "+ex+"\n");ex.printStackTrace();finish(Activity.RESULT_CANCELED,result);}}
+
 }
