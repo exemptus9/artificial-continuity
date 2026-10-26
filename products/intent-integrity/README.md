@@ -24,6 +24,7 @@ CI provides signed DEBUG APKs for personal testing and UNSIGNED AABs for owner-c
 - Instagram is username-to-profile navigation, not an advertised general-topic search engine.
 - Search results are still platform-ranked; selected communities/profiles can contain recommendations. This app does not abolish algorithms.
 - Native guard does not inspect screen text, messages, passwords, screenshots or accessibility node trees. Consent and app choices start empty/off.
+- A timed browser reveal applies only to the exact supported URI, including its query and fragment. Changing an otherwise gated destination requires another explicit choice. Its lease key is an in-memory SHA-256 digest; no new URL history or persistent setting is added.
 - No medical, revenue, store-approval or universal compatibility guarantee.
 
 ## Store release gates

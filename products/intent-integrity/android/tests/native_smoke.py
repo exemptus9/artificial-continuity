@@ -9,6 +9,14 @@ def dump(name='latest'):
     value=base64.b64decode(match.group(1)).decode('utf-8');(OUT/(name+'.xml')).write_text(value);return value
 
 def shot(name):(OUT/(name+'.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
+def wait_text(text,name,timeout=12):
+    # A newly opened dialog can be visible before the accessibility window list
+    # includes it. Observe repeatedly; never repeat the consent action or bypass it.
+    deadline=time.monotonic()+timeout
+    while True:
+        if text in dump(name):return True
+        if time.monotonic()>=deadline:return False
+        time.sleep(.4)
 def check(ok,name):
     checks.append({'name':name,'passed':bool(ok)});(OUT/'checks.json').write_text(json.dumps({'environment':'Android API 36 emulator','fixture':'our own test app; no live social platform','probe':'UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES, separate test-only APK','checks':checks},indent=2))
     if not ok:shot('failure');raise AssertionError(name)
@@ -27,7 +35,7 @@ try:
     core='com.intentintegrity.app.core.dev';guard='com.intentintegrity.app.guard.dev';launch(core);check('You get the first move.' in dump('core-home'),'Core launches');shot('core-home')
     tap('Try the shield');check('Feed held at the door.' in dump('browser-shield'),'Native browser gate shown without loading a feed');shot('browser-shield');adb('shell','input','keyevent','4');time.sleep(.5)
     tap('Privacy, compatibility');tap('Run offline diagnostics');check('7 / 7' in dump('diagnostics'),'Seven search routes pass on Android runtime');adb('shell','input','keyevent','4')
-    launch(guard);tap('Protect installed apps');tap('Test feed app');tap('Review disclosure');check('Accessibility access' in dump('consent'),'Prominent disclosure shown before service access');tap('I agree')
+    launch(guard);tap('Protect installed apps');tap('Test feed app');tap('Review disclosure');check(wait_text('Accessibility access','consent'),'Prominent disclosure shown before service access');tap('I agree')
     component=guard+'/com.intentintegrity.app.IntentGuardService'
     # CI emulator provisioning AFTER the consent UI. This is not consumer installation guidance.
     adb('shell','settings','put','secure','enabled_accessibility_services',component);adb('shell','settings','put','secure','accessibility_enabled','1');time.sleep(3)

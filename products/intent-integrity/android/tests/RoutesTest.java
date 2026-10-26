@@ -10,6 +10,14 @@ public final class RoutesTest {
         for(String u:feeds)test(!Routes.allowed(u),"Gate "+u);
         test(Routes.allowed("https://www.youtube.com/watch?v=123"),"chosen video");test(Routes.allowed("https://www.instagram.com/direct/inbox/"),"direct messages");test(Routes.allowed("https://www.reddit.com/r/java/comments/123/title"),"chosen discussion");
         Lease l=new Lease();test(!l.valid("a",100),"no grant");l.grant("a",100,1000);test(l.valid("a",100),"start inclusive");test(l.valid("a",1099),"before expiry");test(!l.valid("a",1100),"expiry exclusive");test(!l.valid("b",200),"scope separated");test(!l.valid("a",99),"clock reset safe");l.clear();test(!l.valid("a",200),"clear");
+        String revealUrl="https://www.youtube.com/feed/trending?view=one&token=private-value#panel";
+        Lease pagePass=new Lease();pagePass.grant(Routes.pageKey(revealUrl),100,1000);
+        test(pagePass.valid(Routes.pageKey(revealUrl),200),"same exact page retains reveal");
+        test(!pagePass.valid(Routes.pageKey("https://www.youtube.com/feed/trending?view=two&token=private-value#panel"),200),"different query cannot reuse page reveal");
+        test(!pagePass.valid(Routes.pageKey("https://www.youtube.com/feed/trending?view=one&token=private-value#other"),200),"different fragment cannot reuse page reveal");
+        test(!pagePass.valid(Routes.pageKey("https://www.youtube.com/feed/trending?view=one&&token=private-value#panel"),200),"raw repeated query delimiters retain distinct scope");
+        test(!Routes.pageKey(revealUrl).contains("private-value")&&Routes.pageKey(revealUrl).matches("[0-9a-f]{64}"),"lease key does not expose private URI values");
+        test(Routes.pageKey("https://unsupported.example/feed").isEmpty(),"unsupported URI cannot receive a reveal key");
         try{Routes.search("instagram","../settings");throw new AssertionError("bad username");}catch(IllegalArgumentException expected){count++;}
         try{Routes.search("youtube"," ");throw new AssertionError("empty query");}catch(IllegalArgumentException expected){count++;}
         System.out.println("PASS: "+count+" URL, input and monotonic-lease assertions. Live websites and physical devices are not covered by these unit tests.");

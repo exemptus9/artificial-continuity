@@ -37,5 +37,14 @@ public final class Routes {
         case "instagram" -> p.startsWith("/direct/")||p.matches("/(p|reel)/[^/]+.*")||(p.matches("/[A-Za-z0-9._]{1,30}")&&!p.matches("/(explore|reels|stories|about|directory)"));
         default -> false;};}
     private static boolean hasQuery(String q,String key){for(String item:q.split("&"))if(item.startsWith(key+"=")){try{return !URLDecoder.decode(item.substring(key.length()+1),"UTF-8").trim().isEmpty();}catch(Exception e){return false;}}return false;}
-    public static String pageKey(String value){try{URI u=URI.create(value);return u.getScheme()+"://"+u.getHost()+u.getPath();}catch(Exception e){return "";}}
+    /** Ephemeral exact-URI lease scope; never persist/log query or fragment values. */
+    public static String pageKey(String value){
+        if(site(value).isEmpty())return "";
+        try{
+            byte[] hash=java.security.MessageDigest.getInstance("SHA-256").digest(URI.create(value).toASCIIString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            char[] hex="0123456789abcdef".toCharArray(),out=new char[hash.length*2];
+            for(int i=0;i<hash.length;i++){out[i*2]=hex[(hash[i]&255)>>>4];out[i*2+1]=hex[hash[i]&15];}
+            return new String(out);
+        }catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException("SHA-256 is unavailable.",e);}
+    }
 }
