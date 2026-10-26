@@ -14,7 +14,7 @@ $ADB shell am instrument -w -e synthetic_emulator_only YES \
   | tee build/device-evidence/upgrade-seed.log
 grep -q UPGRADE_SEED_PASS build/device-evidence/upgrade-seed.log
 $ADB shell am force-stop org.continuity.recall.test
-$ADB install -r build/TotalRecall-0.8.0-test.apk
+$ADB install -r build/TotalRecall-0.8.1-test.apk
 $ADB shell am instrument -w -e synthetic_emulator_only YES \
   org.continuity.recall.instrumentation/org.continuity.recall.IterationNativeTests \
   | tee build/device-evidence/native-ui.log

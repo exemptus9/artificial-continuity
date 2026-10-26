@@ -1,6 +1,6 @@
 # Total Recall: protect unfinished captures during diagnostics
 
-This patch builds on Total Recall 0.8 source `29218f0b3ad1bb26a59a4a69d4907c41f88fef55`. It does not replace the existing original-key installer.
+This patch builds on Total Recall 0.8 source `29218f0b3ad1bb26a59a4a69d4907c41f88fef55`. The 0.8.1 candidate uses versionCode 10 and retains the original test package, schema, and signing identity. The prior 0.8 installer remains preserved.
 
 ## Confirmed defect and repair
 
@@ -14,4 +14,4 @@ An isolated tracked-only worktree is used for Python regression testing. Exact r
 
 ## Installer and update boundary
 
-The previously delivered 0.8 APK has the retained original test certificate. The repository contains no signing secret. Synthetic CI builds use a different disposable key and must never be offered as an in-place update to the owner's installation. Do not uninstall, clear data, or overwrite the existing installer. A later owner-key build with an appropriate version code is needed for an installable update containing this repair.
+The previously delivered 0.8 APK has the retained original test certificate. Private recovery material can build the 0.8.1 update without changing identity; it stays outside this repository and every deliverable. Synthetic CI builds use a different disposable key and must never be offered as an in-place update to the owner's installation. Compare certificate and checksum against the release receipt. Do not uninstall, clear data, or overwrite the existing 0.8 installer. Physical-device update and acceptance remain separate.

@@ -40,7 +40,7 @@ public final class IterationNativeTests extends Instrumentation {
     JSONObject initial=Vault.read(c),original=initial.getJSONObject("events").getJSONObject(seed.getString("id"));
     yes("previous APK source retained after update",Core.digest(original).equals(seed.getString("event_sha256")));
     yes("old encrypted store opens with same key",original.getString("text_sha256").equals(seed.getString("text_sha256")));
-    yes("release version is 0.8.0",BuildInfo.VERSION.equals("0.8.0-test"));
+    yes("release version is 0.8.1",BuildInfo.VERSION.equals("0.8.1-test"));
     if(phase.equals("restart")){
       yes("source-linked next step survives process restart",MemoryWorkbench.desk(initial).length()>0);
       yes("offline recall works after process restart",TemporalEngine.recall(initial,"find lighthouse",System.currentTimeMillis(),java.time.ZoneId.systemDefault()).matchCount>0);

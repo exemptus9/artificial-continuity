@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="9" android:versionName="0.8.0-test">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="10" android:versionName="0.8.1-test">
  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
  <uses-permission android:name="android.permission.RECORD_AUDIO"/>

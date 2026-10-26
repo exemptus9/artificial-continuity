@@ -1,4 +1,4 @@
-name: Total Recall 0.8 upgrade and native UI acceptance
+name: Total Recall 0.8.1 upgrade and native UI acceptance
 on:
   push:
     branches: ['work/max07-next-*']
