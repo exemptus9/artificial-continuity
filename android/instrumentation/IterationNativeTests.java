@@ -56,6 +56,15 @@ public final class IterationNativeTests extends Instrumentation {
       yes("verify failure gives an immediate corrective dialog",awaitNode("Test not verified")!=null);uiClick("OK");
       yes("failed verification is retained in diagnostic result",Vault.read(c).getJSONObject("wizard").getString("durable-text").startsWith("FAIL"));
       Vault.change(c,s->s.put("wizard",wizard));
+      click(a,"Capture");String unfinished="SYNTHETIC unfinished draft\n\ne\u0301 / é / 🧠";
+      runOnMainSync(()->a.editor.setText(unfinished));click(a,"Test");
+      String beforePreparation=Core.digest(Vault.read(c).getJSONObject("wizard"));
+      click(a,"Prepare a unique multiline test phrase");
+      yes("test preparation visibly protects an unfinished draft",awaitNode("Your draft is safe")!=null);uiClick("OK");
+      final boolean[] draftVisible={false};runOnMainSync(()->draftVisible[0]=a.editor.getText().toString().equals(unfinished));
+      yes("unfinished capture remains exact in editor and disk",draftVisible[0]&&Vault.read(c).getString("draft").equals(unfinished));
+      yes("blocked preparation preserves previous test state",Core.digest(Vault.read(c).getJSONObject("wizard")).equals(beforePreparation));
+      runOnMainSync(()->a.editor.setText(""));
       click(a,"Capture");String note="SYNTHETIC lighthouse poem\n\nKeep both lines. e\u0301 / é / 🧠";
       runOnMainSync(()->a.editor.setText(note));click(a,"Save capture");
       final boolean[] receiptVisible={false};runOnMainSync(()->{View v=view(a.getWindow().getDecorView(),"Saved on this phone");receiptVisible[0]=v!=null&&v.getGlobalVisibleRect(new Rect());});

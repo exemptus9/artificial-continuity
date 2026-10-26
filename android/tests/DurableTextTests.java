@@ -25,6 +25,30 @@ public class DurableTextTests {
     return e;
   }
   public static void main(String[] args) throws Exception {
+    test("preparation preserves unfinished Unicode draft and existing test state", () -> {
+      JSONObject s = Core.initial(NOW);
+      JSONObject original = save(s, DurableTextTest.prepare(s, "prior-test"), true);
+      s.getJSONObject("wizard").put("durable-text", "PASS");
+      String draft = "Unfinished poem\n\ne\u0301 / é / 🧠\t…";
+      s.put("draft", draft);
+      String before = Core.digest(s);
+      try { DurableTextTest.prepare(s, "replacement"); }
+      catch (Exception expected) {
+        yes(expected.getMessage().contains("unfinished capture"));
+        yes(Core.digest(s).equals(before));
+        yes(DurableTextTest.verify(s).getString("id").equals(original.getString("id")));
+        return;
+      }
+      throw new Exception("Preparation replaced an unfinished draft");
+    });
+    test("whitespace-only draft remains owner data", () -> {
+      JSONObject s = Core.initial(NOW);
+      s.put("draft", " \n\t");
+      String before = Core.digest(s);
+      try { DurableTextTest.prepare(s, "replacement"); }
+      catch (Exception expected) { yes(Core.digest(s).equals(before)); return; }
+      throw new Exception("Preparation replaced whitespace draft");
+    });
     test("no prepared test explains the next step", () -> error(Core.initial(NOW), "Prepare"));
     test("draft is not a saved record", () -> {
       JSONObject s = Core.initial(NOW);

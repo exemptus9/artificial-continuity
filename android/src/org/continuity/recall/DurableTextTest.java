@@ -7,6 +7,12 @@ public final class DurableTextTest {
   private DurableTextTest() {}
 
   public static String prepare(JSONObject state, String nonce) throws Exception {
+    // Preparing a diagnostic must never replace the owner's unfinished words.
+    // Check before changing wizard state, including its previous result/binding.
+    if (!state.optString("draft", "").isEmpty()) {
+      throw new Exception("Your unfinished capture is kept. Open Capture and save or finish "
+          + "that draft before preparing a test phrase.");
+    }
     String phrase = "Total Recall test " + nonce
         + "\nOne newline.\n\nTwo newlines.\nPoetry keeps its shape. e\u0301 / é / 🧠\t…";
     JSONObject wizard = state.getJSONObject("wizard");

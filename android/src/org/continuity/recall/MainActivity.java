@@ -1694,6 +1694,14 @@ public class MainActivity extends Activity {
         body,
         "Prepare a unique multiline test phrase",
         () -> {
+          if (!Vault.read(this).optString("draft", "").isEmpty()
+              || pendingAttachments.length() > 0) {
+            showCapture();
+            message("Your draft is safe", "Finish and save your existing capture first. "
+                + "Its text and selected files have not been replaced by a test phrase. "
+                + "Then return to Test to prepare the check.");
+            return;
+          }
           String nonce = UUID.randomUUID().toString().substring(0, 8);
           String[] phrase = new String[1];
           Vault.change(
