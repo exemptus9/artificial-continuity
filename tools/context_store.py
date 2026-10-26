@@ -23,7 +23,12 @@ MAX_BYTES = 32_000_000
 STATES = {"ACTIVE", "READY", "BLOCKED", "WAITING", "INTERRUPTED", "DORMANT", "COMPLETE", "ARCHIVE", "CANCELLED"}
 TEXT_FIELDS = {"name", "category", "summary", "next_action", "owner", "priority", "recommended_mode", "purpose", "last_verified_activity", "status_basis", "authoritative_source", "effort", "source_scope", "evidence_caution", "dependency_scope"}
 LIST_FIELDS = {"aliases", "unfinished", "dependencies", "sources", "related_projects", "active_work", "blocked_work", "related_assets", "public_assets", "private_assets", "evidence_of_progress", "major_unresolved_questions", "completed_components"}
-EDIT_FIELDS = TEXT_FIELDS | LIST_FIELDS | {"state", "confidence", "next_action_required"}
+TEXT_FIELDS |= {"repository", "branch", "framework", "runtime", "authentication", "privacy_scope", "canonical_data_source", "operating_cost", "publication_authority"}
+LIST_FIELDS |= {"locations", "data_stores", "available_tests", "release_artifacts"}
+EDIT_FIELDS = TEXT_FIELDS | LIST_FIELDS | {"state", "confidence", "next_action_required", "delivery"}
+RELEASE_STATES = {"DISCOVERED", "UNVERIFIED", "IMPLEMENTED", "TESTED", "RELEASE-CANDIDATE", "DEPLOYED-UNVERIFIED", "LIVE-VERIFIED", "BLOCKED", "ARCHIVED", "SUPERSEDED"}
+DELIVERY_FIELDS = {"format", "status", "revision", "environment", "evidence", "limitations"}
+RECEIPT_FIELDS = {"source_id", "revision", "environment", "check", "method", "result", "checked_at"}
 PROPOSAL_FIELDS = {"id", "at", "actor", "note", "evidence_grade", "source_refs", "source_records", "updates", "additions"}
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -68,6 +73,54 @@ def timestamp(value: Any) -> None:
 def _id(value: Any) -> bool:
     return isinstance(value, str) and ID.fullmatch(value) is not None
 
+def validate_delivery(delivery: Any) -> None:
+    """Keep execution proof separate from task state and historical claims.
+
+    This checks recorded evidence consistency, not the truth of a test report.
+    It performs no requests and never promotes a release automatically.
+    """
+    if not isinstance(delivery, dict) or set(delivery) != DELIVERY_FIELDS:
+        raise ContextError("Delivery fields must match ConstellationRelease/1.")
+    if delivery["format"] != "ConstellationRelease/1" or delivery["status"] not in RELEASE_STATES:
+        raise ContextError("Unsupported release format or status.")
+    for key in ("revision", "environment"):
+        if not isinstance(delivery[key], str) or not delivery[key].strip():
+            raise ContextError(f"Delivery {key} is required; use unknown when unverified.")
+    if not isinstance(delivery["limitations"], list) or not all(isinstance(x, str) for x in delivery["limitations"]):
+        raise ContextError("Delivery limitations must be a list of strings.")
+    if not isinstance(delivery["evidence"], list):
+        raise ContextError("Delivery evidence must be an array.")
+    for receipt in delivery["evidence"]:
+        if not isinstance(receipt, dict) or set(receipt) != RECEIPT_FIELDS:
+            raise ContextError("Release receipt fields do not match the contract.")
+        if not _id(receipt["source_id"]):
+            raise ContextError("Release receipt requires a stable source ID.")
+        if not _id(receipt["check"]):
+            raise ContextError("Release receipt requires a stable check ID.")
+        for key in ("revision", "environment"):
+            if not isinstance(receipt[key], str) or not receipt[key].strip():
+                raise ContextError(f"Receipt {key} is required.")
+        if receipt["method"] not in {"inspection", "test", "build", "deployment", "live-journey", "device-journey"} or receipt["result"] not in {"pass", "fail", "not-run"}:
+            raise ContextError("Invalid receipt method or result.")
+        timestamp(receipt["checked_at"])
+    current = [r for r in delivery["evidence"] if r["revision"] == delivery["revision"] and r["environment"] == delivery["environment"]]
+    required = {"TESTED": {"test", "live-journey", "device-journey"}, "RELEASE-CANDIDATE": {"test", "live-journey", "device-journey"}, "DEPLOYED-UNVERIFIED": {"deployment"}, "LIVE-VERIFIED": {"live-journey", "device-journey"}}
+    if delivery["status"] in required:
+        relevant = [r for r in current if r["method"] in required[delivery["status"]]]
+        latest = {}
+        for receipt in relevant:
+            key = (receipt["method"], receipt["check"])
+            at = datetime.fromisoformat(receipt["checked_at"].replace("Z", "+00:00"))
+            previous = latest.get(key)
+            if previous is None or at > previous[0]:
+                latest[key] = (at, [receipt])
+            elif at == previous[0]:
+                previous[1].append(receipt)
+        if delivery["revision"] == "unknown" or delivery["environment"] == "unknown" or not latest:
+            raise ContextError("Release status lacks passing evidence for its exact revision and environment.")
+        if any(r["result"] != "pass" for _, receipts in latest.values() for r in receipts):
+            raise ContextError("Release status conflicts with a latest failed or unrun check; retain the evidence and reconcile first.")
+
 def validate_project(project: Any) -> None:
     if not isinstance(project, dict) or not _id(project.get("id")):
         raise ContextError("Project needs a safe, stable ID.")
@@ -83,6 +136,8 @@ def validate_project(project: Any) -> None:
             raise ContextError(f"{key} must be a list of strings.")
     if "next_action_required" in project and type(project["next_action_required"]) is not bool:
         raise ContextError("next_action_required must be boolean.")
+    if "delivery" in project:
+        validate_delivery(project["delivery"])
 
 def validate_map(data: Any) -> None:
     if not isinstance(data, dict) or not isinstance(data.get("projects"), list) or not isinstance(data.get("sources"), list):
@@ -102,6 +157,10 @@ def validate_map(data: Any) -> None:
         source_ids.append(source["id"])
     if len(set(source_ids)) != len(source_ids):
         raise ContextError("Duplicate source ID.")
+    for project in data["projects"]:
+        for receipt in project.get("delivery", {}).get("evidence", []):
+            if receipt["source_id"] not in source_ids:
+                raise ContextError("Release receipt refers to an unregistered source.")
     # Historical coverage gaps are retained, not silently rewritten or upgraded.
 
 def init_store(baseline: dict) -> dict:
@@ -289,7 +348,12 @@ def project_brief(data: dict, project: dict, head: dict) -> str:
            "", "## Next action", project.get("next_action", "Not recorded."), "", "## Evidence boundary", project.get("evidence_caution", "Primary sources control their facts; unknown outcomes remain unknown.")]
     for key, label in (("completed_components", "Completed components, as recorded"), ("unfinished", "Unfinished"), ("blocked_work", "Blockers"), ("dependencies", "Dependencies"), ("major_unresolved_questions", "Unresolved questions")):
         out += ["", f"## {label}"] + [str(x) for x in project.get(key, []) or ["None recorded; this is not proof that none exist."]]
-    source_ids = set(project.get("sources", []))
+    delivery = project.get("delivery")
+    if delivery:
+        out += ["", "## Release evidence", f"Release status: {delivery['status']}", f"Revision: {delivery['revision']}", f"Environment: {delivery['environment']}"]
+        out += [f"{r['source_id']} | {r['method']} | {r['result']} | {r['checked_at']} | {r['revision']} | {r['environment']}" for r in delivery["evidence"]]
+        out += ["Limits: " + x for x in delivery["limitations"]]
+    source_ids = set(project.get("sources", [])) | {r["source_id"] for r in project.get("delivery", {}).get("evidence", [])}
     alias_map = data.get("source_aliases", {})
     for item in list(source_ids):
         alias = alias_map.get(item)
@@ -316,8 +380,14 @@ def export_views(store: dict, directory: Path) -> dict:
         derived["meta"]["artifact_summary"]["sources"] = len(data["sources"])
     derived["status_rollup"] = {s: sum(p["state"] == s for p in data["projects"]) for s in sorted(STATES)}
     json_write(directory / "Continuity_Current_State.json", derived)
-    registry = {"context": head, "projects": [{k: p.get(k) for k in ("id", "name", "aliases", "state", "confidence", "priority", "category", "next_action", "sources")} for p in data["projects"]]}
+    registry_fields = ("id", "name", "aliases", "state", "confidence", "priority", "category", "owner", "next_action", "sources", "dependencies", "authoritative_source", "repository", "branch", "framework", "runtime", "data_stores", "locations", "authentication", "privacy_scope", "canonical_data_source", "available_tests", "release_artifacts", "operating_cost", "publication_authority", "last_verified_activity", "status_basis", "delivery")
+    registry = {"format": "ConstellationRegistry/1", "privacy": "owner-private", "authority": "Derived from the Continuity journal; source systems retain ownership.", "context": head, "projects": [{k: p.get(k) for k in registry_fields} for p in data["projects"]]}
     json_write(directory / "Project_Registry.json", registry)
+    lines = ["# Project Constellation", "", "PRIVATE operational projection. Task state and release status are independent. Evidence is recorded, not independently certified by this exporter.", ""]
+    for p in data["projects"]:
+        release = p.get("delivery", {})
+        lines += [f"## {p['id']}: {p['name']}", "", f"Task state: {p['state']} | Release: {release.get('status', 'UNVERIFIED')}", "", p.get("next_action", "No next action recorded."), "", f"Evidence: projects/{p['id']}/STATE.md", ""]
+    atomic_write(directory / "Project_Registry.md", "\n".join(lines).encode("utf-8"))
     for p in data["projects"]:
         folder = directory / "projects" / p["id"]
         atomic_write(folder / "STATE.md", project_brief(data, p, head).encode())

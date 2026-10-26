@@ -20,6 +20,9 @@ def baseline():
 def proposal(eid="evt-001"):
     return {"id": eid, "at": "2026-01-02T01:00:00Z", "actor": "test-assistant", "note": "Synthetic progress.", "evidence_grade": "C", "source_refs": ["S1"], "source_records": [], "updates": [{"project_id": "P1", "changes": {"next_action": "Run a synthetic test."}}], "additions": []}
 
+def delivery(status="TESTED", method="test"):
+    return {"format": "ConstellationRelease/1", "status": status, "revision": "fixture-revision", "environment": "local-fixture", "limitations": ["Synthetic test only."], "evidence": [{"source_id": "S1", "revision": "fixture-revision", "environment": "local-fixture", "check": "fixture-workflow", "method": method, "result": "pass", "checked_at": "2026-01-02T01:00:00Z"}]}
+
 class ContextTests(unittest.TestCase):
     def setUp(self): self.store = C.init_store(baseline())
     def add(self, p=None): return C.append(self.store, p or proposal(), C.digest(self.store), True)[0]
@@ -136,5 +139,65 @@ class ContextTests(unittest.TestCase):
     def test_source_only_observation(self):
         p=proposal(); p['updates']=[]; p['source_records']=[{'id':'S2','locator':'fixture://observation'}]; self.assertEqual(C.load_store(self.add(p))[0]['projects'],baseline()['projects'])
     def test_unrelated_project_unchanged(self): self.assertEqual(C.load_store(self.add())[0]['projects'][1],baseline()['projects'][1])
+
+    def test_release_status_independent_of_task_state(self):
+        p=proposal(); p['updates'][0]['changes']={'delivery': delivery()}
+        current=C.load_store(self.add(p))[0]['projects'][0]
+        self.assertEqual(current['state'], 'ACTIVE'); self.assertEqual(current['delivery']['status'], 'TESTED')
+    def test_live_status_needs_live_journey(self):
+        with self.assertRaises(C.ContextError): C.validate_delivery(delivery('LIVE-VERIFIED'))
+        C.validate_delivery(delivery('LIVE-VERIFIED', 'live-journey'))
+    def test_deployment_is_not_live_verification(self):
+        C.validate_delivery(delivery('DEPLOYED-UNVERIFIED', 'deployment'))
+        with self.assertRaises(C.ContextError): C.validate_delivery(delivery('LIVE-VERIFIED', 'deployment'))
+    def test_old_revision_cannot_certify_current_release(self):
+        d=delivery(); d['evidence'][0]['revision']='old-revision'
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_other_environment_cannot_certify_current_release(self):
+        d=delivery(); d['evidence'][0]['environment']='different-browser'
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_failed_or_not_run_cannot_certify_release(self):
+        for result in ('fail','not-run'):
+            d=delivery(); d['evidence'][0]['result']=result
+            with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_release_evidence_must_be_registered(self):
+        p=proposal(); d=delivery(); d['evidence'][0]['source_id']='MISSING'; p['updates'][0]['changes']={'delivery': d}
+        with self.assertRaises(C.ContextError): self.add(p)
+    def test_unverified_without_executed_receipts_is_valid(self):
+        d=delivery('UNVERIFIED'); d.update(revision='unknown', environment='unknown', evidence=[])
+        C.validate_delivery(d)
+    def test_unknown_identity_cannot_be_tested(self):
+        d=delivery(); d['revision']='unknown'; d['evidence'][0]['revision']='unknown'
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_new_source_and_release_in_same_atomic_event(self):
+        p=proposal(); p['source_records']=[{'id':'NEW','locator':'fixture://new'}]; p['source_refs']=['NEW']; d=delivery(); d['evidence'][0]['source_id']='NEW'; p['updates'][0]['changes']={'delivery': d}
+        self.assertEqual(C.load_store(self.add(p))[0]['projects'][0]['delivery'],d)
+    def test_receipts_preserved_after_retry_export_restore(self):
+        p=proposal(); p['updates'][0]['changes']={'delivery': delivery(), 'repository':'fixture://source', 'privacy_scope':'owner-private'}
+        s=self.add(p)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); C.json_write(root/'saved.json',s); C.export_views(C.read_json(root/'saved.json'),root/'views')
+            registry=C.read_json(root/'views/Project_Registry.json')
+            self.assertEqual(registry['format'],'ConstellationRegistry/1'); self.assertEqual(registry['privacy'],'owner-private')
+            self.assertEqual(registry['projects'][0]['delivery'],delivery()); self.assertEqual(registry['projects'][0]['repository'],'fixture://source')
+            self.assertIn('TESTED',(root/'views/Project_Registry.md').read_text()); self.assertIn('fixture://one',(root/'views/projects/P1/STATE.md').read_text())
+            same,changed=C.append(C.read_json(root/'saved.json'),p,C.digest(self.store),True)
+            self.assertFalse(changed); self.assertEqual(same,s)
+    def test_legacy_record_is_not_promoted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            C.export_views(self.store,Path(tmp)); registry=C.read_json(Path(tmp)/'Project_Registry.json')
+            self.assertIsNone(registry['projects'][0]['delivery']); self.assertIn('UNVERIFIED',(Path(tmp)/'Project_Registry.md').read_text())
+    def test_later_failure_invalidates_stale_pass(self):
+        d=delivery(); failed={**d['evidence'][0], 'checked_at':'2026-01-02T02:00:00Z','result':'fail'}; d['evidence'].append(failed)
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_later_repair_pass_preserves_prior_failure(self):
+        d=delivery(); d['evidence'][0]['result']='fail'; d['evidence'].append({**d['evidence'][0], 'checked_at':'2026-01-02T02:00:00Z','result':'pass'})
+        C.validate_delivery(d); d['evidence'].reverse(); C.validate_delivery(d)
+    def test_unrelated_check_pass_cannot_hide_failed_journey(self):
+        d=delivery(); d['evidence'][0]['result']='fail'; d['evidence'].append({**d['evidence'][0], 'check':'different-workflow','checked_at':'2026-01-02T02:00:00Z','result':'pass'})
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
+    def test_same_time_conflicting_results_require_resolution(self):
+        d=delivery(); d['evidence'].append({**d['evidence'][0], 'result':'not-run'})
+        with self.assertRaises(C.ContextError): C.validate_delivery(d)
 
 if __name__=='__main__': unittest.main()
