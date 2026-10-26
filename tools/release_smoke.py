@@ -41,8 +41,9 @@ def run(destination, browser_export=None):
         imported=store.import_browser(raw,'DEMO',True)
         assert all(r['already_saved'] for r in store.import_browser(raw,'DEMO',True)['receipts'])
         assert store.object(imported['archive_sha256'])==raw
-    store.backup(destination / 'restored')
-    backup=G.Store.verify_backup(destination / 'restored')
+    store.backup(destination / 'checkpoint')
+    backup=G.Store.verify_backup(destination / 'checkpoint')
+    recovery=G.Store.restore_backup(destination / 'checkpoint', destination / 'restored')
     restored=G.Store(destination / 'restored')
     original=restored.source(saved['source_id'],owner)['original_text']
     assert original.encode()==TEXT.encode()
@@ -50,7 +51,7 @@ def run(destination, browser_export=None):
     result={'status':'COMPLETE — VERIFIED','fixture':'synthetic only','original_sha256':hashlib.sha256(TEXT.encode()).hexdigest(),
             'source_id':saved['source_id'],'correction_id':corrected['source_id'],'timestamp':req['observed_at'],
             'capture_reload_retrieve_export_restore_equal':True,'conflicting_update_rejected':conflict_rejected,
-            'repeat_import_idempotent':True,'browser_import':imported,'backup':backup,
+            'repeat_import_idempotent':True,'browser_import':imported,'backup':backup,'restore':recovery,
             'device_scope':'execution-host only; physical Android/laptop NOT RUN','working_store_encrypted':False}
     C.json_write(destination / 'RECEIPT.json',result)
     return result

@@ -173,18 +173,37 @@ Pause outbox producers. Write a new checkpoint directory on another medium:
 ```sh
 python3 tools/capture_context.py --root /private/continuity backup /backup/continuity/checkpoint-001
 python3 tools/capture_context.py --root /private/continuity verify-backup /backup/continuity/checkpoint-001
+python3 tools/capture_context.py --root /private/continuity-restored restore-backup /backup/continuity/checkpoint-001
 ```
 
 The manifest covers journal, original objects, history, intake witness and
 pending outbox. The index is omitted because it can be recreated. The context
-journal is locked while the snapshot is written; outbox producers have a
+journal, initial intake original, and raw browser exports referenced by imported
+sources are required dependencies. A surviving extracted text is insufficient
+when its original export is missing. Backup creation refuses a missing or
+corrupt dependency before writing a completion manifest; verification also
+rejects omitted original objects, including legacy browser-import references.
+The intake witness produced by `init` is mandatory; a manually assembled store
+without that evidence cannot be labeled a complete recoverable checkpoint.
+The context journal is locked while the snapshot is written; outbox producers have a
 separate writer, so their snapshot is not globally atomic. Pause them and
 compare counts. The backup is plaintext and must be encrypted before off-site
 upload. Copying to a second folder on the same disk is not off-site recovery.
 
-Restore into a separate private directory, verify the manifest, run `index`,
-retrieve a known source and compare its exact text/checksum and the journal
-head. Test a pending outbox without ingesting it until deliberately approved.
+`restore-backup` verifies the checkpoint first and exclusively creates the new
+root selected by `--root`. Its parent directory must already exist. An existing
+directory, even if empty, is never replaced or reused. Only manifest members
+are copied, each checksum is checked again during the copy, and the restored
+checkpoint is verified before success is reported. Private file permissions
+are retained; the index rebuilds on the first search. Nothing is synced and
+pending outbox records remain pending.
+
+A failed copy retains `RESTORE_INCOMPLETE.json`; that directory cannot be opened
+as a Store or used as a recovery source. Preserve it to diagnose the failure,
+then retry into another new destination. The original checkpoint is unchanged.
+
+Retrieve a known source and compare its exact text/checksum and the journal
+head. Inspect a pending outbox without ingesting it until deliberately approved.
 Only then choose the restored directory as the service's working root. Never
 overwrite a newer working journal automatically. Retain divergent roots and
 their proposals for reconciliation.

@@ -152,6 +152,84 @@ class CaptureTests(unittest.TestCase):
     def test_backup_journal_tamper_detected(self):
         dest=self.base/'backup';self.s.backup(dest);(dest/'Context_Store.json').write_text('{}')
         with self.assertRaises(C.ContextError):G.Store.verify_backup(dest)
+    def browser_import_fixture(self):
+        raw=json.dumps({'format':'ContinuityBackup/2','state':{'version':'0.11.0',
+            'sources':[{'id':'legacy','text':'Browser exact text\r\nα …'}],
+            'notes':[{'text':'Unsupported data survives only in the original export.'}]}}).encode()
+        return raw,self.s.import_browser(raw,'PX',True)
+    def test_backup_requires_browser_original_even_when_capture_text_survives(self):
+        raw,receipt=self.browser_import_fixture();dest=self.base/'backup';self.s.backup(dest)
+        manifest=C.read_json(dest/'MANIFEST.json');name='objects/'+receipt['archive_sha256']
+        del manifest['files'][name];C.json_write(dest/'MANIFEST.json',manifest);(dest/name).unlink()
+        self.assertEqual(self.s.source(receipt['receipts'][0]['source_id'],self.owner)['original_text'],'Browser exact text\r\nα …')
+        with self.assertRaisesRegex(C.ContextError,'authoritative original'):G.Store.verify_backup(dest)
+    def test_backup_missing_browser_original_never_creates_complete_manifest(self):
+        raw,receipt=self.browser_import_fixture();(self.s.objects/receipt['archive_sha256']).unlink()
+        dest=self.base/'backup'
+        with self.assertRaisesRegex(C.ContextError,'Authoritative original'):self.s.backup(dest)
+        self.assertFalse((dest/'MANIFEST.json').exists())
+    def test_backup_requires_initial_intake_original(self):
+        dest=self.base/'backup';self.s.backup(dest)
+        witness=C.read_json(dest/'intake.json');manifest=C.read_json(dest/'MANIFEST.json')
+        del manifest['files']['objects/'+witness['original_journal_sha256']];C.json_write(dest/'MANIFEST.json',manifest)
+        with self.assertRaisesRegex(C.ContextError,'authoritative original'):G.Store.verify_backup(dest)
+    def test_backup_cannot_erase_intake_requirement_by_omitting_witness_and_object(self):
+        dest=self.base/'backup';self.s.backup(dest)
+        witness=C.read_json(dest/'intake.json');manifest=C.read_json(dest/'MANIFEST.json')
+        for name in ('intake.json','objects/'+witness['original_journal_sha256']):
+            del manifest['files'][name];(dest/name).unlink()
+        C.json_write(dest/'MANIFEST.json',manifest)
+        with self.assertRaises(C.ContextError):G.Store.verify_backup(dest)
+    def test_backup_creation_without_intake_witness_is_not_complete(self):
+        (self.s.root/'intake.json').unlink();dest=self.base/'backup'
+        with self.assertRaisesRegex(C.ContextError,'intake witness'):self.s.backup(dest)
+        self.assertFalse((dest/'MANIFEST.json').exists())
+    def test_new_destination_restore_retrieves_original_and_retains_pending_outbox(self):
+        raw,receipt=self.browser_import_fixture();pending=request(text='Pending offline note.')
+        self.s.spool(pending);backup=self.base/'backup';self.s.backup(backup)
+        before={str(p.relative_to(backup)):p.read_bytes() for p in backup.rglob('*') if p.is_file()}
+        restored_root=self.base/'restored';result=G.Store.restore_backup(backup,restored_root)
+        self.assertTrue(result['restored']);self.assertTrue(result['verified']);self.assertFalse(result['outbox_ingested'])
+        restored=G.Store(restored_root)
+        self.assertEqual(restored.object(receipt['archive_sha256']),raw)
+        self.assertEqual(restored.search('Browser exact',self.owner)[0]['source_id'],receipt['receipts'][0]['source_id'])
+        self.assertEqual(restored.state()[1],self.s.state()[1])
+        self.assertEqual(len(list(restored.outbox.glob('*.json'))),1)
+        self.assertEqual(len(restored.flush(True)),1)
+        self.assertEqual(before,{str(p.relative_to(backup)):p.read_bytes() for p in backup.rglob('*') if p.is_file()})
+    def test_restore_refuses_existing_destination_without_changes(self):
+        backup=self.base/'backup';self.s.backup(backup);destination=self.base/'restored';destination.mkdir()
+        with self.assertRaises(FileExistsError):G.Store.restore_backup(backup,destination)
+        self.assertEqual(list(destination.iterdir()),[])
+    def test_restore_corruption_rejected_before_destination_created(self):
+        receipt=self.s.accept(request(),True);backup=self.base/'backup';self.s.backup(backup)
+        (backup/'objects'/receipt['sha256']).write_bytes(b'corrupted')
+        destination=self.base/'restored'
+        with self.assertRaises(C.ContextError):G.Store.restore_backup(backup,destination)
+        self.assertFalse(destination.exists())
+    def test_interrupted_restore_is_marked_and_cannot_be_opened_or_reused(self):
+        backup=self.base/'backup';self.s.backup(backup);destination=self.base/'restored'
+        with patch.object(G,'copy_object_file',side_effect=OSError('Synthetic disk full')):
+            with self.assertRaises(OSError):G.Store.restore_backup(backup,destination)
+        self.assertTrue((destination/'RESTORE_INCOMPLETE.json').is_file())
+        with self.assertRaisesRegex(C.ContextError,'incomplete'):G.Store(destination)
+        with self.assertRaisesRegex(C.ContextError,'incomplete'):G.Store.restore_backup(destination,self.base/'again')
+        self.assertTrue(G.Store.verify_backup(backup)['verified'])
+    def test_restore_copies_manifest_members_only_and_rejects_unsafe_names(self):
+        backup=self.base/'backup';self.s.backup(backup);(backup/'untrusted-extra.txt').write_text('not restored')
+        destination=self.base/'restored';G.Store.restore_backup(backup,destination)
+        self.assertFalse((destination/'untrusted-extra.txt').exists())
+        manifest=C.read_json(backup/'MANIFEST.json');manifest['files']['../escaped.txt']='0'*64;C.json_write(backup/'MANIFEST.json',manifest)
+        with self.assertRaises(C.ContextError):G.Store.restore_backup(backup,self.base/'unsafe')
+    def test_restore_rejects_repository_destination(self):
+        backup=self.base/'backup';self.s.backup(backup);repo=self.base/'repo';repo.mkdir();(repo/'.git').mkdir()
+        with self.assertRaises(C.ContextError):G.Store.restore_backup(backup,repo/'restored')
+        self.assertFalse((repo/'restored').exists())
+    def test_restore_rejects_backup_containment_through_dotdot_alias(self):
+        backup=self.base/'backup';self.s.backup(backup)
+        with self.assertRaisesRegex(C.ContextError,'outside the backup'):
+            G.Store.restore_backup(backup,backup/'objects'/'..'/'nested')
+        self.assertFalse((backup/'nested').exists())
     def test_blob_symlink_rejected(self):
         receipt=self.s.accept(request(),True);p=self.s.objects/receipt['sha256'];p.unlink();p.symlink_to(self.original)
         with self.assertRaises(C.ContextError):self.s.source(receipt['source_id'],self.owner)
