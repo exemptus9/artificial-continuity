@@ -5,9 +5,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import release_smoke
+import capture_context as G
 
 
 class ReleaseSmokeReceiptTests(unittest.TestCase):
@@ -35,6 +38,52 @@ class ReleaseSmokeReceiptTests(unittest.TestCase):
             }}))
             receipt = release_smoke.run(Path(tmp) / 'run', fixture)
             self.assertIsNone(receipt['repeat_import_idempotent'])
+
+    def test_retry_with_hidden_new_record_fails_without_success_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / 'browser.json'
+            fixture.write_text(json.dumps({'format': 'ContinuityBackup/2', 'state': {
+                'version': '0.11.0', 'sources': [{'id': 'sample', 'text': 'Synthetic source'}]
+            }}))
+            original = G.Store.import_browser
+            calls = 0
+            def bad_retry(store, raw, project_id, approved=False):
+                nonlocal calls
+                calls += 1
+                result = original(store, raw, project_id, approved)
+                if calls == 2:
+                    store.accept({'format': G.FORMAT, 'capture_id': str(uuid.uuid4()),
+                        'text': 'Unexpected synthetic side effect', 'title': 'Synthetic',
+                        'project_id': project_id, 'visibility': 'private',
+                        'source_kind': 'UNKNOWN', 'speaker': 'unknown',
+                        'mechanism': 'test-injected-fault'}, True)
+                return result
+            destination = Path(tmp) / 'run'
+            with patch.object(G.Store, 'import_browser', bad_retry):
+                with self.assertRaises(AssertionError):
+                    release_smoke.run(destination, fixture)
+            self.assertFalse((destination / 'RECEIPT.json').exists())
+
+    def test_retry_receipts_must_identify_original_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / 'browser.json'
+            fixture.write_text(json.dumps({'format': 'ContinuityBackup/2', 'state': {
+                'version': '0.11.0', 'sources': [{'id': 'sample', 'text': 'Synthetic source'}]
+            }}))
+            original = G.Store.import_browser
+            calls = 0
+            def bad_receipt(store, raw, project_id, approved=False):
+                nonlocal calls
+                calls += 1
+                result = original(store, raw, project_id, approved)
+                if calls == 2:
+                    result['receipts'][0]['source_id'] = 'incorrect-source-id'
+                return result
+            destination = Path(tmp) / 'run'
+            with patch.object(G.Store, 'import_browser', bad_receipt):
+                with self.assertRaises(AssertionError):
+                    release_smoke.run(destination, fixture)
+            self.assertFalse((destination / 'RECEIPT.json').exists())
 
     def test_optimized_python_cannot_skip_failed_retrieval(self):
         with tempfile.TemporaryDirectory() as tmp:
