@@ -5,15 +5,25 @@ cd "$(dirname "$0")/.."
 test "$RECALL_SYNTHETIC_DEVICE" = YES
 ADB="$ANDROID_HOME/platform-tools/adb"
 test "$($ADB shell getprop ro.kernel.qemu | tr -d '\r')" = 1
-# Refuse an existing app even on an emulator: install -r would target its data.
-existing="$($ADB shell pm list packages --user 0 org.continuity.recall.test | tr -d '\r')"
-if printf '%s\n' "$existing" | grep -Fxq 'package:org.continuity.recall.test'; then
-  echo 'Existing Total Recall installation; refusing synthetic upgrade test.' >&2
-  exit 1
-fi
+# An emulator is not inherently disposable. Inspect every listed user/profile,
+# including retained uninstalled packages, and fail closed on query/parse errors.
+users="$($ADB shell pm list users | tr -d '\r')"
+ids="$(printf '%s\n' "$users" | awk '
+  /UserInfo\{/ { s=$0; sub(/^.*UserInfo\{/, "", s);
+    if (s !~ /^[0-9]+:/) { bad=1; next }
+    sub(/:.*/, "", s); print s; count++ }
+  END { if (bad || count==0) exit 1 }
+')"
+while IFS= read -r user_id; do
+  existing="$($ADB shell pm list packages -u --user "$user_id" org.continuity.recall.test | tr -d '\r')"
+  if printf '%s\n' "$existing" | grep -Fxq 'package:org.continuity.recall.test'; then
+    echo 'Existing or retained Total Recall installation; refusing synthetic upgrade test.' >&2
+    exit 1
+  fi
+done <<< "$ids"
 mkdir -p build/device-evidence
 trap '$ADB pull /sdcard/Android/data/org.continuity.recall.test/files/. build/device-evidence/ >/dev/null 2>&1 || true' EXIT
-$ADB install -r build/upgrade-base.apk
+$ADB install build/upgrade-base.apk
 $ADB install -r build/instrumentation/test.apk
 $ADB shell am instrument -w -e synthetic_emulator_only YES \
   org.continuity.recall.instrumentation/org.continuity.recall.UpgradeSeed \
