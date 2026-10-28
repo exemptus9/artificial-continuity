@@ -47,6 +47,12 @@ esac
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c.startswith('install') for c in calls))
 
+    def test_package_query_error_text_with_success_status_fails_closed(self):
+        result, calls = self.invoke('Error: package manager unavailable')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unexpected package query output', result.stderr)
+        self.assertFalse(any(c.startswith('install') for c in calls))
+
     def test_other_profile_or_retained_package_is_refused(self):
         users = 'Users:\n\tUserInfo{0:Owner:13} running\n\tUserInfo{10:Work:30} running'
         result, calls = self.invoke(users=users, profile_result='package:org.continuity.recall.test')

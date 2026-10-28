@@ -16,6 +16,13 @@ ids="$(printf '%s\n' "$users" | awk '
 ')"
 while IFS= read -r user_id; do
   existing="$($ADB shell pm list packages -u --user "$user_id" org.continuity.recall.test | tr -d '\r')"
+  if [[ -n "$existing" ]] && ! printf '%s\n' "$existing" | awk '
+    /^package:[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$/ { next }
+    { exit 1 }
+  '; then
+    echo 'Unexpected package query output; refusing synthetic upgrade test.' >&2
+    exit 1
+  fi
   if printf '%s\n' "$existing" | grep -Fxq 'package:org.continuity.recall.test'; then
     echo 'Existing or retained Total Recall installation; refusing synthetic upgrade test.' >&2
     exit 1
