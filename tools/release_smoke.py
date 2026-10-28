@@ -11,6 +11,11 @@ import capture_context as G
 
 TEXT = 'Synthetic release fixture\r\nFirst — “quoted” α\n\n    indented line\n\tTabbed line\nFinal...'
 
+def require(condition, message):
+    # Verification must still run under python -O, which removes assert statements.
+    if not condition:
+        raise AssertionError(message)
+
 def run(destination, browser_export=None):
     destination = Path(destination).absolute()
     if destination.exists():
@@ -26,9 +31,10 @@ def run(destination, browser_export=None):
     store.spool(req)
     saved = store.flush(True)[0]
     store = G.Store(destination / 'working')
-    assert store.source(saved['source_id'], owner)['original_text'] == TEXT
-    assert store.search('Synthetic release fixture', owner)[0]['source_id'] == saved['source_id']
-    assert store.accept(req, True)['already_saved']
+    require(store.source(saved['source_id'], owner)['original_text'] == TEXT, 'Original text did not survive restart')
+    results = store.search('Synthetic release fixture', owner)
+    require(bool(results) and results[0]['source_id'] == saved['source_id'], 'Saved source was not retrieved')
+    require(store.accept(req, True)['already_saved'], 'Repeated capture was not idempotent')
     try:
         store.accept({**req,'text':'Conflicting update'}, True)
     except C.ContextError: conflict_rejected=True
@@ -36,22 +42,27 @@ def run(destination, browser_export=None):
     corrected=store.accept({**req,'capture_id':str(uuid.uuid4()),'text':TEXT.replace('First','Corrected first'),
                             'origin':{'corrects_source_id':saved['source_id']}},True)
     imported=None
+    repeat_import_idempotent=None
     if browser_export:
         raw=Path(browser_export).read_bytes()
         imported=store.import_browser(raw,'DEMO',True)
-        assert all(r['already_saved'] for r in store.import_browser(raw,'DEMO',True)['receipts'])
-        assert store.object(imported['archive_sha256'])==raw
+        retry=store.import_browser(raw,'DEMO',True)['receipts']
+        require(len(retry)==len(imported['receipts']) and
+                all(r['already_saved'] for r in retry), 'Repeated browser import was not idempotent')
+        require(store.object(imported['archive_sha256'])==raw, 'Original browser export was not preserved')
+        if retry:
+            repeat_import_idempotent=True
     store.backup(destination / 'checkpoint')
     backup=G.Store.verify_backup(destination / 'checkpoint')
     recovery=G.Store.restore_backup(destination / 'checkpoint', destination / 'restored')
     restored=G.Store(destination / 'restored')
     original=restored.source(saved['source_id'],owner)['original_text']
-    assert original.encode()==TEXT.encode()
-    assert restored.state()[1]['store_sha256']==store.state()[1]['store_sha256']
+    require(original.encode()==TEXT.encode(), 'Restored text did not match original')
+    require(restored.state()[1]['store_sha256']==store.state()[1]['store_sha256'], 'Restored store did not match original')
     result={'status':'COMPLETE — VERIFIED','fixture':'synthetic only','original_sha256':hashlib.sha256(TEXT.encode()).hexdigest(),
             'source_id':saved['source_id'],'correction_id':corrected['source_id'],'timestamp':req['observed_at'],
             'capture_reload_retrieve_export_restore_equal':True,'conflicting_update_rejected':conflict_rejected,
-            'repeat_import_idempotent':True,'browser_import':imported,'backup':backup,'restore':recovery,
+            'repeat_import_idempotent':repeat_import_idempotent,'browser_import':imported,'backup':backup,'restore':recovery,
             'device_scope':'execution-host only; physical Android/laptop NOT RUN','working_store_encrypted':False}
     C.json_write(destination / 'RECEIPT.json',result)
     return result
