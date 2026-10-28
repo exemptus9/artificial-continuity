@@ -33,7 +33,7 @@ def launch(pkg):adb('shell','am','start','-W','-n',pkg+'/com.intentintegrity.app
 try:
     for path in pathlib.Path('release').glob('*.apk'):adb('install','-r',str(path))
     core='com.intentintegrity.app.core.dev';guard='com.intentintegrity.app.guard.dev';launch(core);check('You get the first move.' in dump('core-home'),'Core launches');shot('core-home')
-    tap('Try the shield');check('Feed held at the door.' in dump('browser-shield'),'Native browser gate shown without loading a feed');shot('browser-shield');adb('shell','input','keyevent','4');time.sleep(.5)
+    tap('Try the shield');check(wait_text('Feed held at the door.','browser-shield'),'Native browser gate shown without loading a feed');shot('browser-shield');adb('shell','input','keyevent','4');time.sleep(.5)
     tap('Privacy, compatibility');tap('Run offline diagnostics');check('7 / 7' in dump('diagnostics'),'Seven search routes pass on Android runtime');adb('shell','input','keyevent','4')
     launch(guard);tap('Protect installed apps');tap('Test feed app');tap('Review disclosure');check(wait_text('Accessibility access','consent'),'Prominent disclosure shown before service access');tap('I agree')
     component=guard+'/com.intentintegrity.app.IntentGuardService'

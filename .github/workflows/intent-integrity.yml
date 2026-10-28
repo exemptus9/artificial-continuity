@@ -3,6 +3,9 @@ on:
   push:
     branches: ['intent-integrity/**']
     paths: ['products/intent-integrity/android/**', '.github/workflows/intent-integrity.yml']
+  pull_request:
+    branches: ['intent-integrity/**']
+    paths: ['products/intent-integrity/android/**', '.github/workflows/intent-integrity.yml']
   workflow_dispatch:
 permissions:
   contents: read
