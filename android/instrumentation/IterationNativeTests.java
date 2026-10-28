@@ -72,6 +72,22 @@ public final class IterationNativeTests extends Instrumentation {
       yes("unfinished capture remains exact in editor and disk",draftVisible[0]&&Vault.read(c).getString("draft").equals(unfinished));
       yes("blocked preparation preserves previous test state",Core.digest(Vault.read(c).getJSONObject("wizard")).equals(beforePreparation));
       runOnMainSync(()->a.editor.setText(""));
+      // Simulate an already selected attachment without opening a real picker or
+      // accessing owner files. Exercise the attachment-only path with no draft text.
+      byte[] bytes=Core.utf8("synthetic selected attachment");String hash=Core.hash(bytes);
+      JSONArray pending=new JSONArray().put(Core.obj("sha256",hash,"bytes",bytes.length,"mime","text/plain","display_name","synthetic.txt"));
+      JSONObject blobs=Core.obj(hash,java.util.Base64.getEncoder().encodeToString(bytes));
+      String expectedPending=pending.toString(),expectedBlobs=blobs.toString();
+      runOnMainSync(()->{a.pendingAttachments=pending;a.pendingBlobs=blobs;});
+      click(a,"Test");String beforeAttachmentGuard=Core.digest(Vault.read(c));
+      click(a,"Prepare a unique multiline test phrase");
+      yes("attachment-only capture is protected",awaitNode("Your draft is safe")!=null);uiClick("OK");
+      final boolean[] attachmentKept={false};
+      runOnMainSync(()->attachmentKept[0]=a.editor.getText().toString().isEmpty()
+          &&a.pendingAttachments.toString().equals(expectedPending)&&a.pendingBlobs.toString().equals(expectedBlobs));
+      yes("attachment-only pending bytes and metadata remain unchanged",attachmentKept[0]);
+      yes("attachment-only guard does not alter encrypted store",Core.digest(Vault.read(c)).equals(beforeAttachmentGuard));
+      runOnMainSync(()->{a.pendingAttachments=new JSONArray();a.pendingBlobs=new JSONObject();});
       click(a,"Capture");String note="SYNTHETIC lighthouse poem\n\nKeep both lines. e\u0301 / é / 🧠";
       runOnMainSync(()->a.editor.setText(note));click(a,"Save capture");
       final boolean[] receiptVisible={false};runOnMainSync(()->{View v=view(a.getWindow().getDecorView(),"Saved on this phone");receiptVisible[0]=v!=null&&v.getGlobalVisibleRect(new Rect());});
