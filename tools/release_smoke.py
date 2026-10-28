@@ -46,9 +46,14 @@ def run(destination, browser_export=None):
     if browser_export:
         raw=Path(browser_export).read_bytes()
         imported=store.import_browser(raw,'DEMO',True)
+        before_retry=store.state()[1]['store_sha256']
         retry=store.import_browser(raw,'DEMO',True)['receipts']
+        after_retry=store.state()[1]['store_sha256']
+        identity=lambda r: (r['source_id'],r['capture_id'],r['sha256'])
         require(len(retry)==len(imported['receipts']) and
-                all(r['already_saved'] for r in retry), 'Repeated browser import was not idempotent')
+                all(r['already_saved'] for r in retry) and
+                [identity(r) for r in retry]==[identity(r) for r in imported['receipts']] and
+                before_retry==after_retry, 'Repeated browser import was not idempotent')
         require(store.object(imported['archive_sha256'])==raw, 'Original browser export was not preserved')
         if retry:
             repeat_import_idempotent=True
