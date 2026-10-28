@@ -67,6 +67,7 @@ esac
         self.assertNotEqual(result.returncode, 0)  # fake adb stops at the first install
         installs = [c for c in calls if c.startswith('install')]
         self.assertEqual(installs, ['install build/upgrade-base.apk'])
+        self.assertFalse(any(c.startswith('pull') for c in calls))
 
 
 if __name__ == '__main__':

@@ -22,13 +22,26 @@ while IFS= read -r user_id; do
   fi
 done <<< "$ids"
 mkdir -p build/device-evidence
-trap '$ADB pull /sdcard/Android/data/org.continuity.recall.test/files/. build/device-evidence/ >/dev/null 2>&1 || true' EXIT
+fixture_owned=0
+collect_fixture_evidence() {
+  # Only collect named synthetic outputs after a clean seed completes. Do not
+  # copy an app's whole external directory on a failed preflight or setup.
+  if [[ "$fixture_owned" = 1 ]]; then
+    for name in upgrade-seed.json iteration-ui.json iteration-restart.json iteration-failure.json \
+      iteration-native.trbackup.json capture-receipt.png threads.png ask-sources.png; do
+      "$ADB" pull "/sdcard/Android/data/org.continuity.recall.test/files/$name" \
+        "build/device-evidence/$name" >/dev/null 2>&1 || true
+    done
+  fi
+}
+trap collect_fixture_evidence EXIT
 $ADB install build/upgrade-base.apk
 $ADB install -r build/instrumentation/test.apk
 $ADB shell am instrument -w -e synthetic_emulator_only YES \
   org.continuity.recall.instrumentation/org.continuity.recall.UpgradeSeed \
   | tee build/device-evidence/upgrade-seed.log
 grep -q UPGRADE_SEED_PASS build/device-evidence/upgrade-seed.log
+fixture_owned=1
 # Negative control: re-running seed over its own synthetic data must refuse.
 { $ADB shell am instrument -w -e synthetic_emulator_only YES \
   org.continuity.recall.instrumentation/org.continuity.recall.UpgradeSeed || true; } \
@@ -46,7 +59,7 @@ $ADB shell am instrument -w -e synthetic_emulator_only YES -e phase restart \
   org.continuity.recall.instrumentation/org.continuity.recall.IterationNativeTests \
   | tee build/device-evidence/native-restart.log
 grep -q ITERATION_PASS build/device-evidence/native-restart.log
-$ADB pull /sdcard/Android/data/org.continuity.recall.test/files/. build/device-evidence/
+collect_fixture_evidence
 python3 - <<'PY'
 import json
 from pathlib import Path
