@@ -3,6 +3,9 @@ on:
   push:
     branches: ['work/max07-next-*']
     paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/recall-iteration.yml']
+  pull_request:
+    branches: ['work/max07-next-*']
+    paths: ['android/**', 'tools/**', 'tests/test_*.py', '.github/workflows/recall-iteration.yml']
   workflow_dispatch:
 permissions:
   contents: read
