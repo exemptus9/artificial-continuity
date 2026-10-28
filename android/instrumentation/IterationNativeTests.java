@@ -30,6 +30,11 @@ public final class IterationNativeTests extends Instrumentation {
   AccessibilityNodeInfo awaitNode(String label)throws Exception{for(int n=0;n<100;n++){AccessibilityNodeInfo found=node(getUiAutomation().getRootInActiveWindow(),label);if(found!=null)return found;Thread.sleep(50);}throw new Exception("Visible node missing: "+label);}
   void uiClick(String label)throws Exception{if(!awaitNode(label).performAction(AccessibilityNodeInfo.ACTION_CLICK))throw new Exception("Click failed: "+label);waitForIdleSync();}
   void uiText(String label,String value)throws Exception{Bundle b=new Bundle();b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value);if(!awaitNode(label).performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,b))throw new Exception("Text failed: "+label);waitForIdleSync();}
+  void visibleLabels(AccessibilityNodeInfo node,JSONArray labels) {
+    if(node==null||labels.length()>=120)return;
+    if(node.getText()!=null)labels.put(node.getText().toString());
+    for(int i=0;i<node.getChildCount();i++)visibleLabels(node.getChild(i),labels);
+  }
   void render(Activity a,String name)throws Exception{
     File out=new File(getTargetContext().getExternalFilesDir(null),name+".png");
     runOnMainSync(()->{try{View v=a.getWindow().getDecorView();Bitmap b=Bitmap.createBitmap(v.getWidth(),v.getHeight(),Bitmap.Config.ARGB_8888);v.draw(new Canvas(b));try(FileOutputStream f=new FileOutputStream(out)){b.compress(Bitmap.CompressFormat.PNG,100,f);}b.recycle();}catch(Exception e){throw new RuntimeException(e);}});
@@ -37,10 +42,11 @@ public final class IterationNativeTests extends Instrumentation {
   @Override public void onStart(){Bundle result=new Bundle();try{
     if(!"YES".equals(gate)||!(Build.HARDWARE.contains("ranchu")||Build.HARDWARE.contains("goldfish")))throw new Exception("Synthetic emulator required");
     Context c=getTargetContext();JSONObject seed=new JSONObject(Core.decodeUtf8(java.nio.file.Files.readAllBytes(new File(c.getExternalFilesDir(null),"upgrade-seed.json").toPath())));
+    yes("upgrade baseline is the current 0.8.0 candidate",seed.getString("source_version").equals("0.8.0-test"));
     JSONObject initial=Vault.read(c),original=initial.getJSONObject("events").getJSONObject(seed.getString("id"));
     yes("previous APK source retained after update",Core.digest(original).equals(seed.getString("event_sha256")));
     yes("old encrypted store opens with same key",original.getString("text_sha256").equals(seed.getString("text_sha256")));
-    yes("release version is 0.8.0",BuildInfo.VERSION.equals("0.8.0-test"));
+    yes("release version is 0.8.1",BuildInfo.VERSION.equals("0.8.1-test"));
     if(phase.equals("restart")){
       yes("source-linked next step survives process restart",MemoryWorkbench.desk(initial).length()>0);
       yes("offline recall works after process restart",TemporalEngine.recall(initial,"find lighthouse",System.currentTimeMillis(),java.time.ZoneId.systemDefault()).matchCount>0);
@@ -48,6 +54,7 @@ public final class IterationNativeTests extends Instrumentation {
       yes("in-place update retained original record count",Core.ids(initial).size()==seed.getInt("count"));
       yes("automatic sources stay off",!initial.getJSONObject("policy").getBoolean("usage")&&!initial.getJSONObject("policy").getBoolean("notifications"));
       MainActivity a=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
+      yes("upgraded baseline test verifies before UI interaction",DurableTextTest.verify(initial).getString("id").equals(seed.getString("id")));
       click(a,"Test");click(a,"Verify durable test record");
       yes("verify success is immediately visible",awaitNode("Saved test record verified")!=null);uiClick("OK");
       JSONObject wizard=Core.copy(Vault.read(c).getJSONObject("wizard"));
@@ -56,6 +63,31 @@ public final class IterationNativeTests extends Instrumentation {
       yes("verify failure gives an immediate corrective dialog",awaitNode("Test not verified")!=null);uiClick("OK");
       yes("failed verification is retained in diagnostic result",Vault.read(c).getJSONObject("wizard").getString("durable-text").startsWith("FAIL"));
       Vault.change(c,s->s.put("wizard",wizard));
+      click(a,"Capture");String unfinished="SYNTHETIC unfinished draft\n\ne\u0301 / é / 🧠";
+      runOnMainSync(()->a.editor.setText(unfinished));click(a,"Test");
+      String beforePreparation=Core.digest(Vault.read(c).getJSONObject("wizard"));
+      click(a,"Prepare a unique multiline test phrase");
+      yes("test preparation visibly protects an unfinished draft",awaitNode("Your draft is safe")!=null);uiClick("OK");
+      final boolean[] draftVisible={false};runOnMainSync(()->draftVisible[0]=a.editor.getText().toString().equals(unfinished));
+      yes("unfinished capture remains exact in editor and disk",draftVisible[0]&&Vault.read(c).getString("draft").equals(unfinished));
+      yes("blocked preparation preserves previous test state",Core.digest(Vault.read(c).getJSONObject("wizard")).equals(beforePreparation));
+      runOnMainSync(()->a.editor.setText(""));
+      // Simulate an already selected attachment without opening a real picker or
+      // accessing owner files. Exercise the attachment-only path with no draft text.
+      byte[] bytes=Core.utf8("synthetic selected attachment");String hash=Core.hash(bytes);
+      JSONArray pending=new JSONArray().put(Core.obj("sha256",hash,"bytes",bytes.length,"mime","text/plain","display_name","synthetic.txt"));
+      JSONObject blobs=Core.obj(hash,java.util.Base64.getEncoder().encodeToString(bytes));
+      String expectedPending=pending.toString(),expectedBlobs=blobs.toString();
+      runOnMainSync(()->{a.pendingAttachments=pending;a.pendingBlobs=blobs;});
+      click(a,"Test");String beforeAttachmentGuard=Core.digest(Vault.read(c));
+      click(a,"Prepare a unique multiline test phrase");
+      yes("attachment-only capture is protected",awaitNode("Your draft is safe")!=null);uiClick("OK");
+      final boolean[] attachmentKept={false};
+      runOnMainSync(()->attachmentKept[0]=a.editor.getText().toString().isEmpty()
+          &&a.pendingAttachments.toString().equals(expectedPending)&&a.pendingBlobs.toString().equals(expectedBlobs));
+      yes("attachment-only pending bytes and metadata remain unchanged",attachmentKept[0]);
+      yes("attachment-only guard does not alter encrypted store",Core.digest(Vault.read(c)).equals(beforeAttachmentGuard));
+      runOnMainSync(()->{a.pendingAttachments=new JSONArray();a.pendingBlobs=new JSONObject();});
       click(a,"Capture");String note="SYNTHETIC lighthouse poem\n\nKeep both lines. e\u0301 / é / 🧠";
       runOnMainSync(()->a.editor.setText(note));click(a,"Save capture");
       final boolean[] receiptVisible={false};runOnMainSync(()->{View v=view(a.getWindow().getDecorView(),"Saved on this phone");receiptVisible[0]=v!=null&&v.getGlobalVisibleRect(new Rect());});
@@ -92,5 +124,14 @@ public final class IterationNativeTests extends Instrumentation {
     JSONObject receipt=Core.obj("format","TotalRecallIterationNative/1","status","PASS","phase",phase,"commit",BuildInfo.COMMIT,"version",BuildInfo.VERSION,"assertions",count,"cases",cases,"physical_phone",false,"signing","CI disposable key; owner-signed delivery verified separately");
     try(FileOutputStream f=new FileOutputStream(new File(c.getExternalFilesDir(null),"iteration-"+(phase.equals("restart")?"restart":"ui")+".json"))){f.write(Core.utf8(receipt.toString(2)));}
     result.putString("stream","\nITERATION_PASS "+count+"\n");finish(Activity.RESULT_OK,result);
-  }catch(Exception ex){result.putString("stream","\nITERATION_FAIL "+ex+"\n");ex.printStackTrace();finish(Activity.RESULT_CANCELED,result);}}
+  }catch(Exception ex){
+    if("YES".equals(gate))try{
+      JSONArray labels=new JSONArray();visibleLabels(getUiAutomation().getRootInActiveWindow(),labels);
+      JSONObject failure=Core.obj("format","SyntheticNativeFailure/1","commit",BuildInfo.COMMIT,
+          "phase",phase,"error",ex.toString(),"cases",cases,"visible_labels",labels,
+          "wizard",Vault.read(getTargetContext()).getJSONObject("wizard"));
+      try(FileOutputStream f=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"iteration-failure.json"))){f.write(Core.utf8(failure.toString(2)));}
+    }catch(Exception ignored){}
+    result.putString("stream","\nITERATION_FAIL "+ex+"\n");ex.printStackTrace();finish(Activity.RESULT_CANCELED,result);}}
+
 }

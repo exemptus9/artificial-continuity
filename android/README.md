@@ -1,10 +1,12 @@
-# Total Recall for Android · 0.8.0 test release
+# Total Recall for Android · 0.8.1 test release
 
-Install the supplied `TotalRecall-0.8.0-test.apk`. This is one native companion
+Install the supplied `TotalRecall-0.8.1-test.apk`. This is one native companion
 inside the existing `artificial-continuity` repository, not a new product service.
 It has no Internet permission, analytics SDK, paid dependency, or required desktop.
 It requests special permissions only for optional app history, notifications and
 user-triggered recording. Everything begins off with empty allowlists.
+
+**0.8.1:** unfinished drafts and selected files are protected when preparing a storage test.
 
 **0.8.0:** visible capture receipts and draft state, Recall with day/type/inbox
 filters, Resume My Thread from source-linked owner reviews, and read-only offline
@@ -33,10 +35,10 @@ an unrelated note mentioning the test nonce no longer invalidates the original.
 Preparing a new phrase clears the previous test result, without deleting notes.
 Draft-only and edited phrases receive specific corrective instructions.
 
-For the supplied owner-signed 0.8.0 artifact, install over 0.7.x without uninstalling
+For the supplied original-key 0.8.1 artifact, install over 0.7.x or 0.8.0 without uninstalling
 or clearing app data. Export a backup first if you have important captures. The
 package ID, data schema and signing certificate remain unchanged; versionCode is
-9. If Android reports a signature/package conflict, keep the existing app and
+10. If Android reports a signature/package conflict, keep the existing app and
 report the exact error. This targeted update does not replace a newer Temporal
 preview. Reopen **Test** and tap **Verify durable test record** first; there is no
 need to prepare another phrase if you already saved the current one.
