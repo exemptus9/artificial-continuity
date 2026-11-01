@@ -2,7 +2,7 @@
 (function(root){
 'use strict';
 const W=root.WorkspaceCore||(typeof require==='function'?require('./workspace-core.js'):null);
-const APP_VERSION='0.21.0',baseValidate=W.validate,basePack=W.resumePack;
+const APP_VERSION='0.22.0',baseValidate=W.validate,basePack=W.resumePack;
 const fail=m=>{throw new Error(m);},copy=W.copy;
 const text=(v,n=20000)=>typeof v==='string'&&v.length<=n;
 const bytes=s=>new TextEncoder().encode(s).length;
@@ -86,6 +86,8 @@ function resumePack(s,id,at,options={}){
  const pending=s.notes.filter(n=>n.threadId===id&&n.reviewState==='pending').length;
  if(pending)result+='\n\n## Review boundary\n'+pending+' imported checkpoint(s) await review and were excluded from this handoff.';
  if(options.followups!==false){const fs=s.followups.filter(f=>f.threadId===id&&f.state==='OPEN');result+='\n\n## Open follow-ups\n'+(fs.length?fs.map(f=>'- '+f.title+' — '+due(s,f).label+(f.reason?' | '+f.reason:'')).join('\n'):'None recorded.');}
+ const audio=filtered.sources.filter(src=>src.audioOrigin);
+ if(audio.length){if(!root.AudioImportCore)fail('Audio provenance support is required for this handoff.');result+='\n\n## Reviewed audio provenance\n\nOnly sources cited by the included checkpoints are listed. Review and timing are exporter assertions.\n\n'+JSON.stringify(audio.map(src=>({sourceId:src.id,...root.AudioImportCore.reference(src)})),null,2);}
  return result;
 }
 function privacyFlags(value){const tests=[['Email-like text',/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i],['Possible API token',/\b(?:sk-|ghp_|github_pat_)[a-z\d_-]{12,}/i],['Private-key block',/-----BEGIN [\w ]*PRIVATE KEY-----/],['Potential sensitive keywords',/\b(password|social security|diagnosis|medical record|account number)\b/i]];return tests.filter(([,re])=>re.test(value)).map(([name])=>name);}

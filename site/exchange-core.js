@@ -11,13 +11,15 @@ async function digest(x){if(!root.crypto?.subtle)fail('Use HTTPS or localhost wi
 function fields(t){return Object.fromEntries(FIELDS.map(k=>[k,copy(t[k]??(k==='open'?[]:''))]));}
 function checkedFields(f){const s=W.empty();s.threads=[{...f,id:'check',attention:false}];W.validate(s);if(Object.keys(f).sort().join('|')!==[...FIELDS].sort().join('|'))fail('Unsupported intention field.');return copy(f);}
 function captureProvenance(src){
- if(src.captureOrigin===undefined)return {};
+ const audio=src.audioOrigin;if(audio){if(!root.AudioImportCore)fail('Audio provenance support is required. Use a current release or a full backup.');root.AudioImportCore.validateOrigin(src);}
+ const extra=audio?{audioOrigin:copy(audio)}:{};
+ if(src.captureOrigin===undefined)return extra;
  // The capture extension validates these records before snapshotting. Never
  // turn a historical local-consent receipt into an import authorization, or
  // export arbitrary sender metadata alongside the selected source.
  if(!root.CaptureFamilyCore)fail('This source requires the capture provenance extension. Use a current family release or a full backup.');
  const p=src.captureOrigin;
- return {captureOrigin:{format:p.format,sourceVersion:p.sourceVersion,appVersion:p.appVersion,method:p.method,observedAt:p.observedAt,receivedAt:p.receivedAt,inputBasis:p.inputBasis,reviewState:p.reviewState,consentRecord:{scope:p.consentRecord.scope,confirmedAt:p.consentRecord.confirmedAt}}};
+ return {...extra,captureOrigin:{format:p.format,sourceVersion:p.sourceVersion,appVersion:p.appVersion,method:p.method,observedAt:p.observedAt,receivedAt:p.receivedAt,inputBasis:p.inputBasis,reviewState:p.reviewState,consentRecord:{scope:p.consentRecord.scope,confirmedAt:p.consentRecord.confirmedAt}}};
 }
 function metadata(s){for(const t of s.threads){if(t.exchangeProjectId!==undefined&&(!text(t.exchangeProjectId)||!t.exchangeProjectId))fail('Invalid project exchange identity.');
  if(t.exchangeAnchors!==undefined){if(!Array.isArray(t.exchangeAnchors)||t.exchangeAnchors.length>24)fail('Invalid exchange anchors.');for(const a of t.exchangeAnchors){if(!/^[a-f0-9]{64}$/.test(a.hash))fail('Invalid exchange anchor hash.');checkedFields(a.fields);}}

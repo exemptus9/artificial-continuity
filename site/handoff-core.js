@@ -80,7 +80,7 @@ function report(s,id){
 function packet(s,r,question='',includeEvidence=false){
  const t=s.threads.find(x=>x.id===r.threadId);if(!t)fail('Intention not found.');if(!equal(baseline(t),r.base))fail('Project changed; prepare a new handoff.');
  const ns=includeEvidence?s.notes.filter(n=>n.threadId===t.id&&n.reviewState!=='pending'):[];
- const excerpts=ns.map(n=>({kind:n.kind,statement:n.statement,sourceId:n.sourceId,start:n.start,end:n.end,quote:n.quote}));
+ const excerpts=ns.map(n=>{const src=s.sources.find(src=>src.id===n.sourceId),audio=src?.audioOrigin;if(audio&&!root.AudioImportCore)fail('Audio provenance support is required for this handoff.');return {kind:n.kind,statement:n.statement,sourceId:n.sourceId,start:n.start,end:n.end,quote:n.quote,...(audio?{audio:root.AudioImportCore.reference(src)}:{})};});
  const payload={requestId:r.id,createdAt:r.at,intention:r.base,reviewedCheckpoints:excerpts};
  const schema={format:'ContinuityFormReply/1',requestId:r.id,fields:{next:'A proposed next action for me to review'},explanation:'Explain the suggestion and note uncertainty.'};
  const out=['# Please analyze this selected Continuity intention','',question.trim()||'Identify missing context, practical next actions, and ways to simplify this project. Be explicit about uncertainty.','',
