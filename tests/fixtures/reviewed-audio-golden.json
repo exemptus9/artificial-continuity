@@ -1,0 +1,72 @@
+{
+  "bundle_sha256": "babe5938b1c5a8c3fbf23137aa4494ca36440d13ef6de27c1ae2f29a4b1470fc",
+  "excerpts": [
+    {
+      "id": "trae_ce9bf925f5ad7c46e06fa5bf1c1918ba37a4c95083d96fcb29db701576e7aa96",
+      "review": {
+        "history": [
+          {
+            "new": {
+              "edited_text": "Reviewed “exact” é 🜁.\nSecond line.",
+              "note": "Synthetic test review only; no owner approval.",
+              "pinned": true,
+              "verified": true
+            },
+            "old": {
+              "edited_text": null,
+              "note": "",
+              "pinned": false,
+              "verified": false
+            },
+            "revised_at": "2026-10-31T23:01:00+00:00"
+          }
+        ],
+        "note": "Synthetic test review only; no owner approval.",
+        "pinned": true,
+        "verified_against_audio": true
+      },
+      "revision_sha256": "115559acfde27ea31bb12d4a34d2eb17a7dabb9fc36a566416d8f3120a0ee0d4",
+      "segment": {
+        "end_ms": 900,
+        "sequence": 1,
+        "start_ms": 100,
+        "timing": "model_estimate"
+      },
+      "source": {
+        "bytes": 64044,
+        "duration_ms": null,
+        "filename": "unicode-fixture.wav",
+        "locator": "urn:sha256:20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa",
+        "sha256": "20eaebffe1816e0ffa6f7f854f5ef4ea80d5349faaf0ce1fec1b713e7fde58fa"
+      },
+      "text": {
+        "effective": "Reviewed “exact” é 🜁.\nSecond line.",
+        "machine": "Machine draft é 🜁.",
+        "reviewed": "Reviewed “exact” é 🜁.\nSecond line."
+      },
+      "transcript": {
+        "created_at": "2026-10-31T23:00:00+00:00",
+        "engine": "faster-whisper",
+        "fingerprint_sha256": "f10654a9a44397575eca91fb8b32016701a899b94036fbcb4f3d25683479d8d1",
+        "language": "en",
+        "model": "fixture-model"
+      }
+    }
+  ],
+  "exported_at": "2026-10-31T23:02:00+00:00",
+  "generator": {
+    "name": "Total Recall Audio Workbench",
+    "version": "0.2.0"
+  },
+  "privacy": {
+    "automatic_upload": false,
+    "includes_source_paths": false,
+    "scope": "private"
+  },
+  "schema": "total-recall-audio/continuity-handoff-v1",
+  "selection": {
+    "count": 1,
+    "pinned_only": true,
+    "verified_only": true
+  }
+}

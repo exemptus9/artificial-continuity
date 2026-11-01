@@ -26,6 +26,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import context_store as C
+import reviewed_audio as A
 
 FORMAT = "ContinuityCaptureRequest/1"
 SOURCE_FORMAT = "ContinuityCaptureRecord/1"
@@ -379,6 +380,8 @@ class Store:
         result = {"source": source, "trust": "untrusted-source-data", "historical_metadata_is_not_authorization": True}
         if include_text and source.get("format") == SOURCE_FORMAT:
             result["original_text"] = self.object(source["sha256"]).decode("utf-8")
+        if include_text and source.get("mechanism") == "reviewed-audio-handoff" and source.get("origin", {}).get("adapter") == "audio-reviewed-source/1":
+            result["audio_provenance"] = A.loads_handoff(self.object(source["origin"]["excerpt_object_sha256"]))["excerpts"][0]
         return result
 
     def project(self, pid, principal, revision=None):
@@ -450,6 +453,9 @@ class Store:
             if (source.get("mechanism") == "reviewed-browser-export"
                     and isinstance(origin, dict) and origin.get("adapter") == "browser-source-copy/1"):
                 required.append(origin.get("archive_sha256"))
+            if (source.get("mechanism") == "reviewed-audio-handoff"
+                    and isinstance(origin, dict) and origin.get("adapter") == "audio-reviewed-source/1"):
+                required.append(origin.get("excerpt_object_sha256"))
         intake = Path(directory) / "intake.json"
         if intake.is_symlink() or not intake.is_file():
             raise C.ContextError("Missing or unsafe intake witness; restore the initialization evidence first.")
@@ -559,6 +565,63 @@ class Store:
         return {"format": format_, "archive_sha256": raw_hash(raw), "sources": state["sources"],
                 "preserved_unindexed": {"drafts": len(value.get("drafts", [])), "incoming": len(value.get("incoming", [])), "captures": len(state.get("captures", [])), "notes": len(state.get("notes", [])), "projects": len(state.get("threads", []))},
                 "no_consent_or_project_status_imported": True}
+
+    def audio_preview(self, raw):
+        """Validate exact reviewed-audio bytes without changing the journal."""
+        payload = A.loads_handoff(raw)
+        return {"schema": payload["schema"], "bundle_sha256": payload["bundle_sha256"],
+                "excerpts": [{"id": e["id"], "revision_sha256": e["revision_sha256"],
+                              "filename": e["source"]["filename"], "recording_sha256": e["source"]["sha256"],
+                              "segment": e["segment"], "text": e["text"]["effective"]}
+                             for e in payload["excerpts"]],
+                "review_flags_are_exporter_assertions": True, "publication_approved": False}
+
+    def import_audio(self, raw, selected, project_id=None, approved=False):
+        payload = A.loads_handoff(raw)
+        if not approved:
+            raise C.ContextError("Inspect the preview and explicitly approve this private audio copy.")
+        ids = {e["id"] for e in payload["excerpts"]}
+        if (not isinstance(selected, list) or not selected or len(set(selected)) != len(selected)
+                or any(eid not in ids for eid in selected)):
+            raise C.ContextError("Explicitly select one or more previewed excerpt IDs.")
+        data, _ = self.state()
+        if project_id is not None and project_id not in {p["id"] for p in data["projects"]}:
+            raise C.ContextError("Unknown project; use an existing project or the unsorted inbox.")
+        receipts = []
+        # Each selected source is an atomic, resumable journal append. Do not
+        # store the whole transport bundle: it may include unselected excerpts.
+        for excerpt in payload["excerpts"]:
+            if excerpt["id"] not in selected:
+                continue
+            single = {**payload, "excerpts": [excerpt],
+                      "selection": {"verified_only": True, "pinned_only": True, "count": 1},
+                      "bundle_sha256": A.bundle_digest([excerpt])}
+            # Transport time/version do not change a saved review identity.
+            # The immutable object stores the exact selected excerpt, plus the
+            # first received transport metadata; retries reuse that object.
+            capture_id = str(uuid.uuid5(NAMESPACE, "reviewed-audio/1:" + excerpt["id"] + ":" + excerpt["revision_sha256"]))
+            prior = next((src for src in self.state()[0]["sources"] if src["id"] == "CAPTURE." + capture_id), None)
+            if prior is not None:
+                metadata_sha = prior.get("origin", {}).get("excerpt_object_sha256")
+                saved = A.loads_handoff(self.object(metadata_sha))
+                if saved["excerpts"] != [excerpt]:
+                    raise C.ContextError("Audio review identity conflict; original retained.")
+            else:
+                metadata_sha = self.put_object(A.dumps_handoff(single))
+            seg = excerpt["segment"]
+            request = {"format": FORMAT, "capture_id": capture_id, "text": excerpt["text"]["effective"],
+                       "title": ("Audio · " + excerpt["source"]["filename"] + " · excerpt " + str(seg["sequence"]))[:200],
+                       "project_id": project_id, "visibility": "private", "source_kind": "UNKNOWN", "speaker": "unknown",
+                       "mechanism": "reviewed-audio-handoff", "origin": {"adapter": "audio-reviewed-source/1",
+                       "excerpt_id": excerpt["id"], "revision_sha256": excerpt["revision_sha256"],
+                       "recording_sha256": excerpt["source"]["sha256"], "segment": seg,
+                       "excerpt_object_sha256": metadata_sha, "review_claim_is_not_certification": True}}
+            # A retry must not silently relink the original to another project.
+            receipts.append(self.accept(request, True))
+        return {"copied_sources": sum(not r["already_saved"] for r in receipts),
+                "skipped_duplicates": sum(r["already_saved"] for r in receipts), "receipts": receipts,
+                "publication_approved": False, "project_state_changed": False,
+                "atomicity": "one source per journal event; retry safely after a partial failure"}
 
     def import_browser(self, raw, project_id, approved=False):
         preview = self.browser_preview(raw)
@@ -677,6 +740,7 @@ def main(argv=None):
     p = sub.add_parser("verify-backup"); p.add_argument("directory", type=Path)
     p = sub.add_parser("restore-backup"); p.add_argument("directory", type=Path)
     p = sub.add_parser("import-browser"); p.add_argument("file", type=Path); p.add_argument("--project", required=True); p.add_argument("--approve", action="store_true")
+    p = sub.add_parser("import-audio"); p.add_argument("file", type=Path); p.add_argument("--project"); p.add_argument("--select", action="append", default=[]); p.add_argument("--approve", action="store_true")
     p = sub.add_parser("serve"); p.add_argument("--port", type=int, default=8766); p.add_argument("--agent-project", action="append", default=[]); p.add_argument("--agent-ttl-seconds", type=int, default=3600)
     args = parser.parse_args(argv)
     try:
@@ -700,6 +764,11 @@ def main(argv=None):
                 raw = args.file.read_bytes()
                 if args.approve: result = s.import_browser(raw, args.project, True)
                 else: result = {k: v for k, v in s.browser_preview(raw).items() if k != "sources"}
+            elif args.command == "import-audio":
+                with args.file.open("rb") as handle:
+                    raw = handle.read(A.MAX_BYTES + 1)
+                if args.approve: result = s.import_audio(raw, args.select, args.project, True)
+                else: result = s.audio_preview(raw)
             elif args.command == "serve":
                 tokens = {role: os.environ[var] for role, var in (("owner", "CONTINUITY_OWNER_TOKEN"), ("agent", "CONTINUITY_AGENT_TOKEN"), ("capture", "CONTINUITY_CAPTURE_TOKEN")) if os.environ.get(var)}
                 service = server(s, tokens, frozenset(args.agent_project), args.port, args.agent_ttl_seconds)

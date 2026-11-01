@@ -53,6 +53,7 @@ jobs:
           node tests/review-layout-browser.cjs
           node tests/family-browser.cjs
           node tests/family-recovery-browser.cjs
+          node tests/audio-import-browser.cjs
           node tests/archive-browser.cjs
           node tests/synchronization-browser.cjs
           node tests/release-browser.cjs
