@@ -78,7 +78,7 @@ function resumePack(s,id,at){
  return out.join('\n');
 }
 function search(s,q){const terms=(q.toLowerCase().match(/[\p{L}\p{N}]+/gu)||[]).filter(w=>!['the','a','an','my','find','me','and','of','to'].includes(w));if(!terms.length)return [];
- const rows=[...s.threads.map(x=>({kind:'intention',id:x.id,title:x.title,body:[x.objective,x.last,x.next,...x.open].join(' ')})),...s.sources.map(x=>({kind:'source',id:x.id,title:x.title,body:x.text})),...s.captures.map(x=>({kind:'capture',id:x.id,title:x.context||x.type,body:x.text})),...s.ideas.map(x=>({kind:'idea',id:x.id,title:x.title,body:x.principle})),...s.notes.map(x=>({kind:'checkpoint',id:x.sourceId,title:x.kind,body:x.statement+' '+x.quote}))];return rows.filter(r=>terms.every(t=>(r.title+' '+r.body).toLowerCase().includes(t))).slice(0,50);}
+ const rows=[...s.threads.map(x=>({kind:'intention',id:x.id,title:x.title,body:[x.objective,x.last,x.next,x.waiting||'',...x.open].join(' ')})),...s.sources.map(x=>({kind:'source',id:x.id,title:x.title,body:x.text})),...s.captures.map(x=>({kind:'capture',id:x.id,title:x.context||x.type,body:x.text})),...s.ideas.map(x=>({kind:'idea',id:x.id,title:x.title,body:x.principle})),...s.notes.map(x=>({kind:'checkpoint',id:x.sourceId,title:x.kind,body:x.statement+' '+x.quote}))];return rows.filter(r=>terms.every(t=>(r.title+' '+r.body).toLowerCase().includes(t))).slice(0,50);}
 const api={VERSION,STATES,KINDS,copy,empty,validate,backup,makeSource,checkpoint,suggestions,resumePack,search,lines,validURL};
 root.WorkspaceCore=api;if(typeof module!=='undefined')module.exports=api;
 })(globalThis);
