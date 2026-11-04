@@ -23,6 +23,12 @@ jobs:
           ref: 80a3099ce20f20be2b99f94483e972c4f049c414
           path: .release-baseline
           persist-credentials: false
+      - name: Check out the currently published source for the upgrade test
+        uses: actions/checkout@v4
+        with:
+          ref: a644cf678ea227e9a32e7e2fd41d2187a355a5b4
+          path: .release-current
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -58,6 +64,7 @@ jobs:
           node tests/synchronization-browser.cjs
           node tests/release-browser.cjs
           CONTINUITY_BASELINE_SITE=.release-baseline/site node tests/update-browser.cjs
+          CONTINUITY_BASELINE_SITE=.release-current/site CONTINUITY_BASELINE_VERSION=0.22.0 CONTINUITY_BASELINE_COMMIT=a644cf678ea227e9a32e7e2fd41d2187a355a5b4 node tests/update-browser.cjs
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
