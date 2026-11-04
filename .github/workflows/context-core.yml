@@ -16,4 +16,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install pinned test-only encryption dependency
+        run: |
+          python3 -m pip install cryptography==50.0.2
+          python3 -c "from cryptography.hazmat.primitives.ciphers.aead import AESGCM; assert AESGCM"
+      - name: Test missing optional encryption dependency
+        run: python3 -S -m unittest discover -s tests -p 'test_sealed_messenger_backup.py' -v
       - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
