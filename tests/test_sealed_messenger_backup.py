@@ -126,11 +126,15 @@ class SealedMessengerTests(unittest.TestCase):
             S.main(['open', '--input', str(self.root / 'missing-sensitive-name'), '--output', str(self.root / 'new'), '--key-file', str(self.key)])
         self.assertNotIn('missing-sensitive-name', stderr.getvalue()); self.assertNotIn(key_b64, stderr.getvalue())
 
+class MissingEncryptionDependencyTests(unittest.TestCase):
     def test_optional_dependency_absence_is_explicit_and_nonmutating(self):
-        with patch.object(S, 'AESGCM', None):
-            with self.assertRaisesRegex(S.BackupError, 'Optional encryption'):
-                self.seal()
-        self.assertFalse(self.key.exists()); self.assertFalse(self.sealed.exists())
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); source = root / 'synthetic.zip'; source.write_bytes(b'fictional')
+            sealed = root / 'archive.sealed.json'; key = root / 'key.json'
+            with patch.object(S, 'AESGCM', None):
+                with self.assertRaisesRegex(S.BackupError, 'Optional encryption'):
+                    S.seal(source, sealed, key, hashlib.sha256(b'fictional').hexdigest(), create_key=True)
+            self.assertFalse(key.exists()); self.assertFalse(sealed.exists())
 
 
 if __name__ == '__main__':
