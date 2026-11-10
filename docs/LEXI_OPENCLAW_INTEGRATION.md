@@ -135,10 +135,12 @@ delete Continuity data or change the browser workspace.
 From the repository root:
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_lexi_mcp.py' -v
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 The tests exercise JSON-RPC initialization, tool discovery, granted-project
-listing, project-filtered reads, strict argument validation, and the absence of write tools. They do not
+listing, project-filtered reads, strict argument validation, the absence of
+write tools, and HTTP-level isolation of the agent catalog from ungranted
+projects and owner credentials. They do not
 prove the user's local OpenClaw environment, host networking, credentials, or
 private project grant is configured.
