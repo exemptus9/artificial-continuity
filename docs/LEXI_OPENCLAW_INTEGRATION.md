@@ -37,11 +37,11 @@ boundary; the MCP tool schema is not a substitute for it.
    this public repository.
 2. The Continuity service is running on the same host as the OpenClaw Gateway,
    bound to loopback on port 8766.
-3. The service was started with an explicit `--agent-project PROJECT_ID`
-   grant, a distinct `CONTINUITY_AGENT_TOKEN` (at least 32 characters), and
+3. The service was started with one or more explicit `--agent-project PROJECT_ID`
+   grants (repeat the flag for each selected project), a distinct `CONTINUITY_AGENT_TOKEN` (at least 32 characters), and
    the owner's separate credentials held only by the service supervisor.
 4. The OpenClaw Gateway process can inherit the scoped agent token in its
-   environment. Do not write the token into this repository, a prompt, a
+   environment. The API service must also receive the distinct owner token. Do not write the token into this repository, a prompt, a
    command-line argument, or a committed config file.
 5. Run the MCP child on the trusted host, not inside the Podman agent sandbox.
    Container loopback is not host loopback. Do not disable sandboxing, mount
