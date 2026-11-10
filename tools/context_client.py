@@ -20,7 +20,11 @@ def retrieve(operation, value=None, project=None, port=8766, token=None):
     token = token or os.environ.get("CONTINUITY_AGENT_TOKEN")
     if not isinstance(token, str) or len(token) < 32:
         raise C.ContextError("A scoped agent token is required.")
-    if operation == "search":
+    if operation == "projects":
+        if value is not None or project is not None:
+            raise C.ContextError("Granted-project catalog takes no project filter.")
+        path = "/v1/projects"
+    elif operation == "search":
         query = {"q": value, "limit": 20}
         if project is not None: query["project_id"] = project
         path = "/v1/search?" + urllib.parse.urlencode(query)
@@ -40,7 +44,7 @@ def retrieve(operation, value=None, project=None, port=8766, token=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("operation", choices=["search", "project", "source"]); p.add_argument("value")
+    p.add_argument("operation", choices=["search", "project", "source", "projects"]); p.add_argument("value", nargs="?")
     p.add_argument("--project"); p.add_argument("--port", type=int, default=8766)
     a = p.parse_args()
     try:
