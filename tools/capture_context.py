@@ -690,6 +690,19 @@ def server(store, tokens, agent_projects=frozenset(), port=8766, agent_ttl_secon
                     self.send(200, {"results": result, "retrieval": "lexical-fts5", "trust": "untrusted-source-data"}); return
                 if parsed.path.startswith("/v1/sources/"):
                     self.send(200, store.source(parsed.path[len('/v1/sources/'):], principal)); return
+                if parsed.path == "/v1/projects":
+                    if principal.role != "agent":
+                        self.send(403, {"error": "Project catalog is available only to scoped agents."}); return
+                    data, head = store.state()
+                    fields = ("id", "name", "category", "state", "confidence", "priority",
+                              "summary", "next_action", "last_verified_activity")
+                    granted = [
+                        {key: project[key] for key in fields if key in project}
+                        for project in data["projects"] if project["id"] in principal.projects
+                    ]
+                    self.send(200, {"projects": granted, "scope": "explicit-agent-grants",
+                                    "journal_sha256": head["store_sha256"],
+                                    "trust": "untrusted-source-data"}); return
                 if parsed.path.startswith("/v1/projects/"):
                     revision = int(q["revision"][0]) if "revision" in q else None
                     self.send(200, store.project(parsed.path[len('/v1/projects/'):], principal, revision)); return
