@@ -16,10 +16,28 @@ class LexiMcpTests(unittest.TestCase):
         self.assertEqual(response["result"]["serverInfo"]["name"], "artificial-continuity-lexi")
         self.assertEqual(response["result"]["capabilities"], {"tools": {"listChanged": False}})
 
-    def test_tool_list_contains_only_two_reads(self):
+    def test_tool_list_contains_only_read_tools(self):
         response = lexi_mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         names = {tool["name"] for tool in response["result"]["tools"]}
         self.assertEqual(names, {"list_granted_projects", "get_project_context", "search_project_context"})
+
+    @patch("lexi_mcp.context_client.urllib.request.build_opener")
+    def test_project_catalog_uses_fixed_loopback_endpoint(self, build_opener):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self, limit): return b'{"projects": []}'
+        class Opener:
+            def __init__(self): self.request = None; self.timeout = None
+            def open(self, request, timeout):
+                self.request, self.timeout = request, timeout
+                return Response()
+        opener = Opener()
+        build_opener.return_value = opener
+        result = lexi_mcp.context_client.retrieve("projects", token="x" * 32)
+        self.assertEqual(result, {"projects": []})
+        self.assertEqual(opener.request.full_url, "http://127.0.0.1:8766/v1/projects")
+        self.assertEqual(opener.timeout, 10)
 
     @patch("lexi_mcp.context_client.retrieve", return_value={"projects": [{"id": "P1", "name": "Continuity"}]})
     def test_list_returns_only_service_granted_projects(self, retrieve):
