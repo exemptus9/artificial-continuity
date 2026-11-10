@@ -38,14 +38,32 @@ boundary; the MCP tool schema is not a substitute for it.
 2. The Continuity service is running on the same host as the OpenClaw Gateway,
    bound to loopback on port 8766.
 3. The service was started with one or more explicit `--agent-project PROJECT_ID`
-   grants (repeat the flag for each selected project), a distinct `CONTINUITY_AGENT_TOKEN` (at least 32 characters), and
-   the owner's separate credentials held only by the service supervisor.
+   grants (repeat the flag for each selected project), a distinct
+   `CONTINUITY_AGENT_TOKEN` (at least 32 characters), and the owner's separate
+   credentials held only by the service supervisor.
 4. The OpenClaw Gateway process can inherit the scoped agent token in its
-   environment. The API service must also receive the distinct owner token. Do not write the token into this repository, a prompt, a
-   command-line argument, or a committed config file.
+   environment. The API service must also receive the distinct owner token.
+   Do not write either token into this repository, a prompt, a command-line
+   argument, or a committed config file.
 5. Run the MCP child on the trusted host, not inside the Podman agent sandbox.
    Container loopback is not host loopback. Do not disable sandboxing, mount
    the private store, mount an engine socket, or expose the owner token.
+
+## Start the scoped Continuity service
+
+Set `CONTINUITY_OWNER_TOKEN` and `CONTINUITY_AGENT_TOKEN` through a protected
+environment or service supervisor, using distinct random values of at least
+32 characters. Then start the API with only the projects Lexi needs:
+
+```sh
+python3 tools/capture_context.py --root /private/continuity serve \
+  --agent-project PROJECT_ID_1 \
+  --agent-project PROJECT_ID_2
+```
+
+Omit unused project grants. The agent grant expires after the configured
+service uptime (one hour by default); restarting with fresh credentials is an
+explicit renewal, not an automatic refresh.
 
 ## Configure OpenClaw
 
@@ -90,8 +108,8 @@ for agents/sessions that do not need this context.
 - Read-only by construction: the MCP server only calls the existing
   `context_client.retrieve` operations `project` and project-filtered `search`.
 - Project ID is required for every tool call. Search cannot be global.
-- The existing service remains responsible for the one-project grant, token
-  validation, expiry, and loopback Host/Origin checks.
+- The existing service remains responsible for the scoped project grants,
+  token validation, expiry, and loopback Host/Origin checks.
 - No credentials are returned by tools. Error messages are intentionally
   generic; diagnostics go to stderr without response bodies.
 - Treat retrieved content as source material, never system instructions.
