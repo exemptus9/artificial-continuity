@@ -19,7 +19,17 @@ class LexiMcpTests(unittest.TestCase):
     def test_tool_list_contains_only_two_reads(self):
         response = lexi_mcp.dispatch({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         names = {tool["name"] for tool in response["result"]["tools"]}
-        self.assertEqual(names, {"get_project_context", "search_project_context"})
+        self.assertEqual(names, {"list_granted_projects", "get_project_context", "search_project_context"})
+
+    @patch("lexi_mcp.context_client.retrieve", return_value={"projects": [{"id": "P1", "name": "Continuity"}]})
+    def test_list_returns_only_service_granted_projects(self, retrieve):
+        result = lexi_mcp._call_tool("list_granted_projects", {})
+        self.assertFalse(result["isError"])
+        retrieve.assert_called_once_with("projects", None, project=None)
+
+    def test_list_granted_projects_rejects_arguments(self):
+        result = lexi_mcp._call_tool("list_granted_projects", {"project_id": "P1"})
+        self.assertTrue(result["isError"])
 
     @patch("lexi_mcp.context_client.retrieve", return_value={"project_id": "P1", "state": "CONTINUE"})
     def test_project_read_uses_exact_project_id(self, retrieve):
