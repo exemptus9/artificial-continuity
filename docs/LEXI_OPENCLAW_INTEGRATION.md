@@ -19,8 +19,10 @@ tools/lexi_mcp.py  [trusted host process]
 private Context_Store + source index
 ```
 
-The bridge exposes exactly two tools:
+The bridge exposes exactly three tools:
 
+- `list_granted_projects()`: discover only the project IDs and brief metadata
+  explicitly granted to this agent by the service. This is not a global catalog.
 - `get_project_context(project_id)`: retrieve one project record and bounded
   resume context.
 - `search_project_context(project_id, query)`: lexical search constrained to
@@ -75,7 +77,7 @@ openclaw mcp add continuity \
   --command python3 \
   --arg /absolute/path/artificial-continuity/tools/lexi_mcp.py \
   --cwd /absolute/path/artificial-continuity \
-  --include get_project_context,search_project_context
+  --include list_granted_projects,get_project_context,search_project_context
 
 openclaw mcp doctor continuity --probe
 openclaw mcp status --verbose
@@ -93,20 +95,23 @@ for agents/sessions that do not need this context.
 
 ## First verification
 
-1. Confirm `openclaw mcp doctor continuity --probe` lists only the two tools.
-2. From Lexi, call `get_project_context` with the exact granted project ID.
-3. Search a known phrase with `search_project_context` and confirm every result
+1. Confirm `openclaw mcp doctor continuity --probe` lists only the three tools.
+2. From Lexi, call `list_granted_projects`; verify it returns only the startup-granted IDs.
+3. Call `get_project_context` with one exact returned ID.
+4. Search a known phrase with `search_project_context` and confirm every result
    belongs to that same project.
-4. Try an ungranted project ID. It must fail closed.
-5. Stop/restart the Continuity service or expire/revoke the scoped grant; reads
+5. Try an ungranted project ID. It must fail closed.
+6. Stop/restart the Continuity service or expire/revoke the scoped grant; reads
    must fail rather than fall back to public or unscoped data.
-6. Confirm no token, raw private source text, or API response body appears in
+7. Confirm no token, raw private source text, or API response body appears in
    routine logs.
 
 ## Security and behavior contract
 
 - Read-only by construction: the MCP server only calls the existing
-  `context_client.retrieve` operations `project` and project-filtered `search`.
+  `context_client.retrieve` operations `projects`, `project` and project-filtered `search`.
+- The project catalog endpoint returns only brief metadata for IDs explicitly
+  granted to the agent; it never exposes the full owner project directory.
 - Project ID is required for every tool call. Search cannot be global.
 - The existing service remains responsible for the scoped project grants,
   token validation, expiry, and loopback Host/Origin checks.
@@ -133,7 +138,7 @@ From the repository root:
 python3 -m unittest discover -s tests -p 'test_lexi_mcp.py' -v
 ```
 
-The tests exercise JSON-RPC initialization, tool discovery, project-filtered
-reads, strict argument validation, and the absence of write tools. They do not
+The tests exercise JSON-RPC initialization, tool discovery, granted-project
+listing, project-filtered reads, strict argument validation, and the absence of write tools. They do not
 prove the user's local OpenClaw environment, host networking, credentials, or
 private project grant is configured.
