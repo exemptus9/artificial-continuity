@@ -457,12 +457,23 @@ public final class RecallSmoke extends Instrumentation {
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
             tapNode(handle);waitNode("Pause and clear temporary audio");
-            tapNode("Hide floating controls");
+            Method visible=method(RecallOverlay.class,"visible");
+            deviceShell("input keyevent KEYCODE_SLEEP");
+            until(()->{
+                final boolean[] attached={true};
+                runOnMainSync(()->{
+                    try{attached[0]=(boolean)visible.invoke(null);}catch(Exception e){throw new RuntimeException(e);}
+                });
+                return !attached[0];
+            },10000,"Overlay window remained attached after the display locked");
+            deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
+            waitNode(handle);tapNode("Hide floating controls");
             until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
             require(RecallService.isListening(),"Hiding the overlay stopped listening");
-            passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, and Hide left the microphone running.");
+            passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, locking hid the window, and Hide left the microphone running.");
             stopListening();require(liveCleared(),"Live data survived explicit pause");
         }finally{
+            deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
             stopListening();RecallOverlay.reset(target);
             deviceShell("appops set "+app+" SYSTEM_ALERT_WINDOW default");
             runOnMainSync(a::finish);waitForIdleSync();
