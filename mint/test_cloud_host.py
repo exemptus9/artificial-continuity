@@ -194,6 +194,23 @@ class HostedArchiveTests(unittest.TestCase):
         headers["Sec-Fetch-Site"]="cross-site"
         self.assertEqual(self.request("POST","/login",body,headers)[0],403)
 
+    def test_owner_review_and_delete_scopes(self):
+        owner=self.login();data=b"Disposable hosted journal"
+        manifest=self.manifest("owner-review-delete",data)
+        self.begin(manifest);self.put(manifest["id"],data)
+        edits=json.dumps(dict(kind="journal",id=manifest["id"],action="add",label="Forge Lexicon"))
+        route="/api/review/file"
+        auth={**owner,**self.origin,"Content-Type":"application/json"}
+        self.assertEqual(self.request("POST",route,edits,{**self.bearer,**self.origin,"Content-Type":"application/json"})[0],401)
+        self.assertEqual(self.request("POST",route,edits,{**auth,"Origin":"https://unrelated.invalid"})[0],403)
+        self.assertEqual(self.request("POST",route,edits,auth)[0],200)
+        self.assertEqual(json.loads(self.request("GET","/api/review?shelf=filed",headers=owner)[2])["total"],1)
+        deletion=json.dumps(dict(kind="journal",id=manifest["id"],sha256=manifest["sha256"]))
+        self.assertEqual(self.request("POST","/api/archive/delete",deletion,auth)[0],200)
+        self.assertEqual(self.request("GET","/api/media/journal/"+manifest["id"],headers=owner)[0],404)
+        self.assertEqual(self.begin(manifest)[0],410)
+        self.assertEqual(self.request("POST","/api/archive/delete",deletion,auth)[0],200)
+
     def test_storage_preflight_and_owner_round_trip(self):
         path = "/api/storage-check"
         self.assertEqual(self.request("POST",path,b"",self.origin)[0],401)

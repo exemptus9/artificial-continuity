@@ -35,6 +35,7 @@ MODULES=Path(__file__).resolve().parent
 sys.path.insert(0,str(MODULES))
 import recall_archive
 import recall_web
+import recall_review
 ROOT = Path(os.environ.get("TOTAL_RECALL_ARCHIVE_HOME") or Path.home()/".local/share/total-recall-listening").expanduser().resolve()
 DB = ROOT / "clips.sqlite3"
 APP = ROOT / "recall_desk.py"
@@ -71,6 +72,8 @@ def setup():
               PRIMARY KEY(clip_id, metadata)
             );
         """)
+
+        db.executescript(recall_review.SCHEMA)
 
 def reader():
     if not DB.is_file():
@@ -167,6 +170,7 @@ def _import_zip(path,require_one,arc,reserved):
             uid, expected=fields(clip)
             if uid in seen or clip["audio"] not in members:
                 raise Issue("Missing or duplicate audio record.")
+            if db.execute("SELECT 1 FROM deleted_items WHERE kind='clip' AND id=?",(uid,)).fetchone():raise recall_archive.Failure(410,"This original was deleted by its owner")
             seen.add(uid)
             if recall_archive.expiry(clip["startedAtMillis"]+clip["durationMs"])<=recall_archive.now():
                 raise Issue("Capture is past its seven-year retention date")
@@ -576,7 +580,7 @@ def install_runtime():
     if MODULES!=ROOT:
         known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
         pending={};accepted={}
-        for name in ("recall_archive.py","recall_web.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
+        for name in ("recall_archive.py","recall_web.py","recall_review.py","laptop_capture.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
             origin=MODULES/name;dest=ROOT/name
             if not origin.is_file():continue
             if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")
@@ -935,6 +939,8 @@ def desktop(receive_at=None):
             "https://total-recall-archive-production.up.railway.app/")).pack(side="left",padx=4)
     ttk.Button(bar,text="Storage & backup",command=storage).pack(side="left",padx=4)
     ttk.Button(toolbar,text="Import capture ZIP",command=choose).pack(side="left")
+    ttk.Button(toolbar,text="Laptop microphone",command=lambda:subprocess.Popen(
+        [sys.executable,"-I",str(Path(__file__).resolve()),"laptop-panel"],start_new_session=True)).pack(side="left",padx=4)
     pair_button=ttk.Button(toolbar,text="Pair phone",command=pairing)
     pair_button.pack(side="left",padx=4)
     ttk.Button(toolbar,text="Connect Lexi",command=register).pack(side="left",padx=8)
@@ -958,6 +964,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     commands=parser.add_subparsers(dest="mode")
     commands.add_parser("desk").add_argument("--receive-at",metavar="PRIVATE_IPV4")
+    for name in ("laptop-panel","laptop-worker","laptop-login"):commands.add_parser(name)
     commands.add_parser("serve")
     server=commands.add_parser("host",help="Run the private upload receiver and local archive website without a desktop")
     server.add_argument("--bind",required=True);server.add_argument("--advertise")
@@ -979,6 +986,12 @@ def main():
     commands.add_parser("play").add_argument("id")
     args=parser.parse_args()
     if args.mode in (None,"desk"): return desktop(getattr(args,"receive_at",None))
+    if args.mode in ("laptop-panel","laptop-worker","laptop-login"):
+        import laptop_capture
+        arc=archive()
+        if args.mode=="laptop-worker":return laptop_capture.worker(arc)
+        if args.mode=="laptop-login":laptop_capture.start(arc)
+        return laptop_capture.panel(arc)
     if args.mode=="serve": return serve()
     if args.mode=="host": return host(args)
     if args.mode=="open":

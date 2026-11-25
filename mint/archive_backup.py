@@ -24,6 +24,9 @@ RESERVE = 64 * 1024**2
 TABLES = {
     "clips": "id started duration samples sha audio title transcript category reason metadata feedback",
     "observations": "clip_id metadata imported",
+    "owner_reviews":"kind id state labels name writing heard updated",
+    "owner_options":"slot config",
+    "deleted_items":"kind id",
     "clip_original_sizes": "id bytes",
     "archive_uploads": "id kind metadata sha bytes offset state file created touched started expires journal",
     "archive_settings": "name value",

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import recall_review
 import sqlite3
 import threading
 import time
@@ -51,29 +52,39 @@ def search_preview(row, terms):
                 return {"field":label,"text":("…" if left else "")+snippet+("…" if right<len(value) else "")}
     return None
 
-def items(arc,kind,q,limit,offset,category="",start=None,end=None):
+def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
     if kind not in ("all","clip","segment","journal") or len(q)>500 or not 1<=limit<=200 or not 0<=offset<=10_000_000:
         raise Failure(400,"Invalid archive query")
     if category and category not in {*CLIP_LABELS.values(),"other"}:raise Failure(400,"Unknown clip category")
     if (start is None)!=(end is None) or start is not None and not 0<=start<end<=253402300799999:
         raise Failure(400,"Invalid date filter")
     where=[];args=[]
-    if kind!="all": where.append("kind=?");args.append(kind)
+    laptop="(a.kind='segment' AND a.id GLOB 'laptop-[0-9]*' OR a.kind='clip' AND a.id GLOB 'desk-keep-[0-9]*')"
+    if device not in ("all","laptop","other"):raise Failure(400,"Invalid device filter")
+    if device!="all":where.append(laptop if device=="laptop" else "NOT "+laptop)
+    if kind!="all": where.append("a.kind=?");args.append(kind)
     if start is not None:
         where.append("startedAtMillis>=? AND startedAtMillis<?");args.extend((start,end))
     if category:
-        where.append("kind='clip' AND has_clip_label(json_extract(metadata,'$.category'),?)")
+        where.append("a.kind='clip' AND has_clip_label(json_extract(metadata,'$.category'),?)")
         args.append(category)
     terms=q.casefold().split()[:12]
+    with arc.connection() as db:
+        aliases=[(r[0].casefold(),r[1].casefold()) for r in db.execute("SELECT DISTINCT name,heard FROM owner_reviews WHERE name!='' AND heard!='' LIMIT 10000")] if terms else []
     for term in terms:
         where.append("instr(fold_text(title||' '||content||' '||coalesce(json_extract(metadata,'$.note'),'')||' '||coalesce(json_extract(metadata,'$.category'),'')||' '||coalesce(json_extract(metadata,'$.correction'),'')),?)>0")
-        args.append(term)
-    sql=" FROM ("+BASE_SQL+")"+(" WHERE "+" AND ".join(where) if where else "")
+        variants=[heard for name,heard in aliases if name==term][:8]
+        prepared=where.pop()
+        parts=[prepared for _ in [term,*variants]]
+        parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')),?)>0")
+        where.append("("+ " OR ".join(parts)+")")
+        args.extend((term,*variants,term))
+    sql=" FROM ("+BASE_SQL+") a LEFT JOIN owner_reviews rv ON rv.kind=a.kind AND rv.id=a.id"+(" WHERE "+" AND ".join(where) if where else "")
     with arc.connection() as db:
         if category: db.create_function("has_clip_label",2,lambda value,wanted: wanted in category_keys(value),deterministic=True)
         if terms: db.create_function("fold_text",1,str.casefold,deterministic=True)
         total=db.execute("SELECT count(*)"+sql,args).fetchone()[0]
-        rows=db.execute("SELECT *"+sql+" ORDER BY startedAtMillis DESC,id DESC,kind LIMIT ? OFFSET ?",[*args,limit,offset])
+        rows=db.execute("SELECT a.*"+sql+" ORDER BY startedAtMillis DESC,a.id DESC,a.kind LIMIT ? OFFSET ?",[*args,limit,offset])
         matches=[]
         for row in rows:
             found=item(row)
@@ -100,7 +111,10 @@ def lookup(arc,kind,uid):
     with arc.connection() as db:
         row=db.execute("SELECT * FROM ("+BASE_SQL+") WHERE kind=? AND id=?",(kind,uid)).fetchone()
     if not row: raise Failure(404,"Item is no longer in this archive")
-    return item(row,True)
+    result=item(row,True)
+    with arc.connection() as db:
+        result["review"]=recall_review.review(db,kind,uid);result["filingOptions"]=recall_review.options(db)
+    return result
 
 # Stable labels written by Android SelectiveEngine and Store. A single clip can have several.
 CLIP_LABELS={
@@ -229,6 +243,23 @@ class OwnerHandler(BaseHTTPRequestHandler):
         with self.server.guard:return self.server.sessions.get(session,0)>time.time()
     def valid_host(self,host):
         return host in ("localhost:"+str(self.server.server_port),"127.0.0.1:"+str(self.server.server_port))
+    def do_POST(self):
+        try:
+            host=self.headers.get("Host","")
+            if not self.valid_host(host) or not self.auth():raise Failure(401,"Owner sign-in required")
+            scheme="https" if hasattr(self.server,"public_host") else "http"
+            if self.headers.get("Origin")!=scheme+"://"+host:raise Failure(403,"Use your archive page")
+            if self.headers.get_content_type()!="application/json":raise Failure(415,"Expected JSON")
+            sizes=self.headers.get_all("Content-Length") or []
+            if len(sizes)!=1 or not re.fullmatch(r"[0-9]{1,6}",sizes[0]) or int(sizes[0])>200000 or self.headers.get("Transfer-Encoding"):raise Failure(413,"Invalid request size")
+            op={"/api/review/file":recall_review.classify,"/api/review/options":recall_review.save_options,"/api/archive/delete":recall_review.delete}.get(self.path)
+            if not op:raise Failure(404,"Unknown action")
+            data=json.loads(self.rfile.read(int(sizes[0])))
+            if not isinstance(data,dict):raise Failure(400,"Expected an object")
+            self.json(200,op(self.server.archive,data))
+        except Failure as err:self.json(err.status,{"error":str(err)})
+        except (UnicodeError,ValueError,TypeError):self.json(400,{"error":"Invalid request"})
+        except (OSError,sqlite3.Error):self.json(503,{"error":"Archive busy or storage unavailable. Retry."})
     def do_HEAD(self): self.do_GET()
     def do_GET(self):
         try:
@@ -251,10 +282,11 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 name,mime={"/":("index.html","text/html; charset=utf-8"),"/app.css":("app.css","text/css; charset=utf-8"),"/app.js":("app.js","text/javascript; charset=utf-8")}[path]
                 self.emit(200,(self.server.assets/name).read_bytes(),mime);return
             if path=="/api/status": return self.json(200,arc.status())
+            if path=="/api/review":return self.json(200,recall_review.inbox(arc,param("shelf","inbox"),int(param("offset","0"))))
             if path=="/api/items":
                 start=param("from",None);end=param("to",None)
                 return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
-                    int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None))
+                    int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all")))
             if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0"))))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))
             route=re.fullmatch(r"/api/(items|media)/(segment|journal|clip)/([A-Za-z0-9_-]{1,128})",path)

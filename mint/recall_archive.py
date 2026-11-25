@@ -124,6 +124,7 @@ class Archive:
     def begin(self,raw):
         m=self.manifest(raw);data=json.dumps(m,sort_keys=True,separators=(",",":"));t=now()
         with archive_lock(self.root),self.connection() as db:
+            if db.execute("SELECT 1 FROM deleted_items WHERE kind IN (?,'upload') AND id=?",(m["kind"],m["id"])).fetchone():raise Failure(410,"This capture was deleted by its owner")
             row=db.execute("SELECT * FROM archive_uploads WHERE id=?",(m["id"],)).fetchone()
             if row:
                 if row["metadata"]!=data: raise Failure(409,"Upload ID already has different metadata")
@@ -222,6 +223,7 @@ class Archive:
             db.executemany("DELETE FROM clip_original_sizes WHERE id=?",((uid,) for uid in ids))
             db.executemany("DELETE FROM clips WHERE id=?",((uid,) for uid in ids))
             db.commit()
+            db.execute("""DELETE FROM owner_reviews WHERE (kind='clip' AND id NOT IN (SELECT id FROM clips)) OR (kind!='clip' AND id NOT IN (SELECT id FROM archive_uploads WHERE state='complete'))""")
             if ids:db.execute("PRAGMA incremental_vacuum(2048)")
             # Also collect orphan files left by a crash around deletion.
             live={r[0] for r in db.execute("SELECT file FROM archive_uploads WHERE kind!='clip' OR state='pending'")}

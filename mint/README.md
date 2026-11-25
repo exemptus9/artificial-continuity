@@ -11,6 +11,20 @@ Install the Debian package, open **Total Recall Desk**, and choose **Private arc
 
 In **Private archive**, search for an item, play the original or download it. Browser audio supports seeking. **Activity** shows the busiest recorded day and counts of saved clips by label. Choose **Review latest** to open a candidate from that group. Existing note, correction, original transcript, feedback and excerpt-source fields are preserved. **Import capture ZIP** accepts Android selected-clip exports. **Connect Lexi** adds a read-only selected-clip search tool to the configured OpenClaw agent `lexidaimon`. Start a new chat and ask Lexi to find a saved moment. Full-session journals and continuous recordings stay outside that tool.
 
+## Laptop microphone and floating panel
+
+Open **Laptop microphone** in Total Recall Desk. Drag the title bar to move the panel. **Start recording** uses the default Mint microphone; the input meter shows the measured sound level. **Keep moment** saves the available last 15, 30 or 60 seconds as a separate bookmark in Review. **Browse & play** opens all local recordings. **Stop recording** releases the microphone and finalizes the current segment. Closing or hiding the panel leaves a running recorder active. Reopen it from Desk.
+
+**Settings** controls the sound system (PulseAudio/PipeWire or ALSA), AAC quality, segment length, bookmark length, compact mode, always-on-top and optional recording at login. The recorder runs under the signed-in user. A sleeping or powered-off laptop has no microphone coverage. Laptop clips and full-audio segments are saved on this computer independently of the phone. Automatic speech recognition and automatic creative highlights are provided by the phone. Use **Keep moment** on the laptop for passages to review.
+
+For a second copy, enable **Send laptop audio and bookmarks to my hosted archive** and paste a hosted pairing code from the website. Completed laptop recordings are uploaded in order, with byte checks, resumable transfers and a matching SHA-256 receipt. Local originals stay in the local archive. Pending files wait for storage or connectivity. Desk's existing storage quota and free-space reserve apply. Overlapping device recordings retain their separate originals.
+
+## Review, file and delete
+
+Open **Review** in the private website or local archive. Listen inline and click a category to file the item. Use **Collection** to open a category, see all filed items, or revisit dismissed clips. **Inbox settings** lets you rename or add buttons and set the page size and order. Changing the button list preserves existing collections. Within an item, **Classify or edit writing** supports multiple categories, draft text, a corrected word and its recognized spelling. These are private archive collections. Copy a draft to take it to another writing app.
+
+**Dismiss** leaves the original in Archive. To remove an item, open it, expand **Delete from this archive**, check the confirmation and click **Delete this item**. The operation removes the active original, its text and its filing from this archive. Other devices, independent excerpts, copies you exported and previous backups can retain material. The archive rejects repeat uploads of the same deleted item ID.
+
 ## Find a moment
 
 From Overview, search for part of a line or choose **Coined words**, **Poetry & freestyle**, or **Yesterday**. In Archive, combine recognized words, notes and corrections with a clip label and the local date the item started. Results show a passage around the match when available.
