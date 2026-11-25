@@ -14,7 +14,7 @@ a=("$ADB" -s "$SERIAL")
 "${a[@]}" shell wm dismiss-keyguard
 mkdir -p build/receipts
 failed=0
-for phase in archive restart asr journal microphone overlay contention; do
+for phase in archive restart asr creative journal microphone overlay contention; do
   if [[ "$phase" = restart ]]; then "${a[@]}" shell am force-stop org.continuity.recall.test; fi
   if ! "${a[@]}" shell am instrument -w -e phase "$phase" org.totalrecall.smoke/org.totalrecall.listening.RecallSmoke | tee "build/receipts/$phase.txt"; then failed=1; fi
   if ! grep -q "outcome=PASS_$phase" "build/receipts/$phase.txt"; then failed=1; fi

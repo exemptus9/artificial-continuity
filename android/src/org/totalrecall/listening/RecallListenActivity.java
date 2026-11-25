@@ -275,7 +275,7 @@ public final class RecallListenActivity extends Activity {
         PopupMenu menu=new PopupMenu(this,anchor);
         String[] options={"Missed one","How listening works","Coverage gaps","Export all clips","Restore ZIP","Connect to Mint","Open phone vault","Capture sensitivity"};
         for(int i=0;i<options.length;i++)menu.getMenu().add(0,i,i==7?1:(i==0?0:i+1),options[i]);
-        menu.getMenu().findItem(0).setEnabled(RecallService.isListening());
+        menu.getMenu().findItem(0).setEnabled(RecallService.isListening() && manualActions.findViewWithTag("live-keep").isEnabled());
         menu.getMenu().findItem(3).setEnabled(!exporting&&!importing);
         menu.getMenu().findItem(4).setEnabled(!exporting&&!importing);
         menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){

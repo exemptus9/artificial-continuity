@@ -26,6 +26,7 @@ public final class RecallService extends Service {
     private final ConcurrentLinkedQueue<String> commands=new ConcurrentLinkedQueue<>();
     private final AtomicBoolean stopping=new AtomicBoolean(false);
     private volatile AudioRecord liveRecorder;
+    private volatile boolean capturing;
     private volatile boolean destroyed;
     private Thread worker;
     private int lastStart;
@@ -54,10 +55,12 @@ public final class RecallService extends Service {
         int flags=PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE;
         Intent activity=new Intent().setClassName(this,"org.totalrecall.listening.RecallListenActivity");
         activity.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        b.setContentTitle("Total Recall").setContentText(label).setSmallIcon(android.R.drawable.ic_btn_speak_now)
+        int icon=getResources().getIdentifier("ic_listening","drawable",getPackageName());
+        b.setContentTitle("Total Recall").setContentText(label).setSmallIcon(icon!=0?icon:android.R.drawable.ic_btn_speak_now)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(PendingIntent.getActivity(this,199,activity,flags));
-        for(String act:new String[]{KEEP,PAUSE}){
+        String[] actions=capturing&&!stopping.get()?new String[]{KEEP,PAUSE}:new String[]{PAUSE};
+        for(String act:actions){
             boolean keep=KEEP.equals(act);Intent i=new Intent(this,RecallService.class).setAction(act);
             b.addAction(keep?android.R.drawable.ic_menu_save:android.R.drawable.ic_media_pause,
                 keep?"Keep last minute":"Pause",PendingIntent.getService(this,keep?201:202,i,flags));
@@ -73,7 +76,7 @@ public final class RecallService extends Service {
         lastStart=startId;
         String action=intent==null?null:intent.getAction();
         if(START.equals(action)){
-            Notification n=notification("Preparing on-device listening");
+            Notification n=notification(worker==null?"Preparing on-device listening":current);
             try {
                 if(Build.VERSION.SDK_INT>=29)startForeground(NOTIFICATION,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);else startForeground(NOTIFICATION,n);
             } catch(SecurityException|IllegalStateException failure) {
@@ -144,7 +147,7 @@ public final class RecallService extends Service {
             if(session>=0&&!resumeNote.isEmpty())journal.markResumed(session,resumeNote);
             nextPartial=0;nextSensitivity=0;nextFeedback=SystemClock.elapsedRealtime()+15000;
             nextPrune=SystemClock.elapsedRealtime()+3600000;
-            LiveCapture.resume("Listening · "+route);progress("Listening · "+route);
+            capturing=true;LiveCapture.resume("Listening · "+route);progress("Listening · "+route);
         }
         void tick(short[] data,int count){
             long clock=SystemClock.elapsedRealtime();
@@ -180,6 +183,7 @@ public final class RecallService extends Service {
             if(!stopping.get())engine.pcm(data,count);
         }
         void end(boolean gap,String reason){
+            capturing=false;
             if(engine==null)return;
             try{
                 // Consume the recognizer tail once. Never persist an utterance from before opt-in,

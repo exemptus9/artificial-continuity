@@ -65,6 +65,7 @@ public final class RecallSmoke extends Instrumentation {
             if ("archive".equals(phase)) archive();
             else if ("restart".equals(phase)) restart();
             else if ("asr".equals(phase)) speech();
+            else if ("creative".equals(phase)) passed(CreativeSpeechSmoke.run(target,getContext()));
             else if ("microphone".equals(phase)) microphone();
             else if ("journal".equals(phase)) journal();
             else if ("overlay".equals(phase)) overlay();
@@ -308,7 +309,7 @@ public final class RecallSmoke extends Instrumentation {
             Method tick=method(windowType,"tick",short[].class,int.class);
             Method end=method(windowType,"end",boolean.class,String.class);
             method(LiveCapture.class,"start").invoke(null);
-            method(windowType,"begin",String.class).invoke(window,"instrumentation PCM");
+            method(windowType,"begin",String.class,String.class).invoke(window,"instrumentation PCM","");
             try{
                 SpeechChecks off=feedWindow(window,tick,fixture,true);
                 require(off.partial && off.finalized && off.level,"Production PCM pipeline did not display a partial, a final and audio level");
@@ -549,6 +550,9 @@ public final class RecallSmoke extends Instrumentation {
             long end=SystemClock.elapsedRealtime()+120000;
             while(SystemClock.elapsedRealtime()<end&&!RecallService.status(target).startsWith("Listening"))SystemClock.sleep(250);
             require(RecallService.isListening()&&RecallService.status(target).startsWith("Listening"),"Foreground capture not active: "+RecallService.status(target));
+            require(SelectiveEngine.pronunciationCount()==124903,
+                    "Live service did not load the bundled 124,903-word pronunciation dictionary");
+            passed("Foreground microphone service loaded all 124,903 bundled pronunciations before listening.");
             waitText(a,"Pause listening",10000);
             render(a,"recall-v11-listening");
             deviceShell("input keyevent KEYCODE_SLEEP");

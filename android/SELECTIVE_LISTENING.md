@@ -4,7 +4,7 @@ Install TotalRecall-0.11.0.apk over Total Recall 0.10.0 and choose **Update**. O
 
 ## Moving between Recall and voice mode
 
-Leave Recall listening and switch to your voice app normally. While Android gives the other app the microphone, Recall waits in the same foreground service. The main panel and notification show that microphone input is unavailable. When Android returns it, the session resumes automatically. The archive records the time of the gap. Buffered sound from before the interruption stays separate from sound arriving afterward. A manual pause cancels the wait. Force-stopping the app, rebooting the phone or revoking microphone permission requires starting a fresh session.
+Leave Recall listening and switch to your voice app normally. While Android gives the other app the microphone, Recall waits in the same foreground service. The main panel and notification show that microphone input is unavailable. When Android returns it, the session resumes automatically. The archive records the time of the gap. Buffered sound from before the interruption stays separate from sound arriving afterward. A manual pause cancels the wait. If the voice app gives you a transcript, select the passage and use **Share → Total Recall → Save capture** to keep the words in your phone vault. Force-stopping the app, rebooting the phone or revoking microphone permission requires starting a fresh session.
 
 ## Keeping the words or the sound
 
