@@ -46,6 +46,7 @@ public final class ArchiveProbe extends Instrumentation {
                 try {
                     shell("dumpsys battery unplug");
                     BacklogProbe.verify(context,pair);
+                    guided();
                     step("A metadata-only 3,200-segment fixture totalled exactly 800 MiB. The separate one-time approval included every ID, validated reported destination space, queued durably under charging constraints and left automation disabled.");
                 } finally { shell("dumpsys battery reset"); }
             }
@@ -188,6 +189,42 @@ public final class ArchiveProbe extends Instrumentation {
         JobScheduler scheduler=context.getSystemService(JobScheduler.class);
         for(JobInfo j:scheduler.getAllPendingJobs()) if(j.getService().getClassName().equals(ArchiveSync.class.getName()))return j;
         return null;
+    }
+    private void guided() throws Exception {
+        SharedPreferences prefs=ArchiveSync.prefs(context);
+        prefs.edit().putBoolean("segment",false).putBoolean("auto",false).commit();
+        ArchiveStore.setEnabled(context,false);
+        Activity page=startActivitySync(new android.content.Intent(context,ArchiveSyncActivity.class)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK|android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        try {
+            android.view.View[] action={null};
+            runOnMainSync(()->action[0]=viewByText(page.getWindow().getDecorView(),"Set up continuous backup"));
+            check(action[0]!=null,"Setup action missing from paired archive");
+            runOnMainSync(action[0]::performClick);
+            android.view.accessibility.AccessibilityNodeInfo[] positive={null};
+            until(()->{
+                android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+                if(root==null)return false;
+                for(android.view.accessibility.AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText("Enable continuous backup"))
+                    if(n.isClickable() && n.getText()!=null && "Enable continuous backup".equalsIgnoreCase(n.getText().toString())){
+                        positive[0]=n;return true;
+                    }
+                return false;
+            },12000,"Guided consent did not show the confirmation action");
+            check(!ArchiveStore.enabled(context) && !prefs.getBoolean("auto",false),"Opening setup enabled recording or transmission");
+            check(positive[0].performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK),"Unable to confirm guided opt-in");
+            until(()->ArchiveStore.enabled(context) && prefs.getBoolean("segment",false) && prefs.getBoolean("auto",false),12000,
+                    "One explicit guided confirmation did not enable full-session backup");
+            check(!RecallService.isListening() && !ArchiveStore.evictSynced(context),
+                    "Guided setup started the microphone or evicted files without that choice");
+            step("Opened the paired setup dialog and verified capture/sync remained off until the confirmation button. One explicit tap enabled full-session backup without starting a stopped microphone or enabling phone-copy eviction.");
+        }finally {ArchiveSync.stop(context);ArchiveStore.setEnabled(context,false);runOnMainSync(page::finish);waitForIdleSync();}
+    }
+    private static android.view.View viewByText(android.view.View v,String label){
+        if(v instanceof android.widget.TextView && label.contentEquals(((android.widget.TextView)v).getText()))return v;
+        if(v instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)v;
+            for(int i=0;i<g.getChildCount();i++){android.view.View item=viewByText(g.getChildAt(i),label);if(item!=null)return item;}
+        }return null;
     }
     private void verifyOtherCategories(SharedPreferences sync,String excluded) throws Exception {
         String marker = "Synthetic cross-device journal and clip " + UUID.randomUUID();
