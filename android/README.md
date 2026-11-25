@@ -1,10 +1,10 @@
-# Total Recall for Android · 0.11.0
+# Total Recall for Android · 0.12.0
 
-See [Selective listening on Galaxy and Mint](SELECTIVE_LISTENING.md) for the 0.11.0 release.
+Install the signed `TotalRecall-0.12.0.apk` over your earlier Total Recall app and choose **Update**. Open it, tap **Start listening** and allow the microphone. The included English speech model runs on the phone. Say **“Lexi, keep the last minute”** to save something you just heard. The app also saves moments automatically using the detection settings you choose.
 
-Install the signed TotalRecall-0.11.0.apk over the original Total Recall Android test app. The microphone starts when you tap Start listening. Speech recognition runs on the phone. Pairing a Mint receiver enables optional local network transfers of selected clips.
+Open **Archive & sync** on the listening screen to enable full-session audio, browse saved segments or connect the archive website or a Mint laptop. **Transfer choices** lets you choose what leaves your phone. **Preview transfer** shows the exact batch before you confirm. Full audio, sending text journals and automatic transfers each have their own controls. An existing Mint clip sender can continue independently after an upgrade.
 
-Selective moments use the listening screen's export and restore controls. The existing vault backup covers the original capture and timeline store.
+The listening screen has its own selected-clip export and restore tools. The original phone vault’s protected backup covers its capture and timeline store. Use the listening guide for audio, journals, website pairing and storage. [Listening and archive guide](SELECTIVE_LISTENING.md)
 
 ## Original vault and 0.8.1 release reference
 

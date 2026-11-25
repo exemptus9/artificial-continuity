@@ -18,14 +18,14 @@ import sqlite3
 import tempfile
 import uuid
 
-from recall_archive import Failure, UID, now, sha_file, sync_dir
+from recall_archive import Failure, UID, archive_lock, expiry, now, sha_file, sync_dir
 
 
 ROOT = "total-recall/v1/"
 MEDIA = ROOT + "media/"
 SNAPS = ROOT + "catalogs/"
 SHA = r"[0-9a-f]{64}"
-MEDIA_KEY = re.compile(re.escape(MEDIA) + rf"(\d{{16}})/(segment|journal)/([A-Za-z0-9_-]{{1,128}})/({SHA})")
+MEDIA_KEY = re.compile(re.escape(MEDIA) + rf"(\d{{16}})/(segment|journal|clip)/([A-Za-z0-9_-]{{1,128}})/({SHA})")
 SNAP_KEY = re.compile(re.escape(SNAPS) + rf"(\d{{8}})-({SHA})\.sqlite3")
 BLOCK = 1024 * 1024
 DEFAULT_QUOTA = 350_000_000_000
@@ -52,6 +52,10 @@ def _stream_digest(stream, target=None):
         if target is not None:
             target.write(part)
     return count, digest.hexdigest()
+
+
+class MissingOriginal(Failure):
+    pass
 
 
 class CloudMedia:
@@ -83,11 +87,31 @@ class CloudMedia:
                   bytes INTEGER NOT NULL, mime TEXT NOT NULL, expires INTEGER NOT NULL,
                   verified INTEGER NOT NULL DEFAULT 0, etag TEXT NOT NULL DEFAULT '');
                 CREATE INDEX IF NOT EXISTS cloud_expiry ON cloud_media(expires);
+                CREATE TABLE IF NOT EXISTS cloud_wavs(
+                  id TEXT PRIMARY KEY, kind TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, sha TEXT NOT NULL,
+                  bytes INTEGER NOT NULL, mime TEXT NOT NULL, expires INTEGER NOT NULL,
+                  verified INTEGER NOT NULL DEFAULT 0, etag TEXT NOT NULL DEFAULT '');
+                CREATE INDEX IF NOT EXISTS cloud_wav_expiry ON cloud_wavs(expires);
+                CREATE TABLE IF NOT EXISTS clip_original_sizes(id TEXT PRIMARY KEY, bytes INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS cloud_identity(slot INTEGER PRIMARY KEY, instance TEXT NOT NULL);
             """)
             db.execute("INSERT OR IGNORE INTO cloud_identity VALUES(1,?)", (str(uuid.uuid4()),))
             db.execute("INSERT OR IGNORE INTO archive_settings(name,value) VALUES('quota',?)", (DEFAULT_QUOTA,))
             self.instance = db.execute("SELECT instance FROM cloud_identity WHERE slot=1").fetchone()[0]
+
+        self._compact()
+
+    def _compact(self):
+        # Fresh catalogs use FULL auto-vacuum, returning original WAV pages to the volume
+        # as soon as their verified replacement is committed. Migrate older large catalogs
+        # only after sufficient WAVs have moved for the live pages to fit comfortably.
+        with archive_lock(self.archive.root),self.db() as db:
+            if db.execute("PRAGMA auto_vacuum").fetchone()[0]==1: return
+            page=db.execute("PRAGMA page_size").fetchone()[0]
+            live=page*(db.execute("PRAGMA page_count").fetchone()[0]-db.execute("PRAGMA freelist_count").fetchone()[0])
+            if live<=16*BLOCK or live*4<self.archive.path.stat().st_size and live*2<os.statvfs(self.archive.root).f_bavail*os.statvfs(self.archive.root).f_frsize:
+                db.execute("PRAGMA auto_vacuum=FULL")
+                db.execute("VACUUM")
 
     def db(self):
         return self.archive.connection()
@@ -159,64 +183,107 @@ class CloudMedia:
     def _media_key(row):
         return f"{MEDIA}{row['expires']:016d}/{row['kind']}/{row['id']}/{row['sha']}"
 
-    def ensure(self, uid):
-        if not isinstance(uid,str) or not UID.fullmatch(uid):
-            raise Failure(404,"Missing capture")
-        with self.stripe(uid), self.db() as db:
-            row=db.execute("SELECT * FROM archive_uploads WHERE id=?",(uid,)).fetchone()
-            if row is None or row["state"]!="complete":
-                raise Failure(409,"Original upload is incomplete")
-            if row["expires"]<=now():
-                raise Failure(410,"Capture has expired")
-            if row["kind"]=="clip":
-                return
-            key=self._media_key(row)
-            mime=json.loads(row["metadata"])["mediaType"]
-            db.execute("""INSERT OR IGNORE INTO cloud_media(id,kind,object_key,sha,bytes,mime,expires)
-                VALUES(?,?,?,?,?,?,?)""",(uid,row["kind"],key,row["sha"],row["bytes"],mime,row["expires"]))
-            db.commit()  # An interrupted upload is discoverable before any network writes.
-            receipt=db.execute("SELECT * FROM cloud_media WHERE id=?",(uid,)).fetchone()
-            if receipt is None or receipt["object_key"]!=key:
-                raise Failure(409,"Stored identity conflicts with the upload")
-            local=self.archive.files/uid
+    def _ensure_bytes(self,db,table,row,mime,local):
+        uid=row["id"];key=self._media_key(row)
+        db.execute(f"""INSERT OR IGNORE INTO {table}(id,kind,object_key,sha,bytes,mime,expires)
+            VALUES(?,?,?,?,?,?,?)""",(uid,row["kind"],key,row["sha"],row["bytes"],mime,row["expires"]))
+        db.commit()  # Register intent before any remote write.
+        receipt=db.execute(f"SELECT * FROM {table} WHERE id=?",(uid,)).fetchone()
+        if receipt is None or receipt["object_key"]!=key or receipt["bytes"]!=row["bytes"]:
+            raise Failure(409,"Stored identity conflicts with the upload")
+        head=self._head(key);uploaded=head is None
+        if uploaded:
+            if local is None or not local.is_file() or local.stat().st_size!=row["bytes"] or sha_file(local)!=row["sha"]:
+                raise MissingOriginal(503,"Retry the original transfer to repair its missing stored copy")
+            self._upload(local,key,row["sha"],row["bytes"],mime,
+                {"sha256":row["sha"],"archive":self.instance,"expires":str(row["expires"])})
             head=self._head(key)
-            uploaded=head is None
-            if uploaded:
-                if not local.is_file() or local.stat().st_size!=row["bytes"] or sha_file(local)!=row["sha"]:
-                    raise Failure(503,"Verified original is unavailable in staging and private storage")
-                self._upload(local,key,row["sha"],row["bytes"],mime,
-                    {"sha256":row["sha"],"archive":self.instance,"expires":str(row["expires"])})
-                head=self._head(key)
-            self._validate_head(head,row["bytes"],row["sha"],mime)
-            if head.get("Metadata",{}).get("archive")!=self.instance:
-                raise Failure(409,"Storage object belongs to a different archive instance")
-            if uploaded or (not receipt["verified"]) or receipt["etag"]!=_etag(head):
-                self._verify_remote(key,head,row["bytes"],row["sha"],mime)
-            if row["expires"]<=now():
-                raise Failure(410,"Capture expired while being verified")
-            db.execute("UPDATE cloud_media SET verified=1,etag=? WHERE id=?",
-                       (_etag(head),uid))
-            db.commit()
-            if local.exists():
-                local.unlink()
-                sync_dir(self.archive.files)
+        self._validate_head(head,row["bytes"],row["sha"],mime)
+        if head.get("Metadata",{}).get("archive")!=self.instance:
+            raise Failure(409,"Storage object belongs to a different archive instance")
+        if uploaded or not receipt["verified"] or receipt["etag"]!=_etag(head):
+            self._verify_remote(key,head,row["bytes"],row["sha"],mime)
+        if row["expires"]<=now(): raise Failure(410,"Capture expired while being verified")
+        db.execute(f"UPDATE {table} SET verified=1,etag=? WHERE id=?",(_etag(head),uid))
 
-    def _receipt(self, uid):
-        if not isinstance(uid,str) or not UID.fullmatch(uid):
-            raise Failure(404,"Missing original")
+    def _reopen(self,upload_id):
+        # An explicit 404 for the previously verified object can be repaired by allowing
+        # the same phone manifest to resume from byte zero. Never ACK a nonexistent copy.
+        with archive_lock(self.archive.root),self.db() as db:
+            row=db.execute("SELECT file,state FROM archive_uploads WHERE id=?",(upload_id,)).fetchone()
+            if row and row["state"]=="complete":
+                with (self.archive.root/row["file"]).open("wb") as f: f.flush();os.fsync(f.fileno())
+                sync_dir(self.archive.files)
+                db.execute("UPDATE archive_uploads SET offset=0,state='pending',touched=? WHERE id=?",(now(),upload_id))
+
+    def ensure(self, uid):
+        if not isinstance(uid,str) or not UID.fullmatch(uid): raise Failure(404,"Missing capture")
         with self.db() as db:
-            row=db.execute("""SELECT m.* FROM cloud_media m JOIN archive_uploads a ON a.id=m.id
-                WHERE m.id=? AND m.verified=1 AND a.state='complete'""",(uid,)).fetchone()
-        if row is None: raise Failure(404,"Verified original unavailable")
+            row=db.execute("SELECT * FROM archive_uploads WHERE id=?",(uid,)).fetchone()
+        if row is None or row["state"]!="complete": raise Failure(409,"Original upload is incomplete")
+        if row["expires"]<=now(): raise Failure(410,"Capture has expired")
+        try:
+            if row["kind"]=="clip":
+                original=row["journal"]
+                # Old Android revisions used stableUid + '-' + a ZIP hash prefix.
+                if not original:
+                    match=re.fullmatch(r"(.+)-([0-9a-f]{24})",uid)
+                    if match and row["sha"].startswith(match[2]): original=match[1]
+                if not original or not UID.fullmatch(original):
+                    raise MissingOriginal(503,"Replay the ZIP to link its verified original WAV")
+                self.ensure_wav(original)
+            else:
+                with self.stripe(uid),self.db() as db:
+                    local=self.archive.files/uid
+                    self._ensure_bytes(db,"cloud_media",row,json.loads(row["metadata"])["mediaType"],local)
+                    db.commit()
+                    if local.exists(): local.unlink();sync_dir(self.archive.files)
+        except MissingOriginal:
+            self._reopen(uid)
+            raise
+
+    def ensure_wav(self, uid):
+        if not isinstance(uid,str) or not UID.fullmatch(uid): raise Failure(404,"Missing selected clip")
+        with self.stripe("wav-"+uid),self.db() as db:
+            clip=db.execute("""SELECT rowid,id,sha,started,duration,length(audio) n FROM clips WHERE id=?""",(uid,)).fetchone()
+            if clip is None: raise MissingOriginal(503,"Could not find the original WAV")
+            until=expiry(clip["started"]+clip["duration"])
+            if until<=now(): raise Failure(410,"Selected clip expired")
+            prior=db.execute("SELECT bytes FROM cloud_wavs WHERE id=?",(uid,)).fetchone()
+            size=clip["n"] or (prior[0] if prior else 0)
+            if not size: raise MissingOriginal(503,"A verified original WAV is required")
+            data=dict(id=uid,kind="clip",sha=clip["sha"],bytes=size,expires=until)
+            with tempfile.TemporaryDirectory(dir=self.archive.root,prefix="wav-offload-") as temp:
+                path=None
+                if clip["n"]:
+                    path=Path(temp)/"original.wav"
+                    with db.blobopen("clips","audio",clip["rowid"],readonly=True) as blob,path.open("wb") as f:
+                        n,digest=_stream_digest(blob,f)
+                    if n!=size or digest!=clip["sha"]: raise Failure(503,"Staged WAV failed its catalog checksum")
+                self._ensure_bytes(db,"cloud_wavs",data,"audio/wav",path)
+                db.execute("INSERT OR REPLACE INTO clip_original_sizes VALUES(?,?)",(uid,size))
+                if clip["n"]: db.execute("UPDATE clips SET audio=X'' WHERE id=? AND sha=?",(uid,clip["sha"]))
+                db.commit()
+
+    def _receipt(self, uid, kind):
+        if not isinstance(uid,str) or not UID.fullmatch(uid): raise Failure(404,"Missing original")
+        with self.db() as db:
+            if kind=="clip":
+                row=db.execute("""SELECT m.* FROM cloud_wavs m JOIN clips c ON c.id=m.id AND c.sha=m.sha
+                     WHERE m.id=? AND m.verified=1""",(uid,)).fetchone()
+            else:
+                row=db.execute("""SELECT m.* FROM cloud_media m JOIN archive_uploads a ON a.id=m.id
+                     WHERE m.id=? AND m.verified=1 AND a.state='complete'""",(uid,)).fetchone()
+        if row is None or kind is not None and row["kind"]!=kind: raise Failure(404,"Verified original unavailable")
         if row["expires"]<=now(): raise Failure(410,"Capture has expired")
         return row
 
-    def head(self, uid):
-        row=self._receipt(uid)
+    def head(self, uid, kind=None):
+        row=self._receipt(uid,kind)
         return {"ContentLength":row["bytes"],"ContentType":row["mime"],"sha256":row["sha"]}
 
-    def read(self, uid, start=0, length=None):
-        row=self._receipt(uid)
+    def read(self, uid, start=0, length=None, *, kind=None):
+        row=self._receipt(uid,kind)
         total=row["bytes"]
         if length is None: length=total-start
         if type(start)!=int or type(length)!=int or start<0 or length<=0 or start+length>total:
@@ -246,13 +313,20 @@ class CloudMedia:
             seen.add(token)
 
     def _expire(self, t):
-        with self.db() as db:
-            due=db.execute("SELECT id,object_key FROM cloud_media WHERE expires<=? LIMIT 500",(t,)).fetchall()
-        for row in due:
-            with self.stripe(row["id"]), self.db() as db:
-                if not MEDIA_KEY.fullmatch(row["object_key"]): raise Failure(503,"Malformed stored media key")
-                self._call(self.s3.delete_object,Key=row["object_key"])
-                db.execute("DELETE FROM cloud_media WHERE id=? AND object_key=? AND expires<=?",(row["id"],row["object_key"],t))
+        count=0
+        for table in ("cloud_media","cloud_wavs"):
+            with self.db() as db:
+                due=db.execute(f"SELECT id,object_key,expires,sha FROM {table} WHERE expires<=? LIMIT 500",(t,)).fetchall()
+            for row in due:
+                stripe=("wav-" if table=="cloud_wavs" else "")+row["id"]
+                with self.stripe(stripe), self.db() as db:
+                    match=MEDIA_KEY.fullmatch(row["object_key"])
+                    if not match or int(match[1])!=row["expires"] or match[4]!=row["sha"]: raise Failure(503,"Malformed stored media key")
+                    head=self._head(row["object_key"])
+                    if head and head.get("Metadata",{}).get("archive")==self.instance:
+                        self._call(self.s3.delete_object,Key=row["object_key"])
+                    db.execute(f"DELETE FROM {table} WHERE id=? AND object_key=? AND expires<=?",(row["id"],row["object_key"],t))
+                    count+=1
         # Includes interrupted uploads and media orphaned by restoring an older snapshot.
         # Only immutable, expired keys belonging to this archive can be collected.
         removed=0
@@ -268,7 +342,7 @@ class CloudMedia:
             self._call(self.s3.delete_object,Key=key)
             removed+=1
             if removed>=500: break
-        return len(due)+removed
+        return count+removed
 
     def _snapshot_file(self,path):
         # An attached read transaction sees a consistent catalog and copies large selected WAV
@@ -276,19 +350,20 @@ class CloudMedia:
         with closing(sqlite3.connect(path)) as snap, snap:
             snap.execute("ATTACH DATABASE ? AS src",(str(self.archive.path),))
             snap.execute("BEGIN")
-            tables=("cloud_identity","cloud_media","clips","observations","archive_settings","archive_uploads")
+            tables=("cloud_identity","cloud_media","cloud_wavs","clip_original_sizes","clips","observations","archive_settings","archive_uploads","cloud_transfer_month")
             for table in tables:
                 ddl=snap.execute("SELECT sql FROM src.sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
+                if not ddl and table=="cloud_transfer_month": continue
                 if not ddl: raise Failure(503,"Incomplete archive schema for backup")
                 snap.execute(ddl[0])
                 cond=""
-                if table=="cloud_media": cond=" WHERE verified=1"
+                if table in {"cloud_media","cloud_wavs"}: cond=" WHERE verified=1"
                 if table=="archive_settings": cond=" WHERE name IN ('quota','floor')"
                 if table=="archive_uploads":
                     cond=" WHERE state='complete' AND (kind='clip' OR id IN (SELECT id FROM main.cloud_media))"
                 snap.execute(f"INSERT INTO main.{table} SELECT * FROM src.{table}{cond}")
             for ddl, in snap.execute("""SELECT sql FROM src.sqlite_master
-                WHERE type='index' AND name IN('chronology','cloud_expiry','archive_dates') AND sql IS NOT NULL""").fetchall():
+                WHERE type='index' AND name IN('chronology','cloud_expiry','cloud_wav_expiry','archive_dates') AND sql IS NOT NULL""").fetchall():
                 snap.execute(ddl)
             if snap.execute("PRAGMA main.quick_check").fetchone()[0]!="ok":
                 raise Failure(503,"SQLite backup failed its consistency check")
@@ -358,6 +433,12 @@ class CloudMedia:
                 if verified and verified[0]:
                     try: self.ensure(local.name)
                     except Failure as error: errors.append(error)
+            with self.db() as db:
+                wavs=db.execute("SELECT id FROM clips WHERE length(audio)>0 ORDER BY started LIMIT 64").fetchall()
+            for wav in wavs:
+                try: self.ensure_wav(wav["id"]);offloaded+=1
+                except Failure as error: errors.append(error)
+            self._compact()
             made=self._backup(t)
             if errors: raise Failure(503,"Some originals await a verified offload") from errors[0]
             return {"expired":expired,"offloaded":offloaded,"snapshotCreated":made}

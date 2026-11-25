@@ -64,6 +64,8 @@ def setup():
               reason TEXT NOT NULL, metadata TEXT NOT NULL, feedback TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS chronology ON clips(started DESC);
+            CREATE TABLE IF NOT EXISTS clip_original_sizes(id TEXT PRIMARY KEY,bytes INTEGER NOT NULL);
+
             CREATE TABLE IF NOT EXISTS observations(
               clip_id TEXT NOT NULL, metadata TEXT NOT NULL, imported TEXT NOT NULL,
               PRIMARY KEY(clip_id, metadata)
@@ -169,9 +171,9 @@ def _import_zip(path,require_one,arc,reserved):
             if recall_archive.expiry(clip["startedAtMillis"]+clip["durationMs"])<=recall_archive.now():
                 raise Issue("Capture is past its seven-year retention date")
             entry=members[clip["audio"]]
-            prior=db.execute("SELECT 1 FROM clips WHERE id=?",(uid,)).fetchone()
+            prior=db.execute("SELECT length(audio) FROM clips WHERE id=?",(uid,)).fetchone()
             if not prior: stagedBytes+=entry.file_size
-            if stagedBytes>available or shutil.disk_usage(ROOT).free-capacity["floorBytes"]<entry.file_size*(1 if prior else 2):
+            if stagedBytes>available or shutil.disk_usage(ROOT).free-capacity["floorBytes"]<entry.file_size*(1 if prior and prior[0] else 2):
                 raise recall_archive.Failure(507,"Archive free space or quota is exhausted")
             stream,digest,frames=stream_to_temp(z,entry)
             with stream:
@@ -186,7 +188,7 @@ def _import_zip(path,require_one,arc,reserved):
                     if not isinstance(parent,str) or not recall_archive.UID.fullmatch(parent) or parent==uid or type(first)!=int or type(last)!=int or first<0 or last-first!=frames:
                         raise Issue("Excerpt source and sample range disagree with the original WAV.")
                 metadata=json.dumps(clip,ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False)
-                old=db.execute("SELECT sha,started,metadata FROM clips WHERE id=?",(uid,)).fetchone()
+                old=db.execute("SELECT sha,started,metadata,rowid,length(audio) FROM clips WHERE id=?",(uid,)).fetchone()
                 if old and old[:2]!=(digest,clip["startedAtMillis"]):
                     raise Issue("Existing capture ID has different original audio or timestamp. Import rolled back.")
                 if old:
@@ -199,19 +201,17 @@ def _import_zip(path,require_one,arc,reserved):
                 if not old:
                     cursor=db.execute("""INSERT INTO clips VALUES(?,?,?,?,?,zeroblob(?),?,?,?,?,?,?)""",
                                       (uid,clip["startedAtMillis"],clip["durationMs"],frames,digest,entry.file_size,*values))
-                    with db.blobopen("clips","audio",cursor.lastrowid) as blob:
-                        while True:
-                            chunk=stream.read(262144)
-                            if not chunk:
-                                break
-                            blob.write(chunk)
                     added+=1
-                elif changed:
-                    db.execute("""UPDATE clips SET title=?, transcript=?,category=?,reason=?,metadata=?,feedback=?
-                               WHERE id=?""",(*values,uid))
-                    revised+=1
                 else:
-                    unchanged+=1
+                    if changed:
+                        db.execute("""UPDATE clips SET title=?, transcript=?,category=?,reason=?,metadata=?,feedback=?
+                                   WHERE id=?""",(*values,uid))
+                        revised+=1
+                    else:unchanged+=1
+                    if old[4]==0:db.execute("UPDATE clips SET audio=zeroblob(?) WHERE id=?",(entry.file_size,uid))
+                if not old or old[4]==0:
+                    with db.blobopen("clips","audio",old[3] if old else cursor.lastrowid) as blob:
+                        shutil.copyfileobj(stream,blob,262144)
     if require_one:
         return {"id":uid,"audioSha256":digest}
     return {"new":added,"unchanged":unchanged,"new_metadata_versions":revised}

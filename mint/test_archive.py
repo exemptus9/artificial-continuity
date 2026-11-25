@@ -84,6 +84,17 @@ class ArchiveTests(unittest.TestCase):
         meta=self.upload("silence-vbr","segment",data,duration=120000,mediaType="audio/aac")
         self.arc.begin(meta)
         self.assertTrue(self.arc.put(meta["id"],0,data)["complete"])
+        stream,indexed_bytes=web.seekable_preview(self.arc,meta["sha256"],len(data),lambda:path.open("rb"))
+        with stream:
+            preview=Path(stream.name)
+            self.assertEqual(preview.stat().st_size,indexed_bytes)
+            duration_data=subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration","-of","json",str(preview)])
+            self.assertAlmostEqual(float(json.loads(duration_data)["format"]["duration"]),120,delta=.25)
+            late=subprocess.check_output(["ffmpeg","-v","error","-ss","110","-i",str(preview),"-t","1","-ar","16000","-ac","1","-f","s16le","-"])
+            self.assertEqual(len(late),32000)
+        same,size=web.seekable_preview(self.arc,meta["sha256"],len(data),lambda:self.fail("cache reread the original"))
+        same.close();self.assertEqual(size,indexed_bytes)
+        self.assertEqual(hashlib.sha256((self.arc.root/"archive-files/silence-vbr").read_bytes()).hexdigest(),meta["sha256"])
         short=dict(meta,id="duration-mismatch",durationMs=10000)
         self.arc.begin(short)
         with self.assertRaisesRegex(store.Failure,"duration validation"):

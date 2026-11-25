@@ -24,6 +24,7 @@ RESERVE = 64 * 1024**2
 TABLES = {
     "clips": "id started duration samples sha audio title transcript category reason metadata feedback",
     "observations": "clip_id metadata imported",
+    "clip_original_sizes": "id bytes",
     "archive_uploads": "id kind metadata sha bytes offset state file created touched started expires journal",
     "archive_settings": "name value",
 }
@@ -298,6 +299,8 @@ def _backup(root, dest, config):
                 if limits["quotaBytes"] and usage(repo) + pages > limits["quotaBytes"]:
                     raise ValueError("Backup quota cannot fit the catalog")
                 tables, objs = validate_schema(source, False)
+                if source.execute("SELECT 1 FROM clips WHERE length(audio)=0 LIMIT 1").fetchone():
+                    raise ValueError("This catalog has hosted originals. Use its verified object-storage snapshot.")
                 # Keep unrecognized tables (potential future credentials) off the second disk.
                 # Only a per-host private temporary SQLite backup can contain such rows.
                 unknown = bool(tables - TABLES.keys() or any(k not in ("table", "index") for k, _, _ in objs))

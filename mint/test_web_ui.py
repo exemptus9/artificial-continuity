@@ -38,11 +38,11 @@ def seed(arc, desk):
         with zipfile.ZipFile(payload,'w') as z:
             z.writestr('index.json',json.dumps(dict(schema=desk.FORMAT,clips=[clip])));z.writestr(clip['audio'],audio)
         binary=payload.getvalue();manifest=dict(clip,kind='clip',bytes=len(binary),sha256=hashlib.sha256(binary).hexdigest());arc.begin(manifest);arc.put(uid,0,binary)
-    m4a = arc.root/'synthesis.m4a'
-    subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=356:sample_rate=16000:duration=3','-c:a','aac','-y',str(m4a)],check=True)
-    data=m4a.read_bytes();sig=hashlib.sha256(data).hexdigest()
-    for uid,kind,title,body,time_offset,media in [('synthetic-segment','segment','Morning audio',data,60000,'audio/mp4'),('synthetic-journal','journal','Morning journal',b'An anonymous test transcript.',40000,'text/plain')]:
-        arc.begin(dict(id=uid,title=title,kind=kind,mediaType=media,sha256=hashlib.sha256(body).hexdigest(),bytes=len(body),startedAtMillis=stamp-time_offset,durationMs=3000));arc.put(uid,0,body)
+    aac = arc.root/'synthesis.aac'
+    subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=356:sample_rate=16000:duration=2','-af','apad=pad_dur=118','-c:a','aac','-f','adts','-y',str(aac)],check=True)
+    data=aac.read_bytes();sig=hashlib.sha256(data).hexdigest()
+    for uid,kind,title,body,time_offset,media in [('synthetic-segment','segment','Morning audio',data,60000,'audio/aac'),('synthetic-journal','journal','Morning journal',b'An anonymous test transcript.',40000,'text/plain')]:
+        arc.begin(dict(id=uid,title=title,kind=kind,mediaType=media,sha256=hashlib.sha256(body).hexdigest(),bytes=len(body),startedAtMillis=stamp-time_offset,durationMs=120000 if kind=='segment' else 3000));arc.put(uid,0,body)
     return sig
 
 
@@ -50,7 +50,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url',help='One-use, owner-approved receiver launch URL; use --url-file to avoid the process list.')
     parser.add_argument('--url-file',type=Path,help='Read the private launch URL from a file.')
-    parser.add_argument('--expected-id');parser.add_argument('--sha256');parser.add_argument('--chromium',default=shutil.which('chromium') or shutil.which('google-chrome'));parser.add_argument('--screenshots',type=Path)
+    parser.add_argument('--expected-duration-ms',type=int,help='Check actual media timeline and a late excerpt at this duration.');parser.add_argument('--expected-id');parser.add_argument('--sha256');parser.add_argument('--chromium',default=shutil.which('chromium') or shutil.which('google-chrome'));parser.add_argument('--screenshots',type=Path)
     args=parser.parse_args()
     from playwright.sync_api import sync_playwright, expect
     source=Path(__file__).resolve().parent
@@ -111,10 +111,19 @@ def main():
             page.get_by_label('Playback speed').select_option('1.5');assert audio.evaluate('a=>a.playbackRate')==1.5
             with page.expect_download() as download:page.get_by_role('link',name='Download original').click()
             original=Path(download.value.path()).read_bytes();assert hashlib.sha256(original).hexdigest()==sig
-            page.get_by_text('Make an excerpt').click();duration=audio.evaluate('a=>a.duration');part=min(1,duration/2);assert part>.01
-            page.get_by_label('End (seconds)').fill(str(round(part,2)));page.get_by_role('button',name='Preview range').click();wait_audio(audio,"a=>a.paused && a.currentTime>0",10)
+            page.get_by_text('Make an excerpt').click();duration=audio.evaluate('a=>a.duration');expected=args.expected_duration_ms if external else 120000
+            if expected is not None:
+                assert abs(duration-expected/1000)<.5, f'Incorrect playback timeline: {duration:.3f} s from a {expected/1000:.3f} s recording'
+                assert abs(float(page.get_by_label('End (seconds)').input_value())-expected/1000)<.5
+            start=max(0,expected/1000-4) if expected else 0
+            part=round(min(1,(duration-start)/2),2);assert part>.01
+            page.get_by_label('Start (seconds)').fill(str(start));page.get_by_label('End (seconds)').fill(str(round(start+part,2)));page.get_by_role('button',name='Preview range').click();wait_audio(audio,f"a=>a.paused && a.currentTime>={start+part-.1}",10)
             with page.expect_download() as excerpt:page.get_by_role('button',name='Download excerpt').click()
-            with wave.open(str(excerpt.value.path()),'rb') as f:assert abs(f.getnframes()/f.getframerate()-round(part,2))<.002
+            with wave.open(str(excerpt.value.path()),'rb') as f:
+                assert abs(f.getnframes()/f.getframerate()-part)<.002
+                if not external:assert max(map(abs,struct.unpack('<'+'h'*(f.getnframes()*f.getnchannels()),f.readframes(f.getnframes()))))<10
+            if expected is not None:print(f'PASS · {duration:.3f} s player duration, seek through {start+part:.2f} s and {part:.2f} s late excerpt.')
+            if external:capture('archive-device-segment')
             page.get_by_role('button',name='Close item').click()
             if not external:
                 page.get_by_label('Item type',exact=True).select_option('all');page.get_by_role('searchbox').fill('returning');expect(page.get_by_text('A new word for returning',exact=True)).to_be_visible();expect(page.get_by_text('A line for the morning',exact=True)).to_have_count(0)

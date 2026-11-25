@@ -67,7 +67,7 @@ def main():
             owner_grant.write_text(config["webUrl"])
             owner_grant.chmod(0o600)
             cmd = [sys.executable, str(ROOT / "mint/test_web_ui.py"), "--url-file", str(owner_grant),
-                   "--expected-id", received["segment"], "--sha256", received["sha256"], "--chromium", browser, "--screenshots", str(RECEIPTS / "portal")]
+                   "--expected-id", received["segment"], "--sha256", received["sha256"], "--expected-duration-ms", "120000", "--chromium", browser, "--screenshots", str(RECEIPTS / "portal")]
             # Capture browser errors without disclosing the one-use local access URL.
             p = subprocess.run(cmd, text=True, capture_output=True, timeout=150)
             report = (p.stdout + p.stderr).replace(config["webUrl"], "[private owner URL]")

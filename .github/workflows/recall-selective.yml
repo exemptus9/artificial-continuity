@@ -24,15 +24,20 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run retained native host suite, Continuity transfer suite and Mint tests
+        id: host_suite
+        continue-on-error: true
         run: |
           set -euo pipefail
-          python3 -m pip install -r android/requirements-transfer.txt playwright==1.56.0
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 -m pip install -r android/requirements-transfer.txt -r mint/requirements-cloud.txt 'moto[s3]==5.1.18' playwright==1.56.0
           mkdir -p android/build
           curl -fsSL --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json.jar
           echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json.jar' | sha256sum --check
           RECALL_JSON_JAR="$PWD/android/build/json.jar" bash android/tests/run-host-tests.sh 2>&1 | tee android/build/host-tests.log
           bash device-tests/test-engine.sh
-          python3 -m unittest discover -s mint -p 'test_*.py'
+          python3 -c 'import boto3, moto, playwright'
+          python3 -m unittest discover -v -s mint -p 'test_*.py' 2>&1 | tee android/build/mint-cloud-tests.log
       - name: Install Android 36 SDK and emulator
         run: |
           set -euo pipefail
@@ -93,6 +98,9 @@ jobs:
           host_py=$(find "$RUNNER_TEMP/recall-installed" -name recall_desk.py -print -quit)
           test -f "$host_py"
           python3 device-tests/archive-roundtrip.py --desk "$host_py"
+      - name: Report independent host suite failures
+        if: always() && steps.host_suite.outcome == 'failure'
+        run: exit 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -101,6 +109,7 @@ jobs:
             device-tests/build/receipts
             android/build/build-receipt.json
             android/build/host-tests.log
+            android/build/mint-cloud-tests.log
             android/build/signature.txt
             android/build/package.txt
           retention-days: 14

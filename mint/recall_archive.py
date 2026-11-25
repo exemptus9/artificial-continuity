@@ -83,7 +83,7 @@ class Archive:
     def capacity(self,db):
         settings=dict(db.execute("SELECT name,value FROM archive_settings").fetchall())
         quota=settings.get("quota",0); floor=settings.get("floor",DEFAULT_FLOOR)
-        used,=db.execute("SELECT coalesce(sum(length(audio)),0) FROM clips").fetchone()
+        used,=db.execute("SELECT coalesce(sum(CASE WHEN length(audio)>0 THEN length(audio) ELSE coalesce((SELECT bytes FROM clip_original_sizes sz WHERE sz.id=clips.id),44+2*samples) END),0) FROM clips").fetchone()
         size,pending,remaining=db.execute("""SELECT
            coalesce(sum(CASE WHEN state='complete' AND kind!='clip' THEN bytes END),0),
            coalesce(sum(CASE WHEN state='pending' THEN bytes END),0),
@@ -191,7 +191,7 @@ class Archive:
                 try:
                     text=self.validate(path,m)
                     if row["kind"]=="clip":
-                        self.desk.receive_one(path,archive=self,locked=True,reserved=row["bytes"])
+                        text=self.desk.receive_one(path,archive=self,locked=True,reserved=row["bytes"])["id"]
                 except (Failure,self.desk.Issue,ValueError,KeyError,TypeError,EOFError,wave.Error,zipfile.BadZipFile) as e:
                     if isinstance(e,Failure) and e.status>=500: raise
                     with path.open("wb") as out: out.flush();os.fsync(out.fileno())
@@ -208,7 +208,7 @@ class Archive:
         t=now() if t is None else t
         with archive_lock(self.root),self.connection() as db:
             db.execute("PRAGMA secure_delete=ON")
-            stale=list(db.execute("""SELECT id,file FROM archive_uploads
+            stale=list(db.execute("""SELECT id,file,sha FROM archive_uploads
                 WHERE expires<=? OR (state='pending' AND touched<?)""",(t,t-DAY*7)))
             for row in stale:
                 db.execute("DELETE FROM archive_uploads WHERE id=?",(row['id'],))
@@ -219,6 +219,7 @@ class Archive:
             threshold=int(earliest.timestamp()*1000)+DAY
             ids=[row[0] for row in db.execute("SELECT id,started,duration FROM clips WHERE started<=?",(threshold,)) if expiry(row[1]+row[2])<=t]
             db.executemany("DELETE FROM observations WHERE clip_id=?",((uid,) for uid in ids))
+            db.executemany("DELETE FROM clip_original_sizes WHERE id=?",((uid,) for uid in ids))
             db.executemany("DELETE FROM clips WHERE id=?",((uid,) for uid in ids))
             db.commit()
             if ids:db.execute("PRAGMA incremental_vacuum(2048)")
@@ -226,4 +227,11 @@ class Archive:
             live={r[0] for r in db.execute("SELECT file FROM archive_uploads WHERE kind!='clip' OR state='pending'")}
             for path in self.files.iterdir():
                 if str(path.relative_to(self.root)) not in live and path.is_file(): path.unlink(missing_ok=True)
+            preview=self.root/"browser-previews"
+            if preview.is_dir():
+                expired={row["sha"] for row in stale}
+                with (preview/"cache.lock").open("a") as lock:
+                    fcntl.flock(lock,fcntl.LOCK_EX)
+                    for file in preview.glob("*.m4a"):
+                        if file.stem in expired or file.stat().st_mtime<time.time()-3600:file.unlink(missing_ok=True)
             return len(stale)+len(ids)

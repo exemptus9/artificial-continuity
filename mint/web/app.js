@@ -56,10 +56,22 @@ function showDaily(o){state.detailVersion++;const dialog=$('detail');$('detail-k
 function storage(info){const box=e('div','panel storage');add(box,add(e('div','storage-top'),icon('drive'),'Archive storage'));
   const msg=e('p');add(msg,e('b','',bytes(info.usedBytes)),' used',info.quotaBytes?` of ${bytes(info.quotaBytes)}`:'');box.append(msg);
   if(info.quotaBytes>0){const p=e('progress');p.max=info.quotaBytes;p.value=info.usedBytes;p.setAttribute('aria-label','Archive quota used');box.append(p);}
-  if(Number.isFinite(info.availableBytes))box.append(e('p','',`${bytes(info.availableBytes)} available for new items.`));
-  const hosted=info.phonePairing===true; $('location-label').textContent=hosted?'Hosted archive':'This computer';
+  const hosted=info.phonePairing===true;
+  $('location-label').textContent=hosted?'Hosted archive':'This computer';
+  if(hosted&&Number.isFinite(info.transferCapBytes)&&Number.isFinite(info.remainingArchiveBytes)){
+    box.append(e('p','',`${bytes(info.remainingArchiveBytes)} remaining in the archive.`));
+    const details=e('details'),summary=e('summary','','Monthly transfer limits');
+    const gigabytes=n=>`${number(Math.round(n/1e7)/100)} GB`;
+    add(details,summary,e('p','',`Uploaded ${gigabytes(info.monthUploadBytes)} of ${gigabytes(info.transferCapBytes)}. Played or downloaded ${gigabytes(info.monthPlaybackBytes)} of ${gigabytes(info.transferCapBytes)}. Both reset on the first of the month, UTC.`),
+      e('p','','These limits cover media transfers. Your phone queues remaining uploads until capacity is available.'));
+    box.append(details);
+  }else if(Number.isFinite(info.availableBytes))box.append(e('p','',`${bytes(info.availableBytes)} available for new items.`));
   if(info.retentionYears)box.append(e('p','',`${info.retentionYears}-year retention from the recording date.`));
-  if(hosted)box.append(button('Pair phone',openPairing,'btn pair-action'));return box;}
+  if(hosted){
+    box.append(button('Pair phone',openPairing,'btn pair-action'));
+    const form=e('form');form.method='post';form.action='/logout';
+    const signOut=e('button','btn','Sign out');signOut.type='submit';form.append(signOut);box.append(form);
+  }return box;}
 function kindName(kind){return KINDS[kind]||'Archive item';}
 function itemRow(item){const row=button('',()=>openItem(item),'row');row.dataset.itemId=item.id;row.dataset.kind=item.kind;
   const when=item.startedAtMillis?dateTime(item.startedAtMillis):'Time unavailable';const tag=item.category||kindName(item.kind);

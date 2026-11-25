@@ -2,6 +2,10 @@
 from contextlib import contextmanager,closing
 from datetime import datetime,timezone
 import hashlib
+import fcntl
+import shutil
+import subprocess
+import tempfile
 import http.cookies
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
@@ -17,7 +21,7 @@ from urllib.parse import parse_qs,urlsplit
 from recall_archive import DAY, Failure, UID, expiry, now
 
 BASE_SQL="""
- SELECT id,'clip' kind,title,started startedAtMillis,duration durationMs,length(audio) bytes,sha sha256,
+ SELECT id,'clip' kind,title,started startedAtMillis,duration durationMs,CASE WHEN length(audio)>0 THEN length(audio) ELSE coalesce((SELECT bytes FROM clip_original_sizes sz WHERE sz.id=clips.id),44+2*samples) END bytes,sha sha256,
  'audio/wav' mediaType,metadata,transcript content FROM clips
  UNION ALL SELECT id,kind,coalesce(nullif(json_extract(metadata,'$.title'),''),CASE kind WHEN 'segment' THEN 'Session audio' ELSE 'Session journal' END),
  started,cast(json_extract(metadata,'$.durationMs') AS integer),bytes,sha,json_extract(metadata,'$.mediaType'),metadata,journal
@@ -94,6 +98,44 @@ def consume(root,token):
         return stamp>=time.time()-300
     except FileNotFoundError: return False
 
+def seekable_preview(arc,sha,size,source_factory):
+    """Cache a lossless AAC remux for random access. Downloads always use the original bytes."""
+    if not re.fullmatch("[a-f0-9]{64}",sha): raise Failure(422,"Invalid original digest")
+    folder=arc.root/"browser-previews";folder.mkdir(mode=0o700,exist_ok=True)
+    path=folder/(sha+".m4a");limit=256*1024*1024
+    with (folder/"cache.lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if path.is_file():
+            os.utime(path,None);return path.open("rb"),path.stat().st_size
+        # One remux at a time; bound cache even when many ranges or browsers arrive together.
+        candidates=sorted(folder.glob("*.m4a"),key=lambda f:f.stat().st_mtime)
+        total=sum(f.stat().st_size for f in candidates)
+        need=size+max(size//5,1024*1024)
+        for old in candidates:
+            if total+need<=limit and old.stat().st_mtime>=time.time()-3600:break
+            total-=old.stat().st_size;old.unlink(missing_ok=True)
+        if shutil.disk_usage(folder).free-arc.status()["floorBytes"]<need:
+            raise Failure(507,"Insufficient preview space; download the original recording")
+        with tempfile.NamedTemporaryFile(suffix=".m4a",dir=folder) as temp:
+            args=["ffmpeg","-nostdin","-y","-v","error","-protocol_whitelist","file,pipe",
+                  "-f","aac","-i","pipe:0","-map","0:a:0","-c:a","copy","-movflags","+faststart","-f","mp4",temp.name]
+            process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            try:
+                digest=hashlib.sha256();count=0
+                with closing(source_factory()) as source,process.stdin as sink:
+                    while block:=source.read(256*1024):
+                        count+=len(block)
+                        if count>size:raise Failure(422,"Original length changed")
+                        digest.update(block);sink.write(block)
+                if process.wait(timeout=90) or count!=size or digest.hexdigest()!=sha:
+                    raise Failure(422,"Could not verify or index the original audio")
+                if os.stat(temp.name).st_size>need:raise Failure(503,"Preview exceeded its storage reservation")
+                # Link a complete indexed file atomically, then open before releasing the cache lock.
+                os.link(temp.name,path)
+            finally:
+                if process.poll() is None:process.kill();process.wait()
+        return path.open("rb"),path.stat().st_size
+
 class OwnerHandler(BaseHTTPRequestHandler):
     server_version="TotalRecall"
     def log_message(self,*args): pass
@@ -156,34 +198,45 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 if not r: raise Failure(404,"Missing clip")
                 stream=db.blobopen("clips","audio",r["rowid"],readonly=True);length=r["n"];mime="audio/wav"
             else:
-                r=db.execute("SELECT file,bytes,metadata FROM archive_uploads WHERE id=? AND kind=? AND state='complete'",(uid,kind)).fetchone()
+                r=db.execute("SELECT file,bytes,sha,metadata FROM archive_uploads WHERE id=? AND kind=? AND state='complete'",(uid,kind)).fetchone()
                 if not r: raise Failure(404,"Missing capture")
-                stream=(arc.root/r["file"]).open("rb");length=r["bytes"];mime=json.loads(r["metadata"])["mediaType"]
-            with stream:
-                first=0;last=length-1;header=self.headers.get("Range")
-                if header:
-                    m=re.fullmatch(r"bytes=(\d{0,18})-(\d{0,18})",header)
-                    if not m or not any(m.groups()): raise Failure(416,"Invalid byte range")
-                    left,right=m.groups()
-                    if left:first=int(left);last=min(last,int(right)) if right else last
-                    else:first=max(0,length-int(right))
-                    if first>last or first>=length:
-                        self.send_response(416);self.send_header("Content-Range",f"bytes */{length}")
-                        self.send_header("Content-Length","0");self.end_headers();return
-                self.send_response(206 if header else 200)
-                self.send_header("Content-Type",mime);self.send_header("Accept-Ranges","bytes")
-                self.send_header("Content-Length",str(last-first+1))
-                if header:self.send_header("Content-Range",f"bytes {first}-{last}/{length}")
-                if download:
-                    ext={"audio/wav":"wav","audio/mp4":"m4a","audio/aac":"aac","text/plain":"txt"}[mime]
-                    self.send_header("Content-Disposition",'attachment; filename="'+uid+'.'+ext+'"')
-                self.end_headers()
-                if self.command=="HEAD":return
-                stream.seek(first);left=last-first+1
-                while left:
-                    data=stream.read(min(left,256*1024))
-                    if not data:break
-                    self.wfile.write(data);left-=len(data)
+                length=r["bytes"];mime=json.loads(r["metadata"])["mediaType"]
+                source=lambda:(arc.root/r["file"]).open("rb")
+                if kind=="segment" and mime=="audio/aac" and not download:
+                    return self.indexed_audio(arc,uid,r["sha"],length,source)
+                stream=source()
+            with stream:self.respond_media(stream,length,mime,uid,download)
+
+    def indexed_audio(self,arc,uid,sha,size,source_factory,charge=None):
+        stream,length=seekable_preview(arc,sha,size,source_factory)
+        with stream:self.respond_media(stream,length,"audio/mp4",uid,False,charge)
+
+    def respond_media(self,stream,length,mime,uid,download,charge=None):
+        first=0;last=length-1;header=self.headers.get("Range")
+        if header:
+            m=re.fullmatch(r"bytes=(\d{0,18})-(\d{0,18})",header)
+            if not m or not any(m.groups()): raise Failure(416,"Invalid byte range")
+            left,right=m.groups()
+            if left:first=int(left);last=min(last,int(right)) if right else last
+            else:first=max(0,length-int(right))
+            if first>last or first>=length:
+                self.send_response(416);self.send_header("Content-Range",f"bytes */{length}")
+                self.send_header("Content-Length","0");self.end_headers();return
+        if charge and self.command!="HEAD":charge(last-first+1)
+        self.send_response(206 if header else 200)
+        self.send_header("Content-Type",mime);self.send_header("Accept-Ranges","bytes")
+        self.send_header("Content-Length",str(last-first+1))
+        if header:self.send_header("Content-Range",f"bytes {first}-{last}/{length}")
+        if download:
+            ext={"audio/wav":"wav","audio/mp4":"m4a","audio/aac":"aac","text/plain":"txt"}[mime]
+            self.send_header("Content-Disposition",'attachment; filename="'+uid+'.'+ext+'"')
+        self.end_headers()
+        if self.command=="HEAD":return
+        stream.seek(first);left=last-first+1
+        while left:
+            data=stream.read(min(left,256*1024))
+            if not data:break
+            self.wfile.write(data);left-=len(data)
 
 def web_server(arc,assets,port=8790):
     server=ThreadingHTTPServer(("127.0.0.1",port),OwnerHandler)

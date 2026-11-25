@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import zipfile
+from test_recall_desk import wav, record
 from unittest import TestCase, skipUnless, mock
 
 try:
@@ -41,6 +43,17 @@ class PrivateStorage(TestCase):
         self.assertFalse(self.arc.begin(manifest)["complete"])
         self.assertTrue(self.arc.put(uid,0,self.data)["complete"])
         return manifest
+
+    def wav_transfer(self, uid="kept", revision=0):
+        audio=wav(35);clip=record(uid,audio)
+        clip.update(startedAtMillis=self.stamp,title="WAV revision "+str(revision))
+        out=io.BytesIO()
+        with zipfile.ZipFile(out,"w") as z:
+            z.writestr(clip["audio"],audio);z.writestr("index.json",json.dumps({"schema":desk.FORMAT,"clips":[clip]}))
+        data=out.getvalue();digest=hashlib.sha256(data).hexdigest();upload="rev-"+digest[:24]
+        raw=dict(kind="clip",id=upload,bytes=len(data),sha256=digest,startedAtMillis=self.stamp,durationMs=100,mediaType="application/zip")
+        self.arc.begin(raw);self.arc.put(upload,0,data)
+        return raw,data,audio
 
     def keys(self,prefix=MEDIA):
         return sorted(self.cloud._objects(prefix))
@@ -120,7 +133,10 @@ class PrivateStorage(TestCase):
         with self.arc.connection() as db:
             db.execute("CREATE TABLE secret_tokens(value TEXT)")
             db.execute("INSERT INTO secret_tokens VALUES('a-sensitive-token')")
-            db.execute("INSERT INTO clips VALUES('kept',?,1,1,'sha',?,'Selected','','Idea','','{}','none')",(self.stamp,b"selected-audio-bytes"))
+            db.execute("CREATE TABLE cloud_transfer_month(month TEXT,kind TEXT,bytes INTEGER)")
+            db.execute("INSERT INTO cloud_transfer_month VALUES('2026-11','playback',1701)")
+        raw,_,audio=self.wav_transfer()
+        self.cloud.ensure(raw["id"])
         for day in (0,1,2):
             self.assertTrue(self.cloud.maintain(self.stamp+day*recall_archive.DAY)["snapshotCreated"])
         self.assertFalse((self.arc.files/"journal-id").exists())
@@ -129,12 +145,18 @@ class PrivateStorage(TestCase):
         dest=self.path/"restored.sqlite3"
         self.cloud.restore_latest(dest)
         with closing(sqlite3.connect(dest)) as db:
-            self.assertEqual(db.execute("SELECT audio FROM clips WHERE id='kept'").fetchone(),(b"selected-audio-bytes",))
-            self.assertEqual(db.execute("SELECT count(*) FROM archive_uploads").fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT length(audio) FROM clips WHERE id='kept'").fetchone(),(0,))
+            self.assertEqual(db.execute("SELECT bytes FROM cloud_wavs WHERE id='kept' AND verified=1").fetchone(),(len(audio),))
+            self.assertEqual(db.execute("SELECT bytes FROM cloud_transfer_month").fetchone(),(1701,))
+            self.assertEqual(db.execute("SELECT count(*) FROM archive_uploads").fetchone()[0],2)
             self.assertEqual(db.execute("SELECT journal FROM archive_uploads WHERE id='journal-id'").fetchone()[0].encode(),self.data)
             self.assertEqual(db.execute("SELECT count(*) FROM cloud_media WHERE verified=1").fetchone()[0],1)
             self.assertEqual(db.execute("SELECT name FROM sqlite_master WHERE name='secret_tokens'").fetchall(),[])
         self.assertNotIn(b"a-sensitive-token",dest.read_bytes())
+        with mock.patch.object(desk,"DB",dest):
+            recovered=CloudMedia(recall_archive.Archive(desk),client=self.client,bucket=self.bucket)
+            with closing(recovered.read("kept",kind="clip")) as remote:
+                self.assertEqual(remote.read(),audio)
         with self.assertRaises(recall_archive.Failure): self.cloud.restore_latest(dest)
 
     def test_unverified_catalog_never_becomes_a_restore_point(self):
@@ -152,3 +174,38 @@ class PrivateStorage(TestCase):
         head=self.client.head_object(Bucket=self.bucket,Key=newest)
         self.client.put_object(Bucket=self.bucket,Key=newest,Body=b"bad",Metadata=head["Metadata"],ContentType="application/vnd.sqlite3")
         self.assertEqual(self.cloud.restore_latest(self.path/"fallback.sqlite3"),older)
+
+    def test_selected_wav_offloads_and_revision_deduplicates(self):
+        raw,_,audio=self.wav_transfer();self.cloud.ensure(raw["id"])
+        before=self.arc.status()["usedBytes"]
+        self.assertEqual(before,len(audio))
+        self.assertEqual(self.cloud.head("kept",kind="clip")["ContentLength"],len(audio))
+        with closing(self.cloud.read("kept",17,91,kind="clip")) as media:
+            self.assertEqual(media.read(),audio[17:108])
+        with self.arc.connection() as db:
+            self.assertEqual(db.execute("SELECT audio FROM clips").fetchone()[0],b"")
+            self.assertEqual(db.execute("SELECT bytes FROM clip_original_sizes").fetchone()[0],len(audio))
+        revision,_,_=self.wav_transfer(revision=1);self.cloud.ensure(revision["id"])
+        self.assertEqual(before,self.arc.status()["usedBytes"])
+        self.assertEqual(len(self.keys()),1)
+        self.assertEqual(desk.detail("kept")["title"],"WAV revision 1")
+
+    def test_failed_wav_retains_blob_and_repairs_remote_loss(self):
+        raw,data,audio=self.wav_transfer()
+        with mock.patch.object(self.cloud,"_verify_remote",side_effect=recall_archive.Failure(503,"bad")):
+            with self.assertRaises(recall_archive.Failure): self.cloud.ensure(raw["id"])
+        with self.arc.connection() as db:
+            self.assertEqual(db.execute("SELECT audio FROM clips").fetchone()[0],audio)
+        self.cloud.ensure(raw["id"])
+        self.client.delete_object(Bucket=self.bucket,Key=self.keys()[0])
+        with self.assertRaises(recall_archive.Failure): self.cloud.ensure(raw["id"])
+        restarted=self.arc.begin(raw);self.assertFalse(restarted["complete"]);self.assertEqual(restarted["offset"],0)
+        self.arc.put(raw["id"],0,data);self.cloud.ensure(raw["id"])
+        with closing(self.cloud.read("kept",kind="clip")) as restored:self.assertEqual(restored.read(),audio)
+
+    def test_kind_namespaces_are_independent(self):
+        self.upload("kept");self.cloud.ensure("kept")
+        raw,_,audio=self.wav_transfer("kept");self.cloud.ensure(raw["id"])
+        with closing(self.cloud.read("kept",kind="clip")) as f:self.assertEqual(f.read(),audio)
+        with closing(self.cloud.read("kept",kind="journal")) as f:self.assertEqual(f.read(),self.data)
+        with self.assertRaises(recall_archive.Failure): self.cloud.read("kept",kind="segment")

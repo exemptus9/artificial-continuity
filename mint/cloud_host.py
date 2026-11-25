@@ -26,7 +26,7 @@ import recall_web
 COOKIE = "__Host-total_recall"
 DAY = 86400
 TRANSFER_CAP = 25_000_000_000
-MEDIA_CAP = 350_000_000_000
+MEDIA_CAP = 1_000_000_000_000
 KEY = re.compile(r"[0-9a-f]{64}")
 def login_page(failed=False):
     prompt = "That key did not match. Try the owner key from your private access file." if failed else "Use the owner key from your private access file."
@@ -60,6 +60,18 @@ class HostedArchive(recall_archive.Archive):
             db.execute("CREATE TABLE IF NOT EXISTS cloud_transfer_month (month TEXT,kind TEXT,bytes INTEGER NOT NULL,PRIMARY KEY(month,kind))")
         self.media_store=media_factory(self)
 
+    def check_storage(self):
+        # The owner can verify a provider round trip without adding a test recording to the catalog.
+        store=self.media_store
+        payload=secrets.token_bytes(64)
+        key="total-recall/v1/diagnostics/"+secrets.token_hex(24)
+        store.s3.put_object(Bucket=store.bucket,Key=key,Body=payload)
+        try:
+            with closing(store.s3.get_object(Bucket=store.bucket,Key=key)["Body"]) as check:
+                if check.read(65)!=payload:raise OSError("Storage round trip failed")
+        finally:
+            store.s3.delete_object(Bucket=store.bucket,Key=key)
+
     def reserve_transfer(self,kind,n):
         month=datetime.now(timezone.utc).strftime("%Y-%m")
         with self.connection() as db:
@@ -76,7 +88,11 @@ class HostedArchive(recall_archive.Archive):
         with self.connection() as db:
             month=datetime.now(timezone.utc).strftime("%Y-%m")
             transfers=dict(db.execute("SELECT kind,bytes FROM cloud_transfer_month WHERE month=?",(month,)).fetchall())
-        value.update(hosted=True,phonePairing=True,transferCapBytes=TRANSFER_CAP,monthUploadBytes=transfers.get("upload",0),
+        remaining=max(0,value["quotaBytes"]-value["usedBytes"]-value["reservedBytes"])
+        upload_remaining=max(0,TRANSFER_CAP-transfers.get("upload",0))
+        value.update(remainingArchiveBytes=remaining,stagingAvailableBytes=value["diskAvailableBytes"],
+                     availableBytes=min(remaining,upload_remaining) if value["diskAvailableBytes"] else 0,
+                     hosted=True,phonePairing=True,transferCapBytes=TRANSFER_CAP,monthUploadBytes=transfers.get("upload",0),
                      monthPlaybackBytes=transfers.get("playback",0))
         return value
 
@@ -151,6 +167,12 @@ class HostedHandler(recall_web.OwnerHandler):
         if self.path=="/v2/uploads":return self.upload()
         origin=self.headers.get("Origin")
         if origin and origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use the archive sign-in page."})
+        if self.path=="/api/storage-check":
+            if not self.auth():return self.json(401,{"error":"Sign in to your archive."})
+            if origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use your archive origin."})
+            try: self.server.archive.check_storage()
+            except Exception:return self.json(503,{"error":"Bucket round trip failed."})
+            return self.json(200,{"verified":True})
         if self.path=="/logout":
             return self.redirects(COOKIE+"=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0")
         if self.path!="/login":return self.json(404,{"error":"Unknown route"})
@@ -172,15 +194,12 @@ class HostedHandler(recall_web.OwnerHandler):
         return self.upload()
 
     def media(self,arc,kind,uid,download):
-        with arc.connection() as db:
-            if kind=="clip":
-                row=db.execute("SELECT length(audio) FROM clips WHERE id=?",(uid,)).fetchone()
-                if row is None:raise recall_archive.Failure(404,"Missing clip")
-                total=row[0];mime="audio/wav"
-            else:
-                row=db.execute("SELECT bytes,metadata FROM archive_uploads WHERE id=? AND kind=? AND state='complete'",(uid,kind)).fetchone()
-                if row is None:raise recall_archive.Failure(404,"Missing item")
-                total=row[0];mime=json.loads(row[1])["mediaType"]
+        info=arc.media_store.head(uid,kind=kind)
+        total=info["ContentLength"]
+        mime=info["ContentType"]
+        if kind=="segment" and mime=="audio/aac" and not download:
+            return self.indexed_audio(arc,uid,info["sha256"],total,
+                lambda:arc.media_store.read(uid,kind=kind),lambda n:arc.reserve_transfer("playback",n))
         first,last=0,total-1;header=self.headers.get("Range")
         if header:
             m=re.fullmatch(r"bytes=(\d{0,18})-(\d{0,18})",header)
@@ -192,18 +211,16 @@ class HostedHandler(recall_web.OwnerHandler):
                 self.send_response(416);self.send_header("Content-Range",f"bytes */{total}");self.send_header("Content-Length","0");self.end_headers();return
         length=last-first+1
         if self.command!="HEAD":arc.reserve_transfer("playback",length)
-        if kind=="clip":return super().media(arc,kind,uid,download)
         stream=None
         try:
             if self.command!="HEAD":
-                try: stream=arc.media_store.read(uid,first,length)
+                try: stream=arc.media_store.read(uid,first,length,kind=kind)
                 except Exception:raise recall_archive.Failure(503,"Original audio is temporarily unavailable.") from None
             self.send_response(206 if header else 200)
             self.send_header("Content-Type",mime);self.send_header("Accept-Ranges","bytes");self.send_header("Content-Length",str(length))
             if header:self.send_header("Content-Range",f"bytes {first}-{last}/{total}")
             if download:
-                ext=recall_archive.MEDIA[kind]
-                suffix="txt" if kind=="journal" else "aac" if mime=="audio/aac" else "m4a"
+                suffix={"audio/wav":"wav","audio/aac":"aac","audio/mp4":"m4a","text/plain":"txt"}[mime]
                 self.send_header("Content-Disposition",f'attachment; filename="{uid}.{suffix}"')
             self.end_headers()
             remaining=length
@@ -219,11 +236,14 @@ class CloudServer(ThreadingHTTPServer):
     def __init__(self,address,handler,archive,public_host,owner_hash,phone_token,session_key):
         self.archive=archive;self.public_host=public_host;self.owner_hash=owner_hash;self.token=phone_token
         self.session_key=bytes.fromhex(session_key);self.assets=Path(__file__).resolve().parent/"web"
-        self.guard=threading.Lock();self.attempts=OrderedDict();self.slots=threading.BoundedSemaphore(24)
+        self.guard=threading.Lock();self.attempts=OrderedDict();self.aggregate_start=0;self.aggregate_count=0;self.slots=threading.BoundedSemaphore(24)
         super().__init__(address,handler)
     def login_allowed(self,identity):
         now=time.monotonic()
         with self.guard:
+            if now-self.aggregate_start>=300:self.aggregate_start,self.aggregate_count=now,0
+            if self.aggregate_count>=180:return False
+            self.aggregate_count+=1
             start,count=self.attempts.get(identity,(now,0))
             if now-start>=300:start,count=now,0
             if count>=12:return False
