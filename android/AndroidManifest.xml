@@ -1,13 +1,32 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="10" android:versionName="0.8.1-test">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="11" android:versionName="0.10.0">
  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
- <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
- <application android:label="Total Recall · Test" android:theme="@style/AppTheme" android:icon="@drawable/icon" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+ <uses-permission android:name="android.permission.WAKE_LOCK"/>
+ <uses-permission android:name="android.permission.VIBRATE"/>
+ <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+ <uses-permission android:name="android.permission.CAMERA"/>
+ <uses-feature android:name="android.hardware.camera" android:required="false"/>
+ <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+ <queries><intent><action android:name="android.speech.RecognitionService"/></intent><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
+ <application android:extractNativeLibs="true" android:label="Total Recall" android:theme="@style/AppTheme" android:icon="@drawable/icon" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
+  <activity android:name="org.totalrecall.listening.RecallListenActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
+  <activity android:name="org.totalrecall.listening.MintLinkActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
+  <service android:name="org.continuity.recall.ListenTile" android:label="Recall listening"
+      android:icon="@drawable/ic_listening" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+      android:exported="true">
+    <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE"/></intent-filter>
+  </service>
+  <service android:name="org.totalrecall.listening.MintSync" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE"/>
+  <service android:name="org.totalrecall.listening.RecallService" android:exported="false" android:foregroundServiceType="microphone"/>
   <activity android:name="org.continuity.recall.MemoryActivity" android:exported="false" android:windowSoftInputMode="adjustResize"/>
   <activity android:name="org.continuity.recall.MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+   <meta-data android:name="android.app.shortcuts" android:resource="@xml/listening_shortcuts"/>
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
    <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="*/*"/></intent-filter>
    <intent-filter><action android:name="android.intent.action.SEND_MULTIPLE"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="*/*"/></intent-filter>

@@ -180,7 +180,7 @@ public class MainActivity extends Activity {
     setContentView(page);
     TextView brand = label(page, "TOTAL RECALL", 24, ACCENT);
     brand.setTypeface(null, Typeface.BOLD);
-    status = label(page, "Private inbox · local only · test release", 13, MUTED);
+    status = label(page, "Private inbox · on this phone", 13, MUTED);
     nav = new LinearLayout(this);
     page.addView(nav);
     String[] tabs = {"Capture", "Recall", "Controls", "Test"};
@@ -237,6 +237,13 @@ public class MainActivity extends Activity {
   void navigate(Intent intent) throws Exception {
     if (intent == null || Intent.ACTION_SEND.equals(intent.getAction())
         || Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) return;
+    if ("org.totalrecall.action.OPEN_LISTENING".equals(intent.getAction())) {
+      if (recorder != null) throw new Exception("Finish the current voice note first.");
+      saveDraft();
+      intent.setAction(Intent.ACTION_MAIN);
+      startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class));
+      return;
+    }
     ArrayList<String> ids = intent.getStringArrayListExtra("context_ids");
     String record = intent.getStringExtra("record_id"), section = intent.getStringExtra("section");
     if (ids != null) {
@@ -258,10 +265,15 @@ public class MainActivity extends Activity {
   }
 
   void showCapture() throws Exception {
-    screen("capture", "Keep the spark.");
+    screen("capture", "Capture");
+    button(body, "Selective listening", () -> {
+      if (recorder != null) throw new Exception("Finish the current voice note first.");
+      saveDraft();
+      startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class));
+    });
     label(
         body,
-        "Private inbox · local only · non-sensitive test release",
+        "Text, voice notes and shared items",
         13,
         MUTED);
     editor =
@@ -306,7 +318,7 @@ public class MainActivity extends Activity {
     recordState =
         label(
             body,
-            "Audio stays on this phone. Transcription is unavailable in this build. Keyboard"
+            "Manual voice notes preserve the recording. Selective listening also transcribes offline. Keyboard"
                 + " dictation saves text only.",
             14,
             MUTED);
@@ -1057,8 +1069,8 @@ public class MainActivity extends Activity {
     JSONObject s = Vault.read(this), p = s.getJSONObject("policy");
     label(
         body,
-        "LOCAL ONLY · No Internet permission\n"
-            + "AES-256-GCM encrypted app store; Android Keystore key. No separate app lock: anyone"
+        "PRIVATE STORAGE · Optional paired Mint transfer\n"
+            + "Manual captures use the encrypted archive. Listening clips use private app storage. No separate app lock: anyone"
             + " using your unlocked app can read it. Device encryption is a separate Android"
             + " protection. This test build is not approved for sensitive everyday use.",
         15,
@@ -1069,6 +1081,7 @@ public class MainActivity extends Activity {
         () -> {
           boolean value = !Vault.read(this).getJSONObject("policy").getBoolean("paused");
           if (value && recorder != null) stopRecording(true, "pause");
+          if (value) ListenPolicy.pauseService(this);
           Vault.change(this, v -> Core.pause(v, value, System.currentTimeMillis()));
           if (value) {
             pendingExport = null;
@@ -1168,7 +1181,8 @@ public class MainActivity extends Activity {
             + " delivery.",
         14,
         MUTED);
-    button(body, "Export complete protected backup", () -> exportAll());
+    button(body, "Protected backup of manual captures & activity", () -> exportAll());
+    button(body, "Listening clips & export", () -> startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class)));
     button(
         body,
         "Restore backup into isolated test store",
@@ -1241,6 +1255,8 @@ public class MainActivity extends Activity {
                               ((android.app.job.JobScheduler)
                                       getSystemService(JOB_SCHEDULER_SERVICE))
                                   .cancel(UsageJob.ID);
+                              org.totalrecall.listening.Store.reset(this);
+                              org.totalrecall.listening.MintSync.reset(this);
                               Vault.remove(this);
                               pendingAttachments = new JSONArray();
                               pendingBlobs = new JSONObject();
@@ -1431,6 +1447,7 @@ public class MainActivity extends Activity {
   }
 
   void startRecording() throws Exception {
+    if (org.totalrecall.listening.RecallService.isListening()) throw new Exception("Pause Selective listening before recording a manual note.");
     if (recorder != null) throw new Exception("Already recording");
     if (Vault.read(this).getJSONObject("policy").getBoolean("paused"))
       throw new Exception("Capture paused");
@@ -1611,6 +1628,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
+    if (ListenPolicy.allowed(this)) org.totalrecall.listening.MintSync.schedule(this);
     new Thread(
             () -> {
               try {
@@ -1685,7 +1703,7 @@ public class MainActivity extends Activity {
             + Build.VERSION.SDK_INT
             + "\n"
             + "One UI version: enter in your shared receipt if known; not guessed.\n"
-            + "Native Java · encrypted app sandbox · manual transfer · no Internet permission.",
+            + "Native Java · private phone storage · optional paired Mint transfer.",
         14,
         ACCENT);
     label(body, "1  Save, close, reopen, verify", 21, FG);
@@ -1819,6 +1837,7 @@ public class MainActivity extends Activity {
           clearCache();
           pendingExport = null;
           long start = System.currentTimeMillis();
+          ListenPolicy.pauseService(this);
           Vault.change(
               this,
               v -> {

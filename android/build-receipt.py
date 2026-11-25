@@ -8,14 +8,16 @@ ns='{http://schemas.android.com/apk/res/android}'
 manifest=ET.parse(root/'AndroidManifest.xml').getroot()
 version=manifest.get(ns+'versionName')
 apk=root/'build'/f'TotalRecall-{version}.apk'
-inputs=sorted([root/'AndroidManifest.xml',root/'build.sh',root/'build-receipt.py']+
-              list((root/'src').rglob('*.java'))+list((root/'res').rglob('*')))
+inputs=sorted([root/'AndroidManifest.xml',root/'build.sh',root/'build-receipt.py',root/'prepare-speech.py']+
+              list((root/'src').rglob('*.java'))+list((root/'res').rglob('*'))+list((root/'assets').rglob('*')))
 hashes={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs if p.is_file()}
-git=lambda *args: subprocess.check_output(['git',*args],cwd=root,text=True).strip()
+def git(*args):
+    result = subprocess.run(['git',*args],cwd=root,text=True,capture_output=True)
+    return result.stdout.strip() if result.returncode == 0 else None
 signer=re.search(r'certificate SHA-256 digest: (\w+)',(root/'build/signature.txt').read_text()).group(1)
 receipt={'format':'TotalRecallBuild/1','version':version,'version_code':int(manifest.get(ns+'versionCode')),
          'package':manifest.get('package'),'commit':git('rev-parse','HEAD'),
-         'source_tree':git('rev-parse','HEAD^{tree}'),'dirty':bool(git('status','--porcelain')),
+         'source_tree':git('rev-parse','HEAD^{tree}'),'dirty':bool(git('status','--porcelain')) if git('rev-parse','HEAD') else None,
          'apk_sha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'apk_bytes':apk.stat().st_size,
          'certificate_sha256':signer,'signing_kind':os.environ.get('RECALL_SIGNING_KIND','unverified-local'),
          'sdk':{'min':26,'compile':36,'target':36,'build_tools':'36.0.0'},'input_sha256':hashes}

@@ -1,5 +1,7 @@
 # Total Recall for Android · 0.8.1 test release
 
+See [Selective listening on Galaxy and Mint](SELECTIVE_LISTENING.md) for the 0.10.0 release.
+
 Install the supplied `TotalRecall-0.8.1-test.apk`. This is one native companion
 inside the existing `artificial-continuity` repository, not a new product service.
 It has no Internet permission, analytics SDK, paid dependency, or required desktop.

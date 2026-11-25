@@ -145,6 +145,21 @@ public final class MemoryActivity extends Activity {
       since=today.minusDays(back).atStartOfDay(zone).toInstant().toEpochMilli();
       until=(period.equals("Yesterday")?today:today.plusDays(1)).atStartOfDay(zone).toInstant().toEpochMilli();
     }
+    if(selected==null && project.isEmpty() && (kind.equals("All captures") || kind.equals("Voice"))) {
+      try(org.totalrecall.listening.Store clips=new org.totalrecall.listening.Store(this)){
+        java.util.List<org.totalrecall.listening.Store.Moment> results=clips.search(query);
+        int shownClips=0;
+        for(org.totalrecall.listening.Store.Moment moment:results){
+          if(moment.startMs<since || moment.startMs>=until)continue;
+          if(shownClips++==0)text(body,"Listening moments",18,ACCENT);
+          button(body,when(moment.startMs)+" · "+moment.title,()->startActivity(new Intent(this,
+              org.totalrecall.listening.RecallListenActivity.class).putExtra("moment_id",moment.id)));
+          if(shownClips==3)break;
+        }
+        if(shownClips>0)button(body,"All listening moments",()->startActivity(new Intent(this,
+            org.totalrecall.listening.RecallListenActivity.class).putExtra("query",query)));
+      }
+    }
     List<JSONObject> rows=MemoryWorkbench.filteredRecords(state,query,since,until,project,kind);
     if(selected!=null)rows.removeIf(e->!selected.contains(e.optString("id")));
     text(body,rows.size()+(rows.size()==1?" saved record · Times shown in ":" saved records · Times shown in ")+zone.getId(),13,MUTED);
@@ -153,7 +168,7 @@ public final class MemoryActivity extends Activity {
     button(body,"All events & advanced filters",()->startActivity(new Intent(this,MainActivity.class)
         .putExtra("section","timeline").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)));
     if(rows.isEmpty()){
-      LinearLayout c=card();text(c,"No matching moments",21,FG);
+      LinearLayout c=card();text(c,"No matching archive notes",21,FG);
       text(c,"A gap in capture is a gap in evidence. It doesn't mean nothing happened.",16,MUTED);
       button(c,"Capture a thought",()->startActivity(new Intent(this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)));return;
     }

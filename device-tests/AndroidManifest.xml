@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.totalrecall.smoke">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
+  <application android:label="Recall instrumentation" android:testOnly="true" android:allowBackup="false"/>
+  <instrumentation android:name="org.totalrecall.listening.RecallSmoke" android:targetPackage="org.continuity.recall.test"/>
+</manifest>

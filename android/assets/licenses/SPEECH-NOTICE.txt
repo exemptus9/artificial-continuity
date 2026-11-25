@@ -1,0 +1,12 @@
+The offline speech decoder uses Vosk Android 0.3.75 and Vosk English (US)
+small model 0.15, distributed by Alpha Cephei under the Apache License 2.0.
+Library source: https://github.com/alphacep/vosk-api
+Model: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+SHA-256 30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498
+
+The application also uses Java Native Access 5.18.1 under Apache License 2.0.
+https://github.com/java-native-access/jna
+See JNA-LICENSE.txt and LICENSE-Apache-2.0.txt.
+
+Optional Mint pairing QR decoding uses ZXing Core 3.5.3 (Apache License 2.0).
+Copyright ZXing authors. https://github.com/zxing/zxing

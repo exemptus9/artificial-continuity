@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut android:shortcutId="recall_listening" android:enabled="true"
+      android:icon="@drawable/recall_listen_shortcut"
+      android:shortcutShortLabel="@string/listening_shortcut_short"
+      android:shortcutLongLabel="@string/listening_shortcut_long">
+    <intent android:action="org.totalrecall.action.OPEN_LISTENING"
+        android:targetPackage="org.continuity.recall.test"
+        android:targetClass="org.continuity.recall.MainActivity"/>
+  </shortcut>
+</shortcuts>

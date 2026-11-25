@@ -1,0 +1,255 @@
+package org.totalrecall.listening;
+
+import android.app.*;
+import org.continuity.recall.ListenPolicy;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.media.*;
+import android.os.*;
+import android.content.pm.ServiceInfo;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Single user-started microphone owner. All speech and detection work runs off the activity thread. */
+public final class RecallService extends Service {
+    private static final String NS="org.totalrecall.listening.";
+    public static final String START=NS+"START",PAUSE=NS+"PAUSE",KEEP=NS+"KEEP",
+        MISSED=NS+"MISSED",DISCARD_LAST=NS+"DISCARD_LAST",ACTION_CHANGED=NS+"CHANGED";
+    private static final String CHANNEL="total_recall_listening";
+    private static final String PREFS="total_recall_session";
+    private static final int NOTIFICATION=9021;
+    private static volatile boolean running;
+    private static volatile String current="";
+    private final ConcurrentLinkedQueue<String> commands=new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean stopping=new AtomicBoolean(false);
+    private volatile AudioRecord liveRecorder;
+    private volatile boolean destroyed;
+    private Thread worker;
+    private int lastStart;
+    public static boolean isListening(){return running;}
+    public static String status(Context c){
+        if(running)return current;
+        SharedPreferences p=c.getSharedPreferences(PREFS,MODE_PRIVATE);
+        if(p.getBoolean("active",false))return "Session interrupted · resume listening";
+        return p.getString("last","Paused");
+    }
+    public static void command(Context c,String action){
+        Intent i=new Intent(c,RecallService.class).setAction(action);
+        if(START.equals(action)&&Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);
+    }
+    @Override public IBinder onBind(Intent intent){return null;}
+    private void changed(){
+        if(!destroyed)sendBroadcast(new Intent(ACTION_CHANGED).setPackage(getPackageName()));
+    }
+    private NotificationManager notifications(){return (NotificationManager)getSystemService(NOTIFICATION_SERVICE);}
+    private Notification notification(String label){
+        if(Build.VERSION.SDK_INT>=26){
+            NotificationChannel ch=new NotificationChannel(CHANNEL,"Selective listening",NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("Visible controls for the microphone session");notifications().createNotificationChannel(ch);
+        }
+        Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(this,CHANNEL):new Notification.Builder(this);
+        int flags=PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE;
+        Intent activity=new Intent().setClassName(this,"org.totalrecall.listening.RecallListenActivity");
+        activity.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        b.setContentTitle("Total Recall").setContentText(label).setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
+            .setContentIntent(PendingIntent.getActivity(this,199,activity,flags));
+        for(String act:new String[]{KEEP,PAUSE}){
+            boolean keep=KEEP.equals(act);Intent i=new Intent(this,RecallService.class).setAction(act);
+            b.addAction(keep?android.R.drawable.ic_menu_save:android.R.drawable.ic_media_pause,
+                keep?"Keep last minute":"Pause",PendingIntent.getService(this,keep?201:202,i,flags));
+        }return b.build();
+    }
+    private void progress(String message){
+        current=message; changed();
+        if(!destroyed && running){
+            try{notifications().notify(NOTIFICATION,notification(message));}catch(SecurityException ignored){}
+        }
+    }
+    @Override public int onStartCommand(Intent intent,int flags,int startId){
+        lastStart=startId;
+        String action=intent==null?null:intent.getAction();
+        if(START.equals(action)){
+            Notification n=notification("Preparing on-device listening");
+            try {
+                if(Build.VERSION.SDK_INT>=29)startForeground(NOTIFICATION,n,ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);else startForeground(NOTIFICATION,n);
+            } catch(SecurityException|IllegalStateException failure) {
+                String detail="Microphone could not start from this session · open Total Recall and check microphone permission";
+                getSharedPreferences(PREFS,MODE_PRIVATE).edit().putBoolean("active",false).putString("last",detail).commit();
+                stopping.set(true);
+                changed();stopSelf(startId);return START_NOT_STICKY;
+            }
+            if(worker==null){
+                stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;changed();
+                worker=new Thread(this::listen,"Recall-Mic");worker.start();
+            }
+        }else if(worker!=null){
+            if(PAUSE.equals(action)){
+                stopping.set(true);progress("Pausing");
+                // stop() also unblocks a native read if the microphone route went away.
+                AudioRecord rec=liveRecorder;
+                if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
+            }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action))commands.offer(action);
+        }else stopSelf(startId);
+        return START_NOT_STICKY;
+    }
+    private static final class SessionIssue extends RuntimeException {
+        SessionIssue(String message){super(message);}
+        SessionIssue(String message,Throwable cause){super(message,cause);}
+    }
+    private void listen(){
+        Context app=getApplicationContext();
+        SharedPreferences prefs=app.getSharedPreferences(PREFS,MODE_PRIVATE);
+        PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
+        PowerManager.WakeLock lock=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,getPackageName()+":selective-listening");
+        lock.setReferenceCounted(false);
+        String end="Paused";
+        AudioRecord recorder=null;
+        SelectiveEngine engine=null;
+        try(Store store=new Store(app)){
+            try{
+                if(!ListenPolicy.allowed(app))throw new SessionIssue("Total Recall is paused; enable capture before starting.");
+                if(prefs.getBoolean("active",false))store.gap("Prior listening session was interrupted; coverage after its last update is unknown.");
+                prefs.edit().putBoolean("active",true).commit();
+                store.recover();
+                lock.acquire();
+                final long[] lastSaved={-1L};
+                SelectiveEngine.Listener listener=new SelectiveEngine.Listener(){
+                    @Override public void onClip(SelectiveEngine.Clip clip){
+                        if(stopping.get())return;
+                        if(!ListenPolicy.allowed(app)){stopping.set(true);return;}
+                        try{lastSaved[0]=store.save(clip);progress("Saved · "+clip.category);}
+                        catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
+                        try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
+                    }
+                    @Override public void onPauseRequested(){stopping.set(true);}
+                };
+                try(OfflineSpeech speech=new OfflineSpeech(app)){
+                    if(!stopping.get()){
+                        int min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
+                        if(min<=0)throw new SessionIssue("Microphone cannot open at 16 kHz");
+                        recorder=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,Math.max(min*3,64000));
+                        if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new SessionIssue("Microphone initialization failed");
+                        recorder.startRecording();liveRecorder=recorder;
+                        if(recorder.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new SessionIssue("Microphone could not start");
+                        engine=new SelectiveEngine(listener);applyFeedback(engine,store);
+                        String route=route(recorder);
+                        progress("Listening · "+route);
+                        short[] frame=new short[1600]; long nextPoll=0,nextFeedback=0,nextPartial=0,nextPolicy=0;
+                        boolean selecting=false;
+                        while(!stopping.get()){
+                            int count=recorder.read(frame,0,frame.length);
+                            if(stopping.get())break;
+                            if(count<0)throw new SessionIssue("Microphone interrupted ("+count+")");
+                            if(count==0){SystemClock.sleep(15);continue;}
+                            long clock=SystemClock.elapsedRealtime();
+                            if(clock>=nextPolicy){
+                                nextPolicy=clock+2000;
+                                if(!ListenPolicy.allowed(app)){stopping.set(true);break;}
+                            }
+                            if(clock>=nextPoll){
+                                nextPoll=clock+500;
+                                if(Build.VERSION.SDK_INT>=29){
+                                    AudioRecordingConfiguration config=recorder.getActiveRecordingConfiguration();
+                                    if(config!=null && config.isClientSilenced())throw new SessionIssue("Android silenced this microphone (privacy setting, call or other recorder).");
+                                }
+                                String nextRoute=route(recorder);
+                                if(!route.equals(nextRoute)){
+                                    store.gap("Input changed from "+route+" to "+nextRoute);
+                                    route=nextRoute;progress("Listening · "+route);
+                                }
+                            }
+                            if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
+                            // Deliver text for this block first so a silence boundary or command cannot
+                            // finalize an earlier snapshot before its last available hypothesis arrives.
+                            String utterance=speech.accept(frame,count);
+                            String spokenCommand=speech.pollCommand();
+                            if(spokenCommand!=null)engine.text(spokenCommand,true);
+                            else if(utterance!=null&&!utterance.isEmpty())engine.text(utterance,true);
+                            else if(clock>=nextPartial){
+                                nextPartial=clock+250;String partial=speech.partial();
+                                if(partial!=null&&!partial.isEmpty())engine.text(partial,false);
+                            }
+                            if(stopping.get())break;
+                            engine.pcm(frame,count);
+                            if(stopping.get())break;
+                            String action;
+                            while((action=commands.poll())!=null){
+                                if(KEEP.equals(action))engine.keep();
+                                else if(MISSED.equals(action))engine.missed();
+                                else if(DISCARD_LAST.equals(action)&&lastSaved[0]>=0){
+                                    store.delete(lastSaved[0]);lastSaved[0]=-1;progress("Latest saved clip removed");
+                                }
+                            }
+                            if(selecting!=engine.isSelecting()){
+                                selecting=engine.isSelecting();progress(selecting?"Keeping a moment · "+route:"Listening · "+route);
+                            }
+                        }
+                        Arrays.fill(frame,(short)0);
+                    }
+                }
+            }catch(Exception | LinkageError error){
+                if(!stopping.get()){
+                    end="Listening stopped · "+message(error);
+                    try{store.gap(end);}catch(RuntimeException ignored){}
+                }
+            }
+        }catch(RuntimeException e){end="Listening stopped · "+message(e);}
+        finally{
+            if(engine!=null)engine.pause();
+            liveRecorder=null;
+            if(recorder!=null){
+                try{recorder.stop();}catch(IllegalStateException ignored){}
+                recorder.release();
+            }
+            if(lock.isHeld())lock.release();
+            String result=end;
+            new Handler(Looper.getMainLooper()).post(()->{
+                worker=null;commands.clear();
+                prefs.edit().putBoolean("active",false).putString("last",result).commit();
+                current=result;running=false;
+                if(!destroyed){
+                    stopForeground(true);changed();stopSelf(lastStart);
+                }
+            });
+        }
+    }
+    private static String message(Throwable e){
+        String text=e.getMessage();
+        if(text==null||text.trim().isEmpty())return e.getClass().getSimpleName();
+        return text.length()>180?text.substring(0,180):text;
+    }
+    private static void applyFeedback(SelectiveEngine engine,Store store){
+        Map<String,Integer> weights=store.weights();
+        for(String key:new String[]{SelectiveEngine.FORGE,SelectiveEngine.POETRY,SelectiveEngine.DECISION,SelectiveEngine.CONNECTION}){
+            int net=0;
+            for(Map.Entry<String,Integer> vote:weights.entrySet())if(vote.getKey().contains(key))net+=vote.getValue();
+            engine.setFeedback(key,net);
+        }
+        engine.setExamples(store.examples());
+    }
+    private static String route(AudioRecord recorder){
+        if(Build.VERSION.SDK_INT>=24){
+            AudioDeviceInfo device=recorder.getRoutedDevice();
+            if(device!=null){
+                switch(device.getType()){
+                    case AudioDeviceInfo.TYPE_BUILTIN_MIC:return "phone microphone";
+                    case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:return "Bluetooth microphone";
+                    case AudioDeviceInfo.TYPE_USB_DEVICE:case AudioDeviceInfo.TYPE_USB_HEADSET:return "USB microphone";
+                    case AudioDeviceInfo.TYPE_WIRED_HEADSET:return "headset microphone";
+                    default:return "audio input "+device.getType();
+                }
+            }
+        }return "input route unreported";
+    }
+    @Override public void onDestroy(){
+        destroyed=true;stopping.set(true);
+        AudioRecord rec=liveRecorder;
+        if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
+        super.onDestroy();
+    }
+}

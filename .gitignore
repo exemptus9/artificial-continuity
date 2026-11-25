@@ -9,3 +9,10 @@ __pycache__/
 android/build/
 *.keystore
 *.jks
+
+# Generated speech assets, device tests and local release packaging
+android/assets/offline-speech/
+device-tests/build/
+*.p12
+*.apk
+*.deb

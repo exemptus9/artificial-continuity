@@ -64,6 +64,7 @@ public final class Vault {
       out = f.startWrite();
       out.write(encrypted);
       f.finishWrite(out);
+      ListenPolicy.update(s.getJSONObject("policy").getBoolean("paused"));
     } catch (Exception e) {
       if (out != null) f.failWrite(out);
       throw e;
@@ -82,6 +83,7 @@ public final class Vault {
   }
 
   public static synchronized void remove(Context c) throws Exception {
+    ListenPolicy.invalidate();
     file(c).delete();
     for (File f : c.getCacheDir().listFiles()) if (f.isFile()) f.delete();
     for (File f : c.getNoBackupFilesDir().listFiles()) if (f.isFile()) f.delete();
