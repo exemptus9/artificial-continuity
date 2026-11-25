@@ -95,12 +95,12 @@ public final class RecallListenActivity extends Activity {
         LinearLayout header=column();
         LinearLayout top=row();
         ImageView emblem=new ImageView(this);emblem.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        int emblemId=getResources().getIdentifier("recall_emblem","drawable",getPackageName());
+        int emblemId=getResources().getIdentifier("recall_emblem_ink","drawable",getPackageName());
         emblem.setImageResource(emblemId==0?getApplicationInfo().icon:emblemId);
         LinearLayout.LayoutParams logoSize=new LinearLayout.LayoutParams(dp(38),dp(38));logoSize.setMargins(0,0,dp(8),0);top.addView(emblem,logoSize);
-        TextView title=text("Total Recall",32,INK,true);title.setTypeface(Typeface.SERIF,Typeface.BOLD);
+        TextView title=text("Total Recall",28,INK,true);title.setTypeface(Typeface.SERIF,Typeface.BOLD);
         title.setPadding(dp(4),dp(12),0,dp(10));top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        Button menu=link("More");menu.setContentDescription("More listening and archive options");
+        Button menu=link("More");menu.setMinWidth(dp(48));menu.setMinimumWidth(dp(48));menu.setPadding(dp(8),0,dp(8),0);menu.setContentDescription("More listening and archive options");
         menu.setOnClickListener(v->more(menu));top.addView(menu);header.addView(top);
         controls=column();controls.setBackground(card(INK,0,18));pad(controls,18,16);
         LinearLayout identity=row();
@@ -137,7 +137,7 @@ public final class RecallListenActivity extends Activity {
         daily=link("Review today");daily.setOnClickListener(v->{reviewToday=!reviewToday;search.setText("");refresh();});
         headings.addView(daily);header.addView(headings);
         search=new EditText(this);search.setSingleLine();search.setTextColor(INK);search.setHintTextColor(SECOND);
-        search.setHint("Search titles, transcripts or notes");search.setContentDescription("Search saved moments");
+        search.setHint("Search moments");search.setContentDescription("Search saved moments");
         search.setTextSize(16);search.setBackground(card(WHITE,BORDER,10));pad(search,12,10);search.setMinHeight(dp(50));
         LinearLayout find=row();find.addView(search,new LinearLayout.LayoutParams(0,-2,1));
         ask=link("Voice search");ask.setMaxWidth(dp(118));ask.setOnClickListener(v->voiceSearch());find.addView(ask);
