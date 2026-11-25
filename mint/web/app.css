@@ -12,3 +12,11 @@ dialog{border:1px solid var(--line);border-radius:17px;padding:22px 26px 26px;wi
 .hero-meta{padding:4px 7px;border:1px solid #587765;border-radius:5px;display:flex}.hero-meta:hover{background:#295744}.daily-totals{display:grid;grid-template-columns:1fr auto;gap:0}.daily-totals dt,.daily-totals dd{padding:8px 0;border-bottom:1px solid var(--line);margin:0;font-size:13px}.daily-totals dd{font-family:var(--mono)}
 
 .pattern-list{list-style:none;margin:0;padding:0}.pattern-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 16px}.pattern-list li+li{border-top:1px solid var(--line)}.pattern-list li>div{display:flex;align-items:baseline;gap:11px}.pattern-list li strong{font:600 21px var(--serif);min-width:1.3em}.pattern-list .text-link{border:0;background:none;white-space:nowrap;cursor:pointer}.pattern-panel>.section-note{margin:0;padding:8px 16px 14px}.peak-day{padding:18px;display:grid;gap:5px}.peak-day>strong{font:600 32px var(--serif)}.peak-day>span,.peak-day>.section-note{color:var(--muted);font-size:13px}.peak-day>.section-note{margin:4px 0 0}
+
+.find-panel{display:grid;gap:12px;padding:18px;margin:0 0 18px}.find-panel h2{font:24px var(--serif);margin:0}
+.find-form,.quick-find,.line-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.find-form input{min-width:10em;flex:1}.find-form input,.find-filters select,.find-filters input,.journal-reader>input{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:9px 10px}
+.find-panel>.text-link{justify-self:start}.find-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(145px,100%),1fr));gap:10px}
+.find-filters label{display:grid;gap:4px;font-size:13px;color:var(--muted)}.find-filters select,.find-filters input{width:100%;min-width:0;color:var(--ink)}
+.match-preview{display:block;white-space:normal;color:var(--green);font-size:13px;margin-top:5px}
+.journal-reader>input{width:100%}.journal-line{padding:12px 0;border-bottom:1px solid var(--line)}.journal-line p,.raw-journal{white-space:pre-wrap;overflow-wrap:anywhere}.journal-reader details{margin-top:12px}.journal-reader .quick-find{margin-top:8px}

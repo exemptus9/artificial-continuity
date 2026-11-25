@@ -11,6 +11,12 @@ Install the Debian package, open **Total Recall Desk**, and choose **Private arc
 
 In **Private archive**, search for an item, play the original or download it. Browser audio supports seeking. **Activity** shows the busiest recorded day and counts of saved clips by label. Choose **Review latest** to open a candidate from that group. Existing note, correction, original transcript, feedback and excerpt-source fields are preserved. **Import capture ZIP** accepts Android selected-clip exports. **Connect Lexi** adds a read-only selected-clip search tool to the configured OpenClaw agent `lexidaimon`. Start a new chat and ask Lexi to find a saved moment. Full-session journals and continuous recordings stay outside that tool.
 
+## Find a moment
+
+From Overview, search for part of a line or choose **Coined words**, **Poetry & freestyle**, or **Yesterday**. In Archive, combine recognized words, notes and corrections with a clip label and the local date the item started. Results show a passage around the match when available.
+
+Open a timestamped journal to find a line and select **Find audio here**. Choose one of the recordings covering the recognition time and press play. Playback starts with up to three seconds of lead-in. **Back to journal** restores the search and page. **Copy to writing notes** on a selected clip copies its text, correction and note for use in another app.
+
 ## Space, retention and backup
 
 **Storage & backup** shows available space and lets you set a quota in GiB. Zero uses the available filesystem with 1 GiB reserved. Incoming items reserve capacity, allowing interrupted transfers to resume without allocating the same bytes twice. Incomplete uploads release their reservations after seven days. When space runs out, the host returns a storage-full status and the sender keeps its pending item. A quota limits incoming transfers and never evicts a recent capture.

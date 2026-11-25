@@ -36,19 +36,64 @@ def item(row,details=False):
     if result["kind"]=="journal" and details: result["text"]=content
     return result
 
-def items(arc,kind,q,limit,offset):
+def search_preview(row, terms):
+    if not terms:
+        return None
+    meta=json.loads(row["metadata"])
+    for label,value in (("Transcript",row["content"]),("Correction",meta.get("correction")),("Note",meta.get("note"))):
+        if not isinstance(value,str): continue
+        for term in terms:
+            hit=re.search(re.escape(term),value,re.IGNORECASE)
+            if hit:
+                left=max(0,hit.start()-52)
+                right=min(len(value),max(hit.end()+90,left+155))
+                snippet=" ".join(value[left:right].split())
+                return {"field":label,"text":("…" if left else "")+snippet+("…" if right<len(value) else "")}
+    return None
+
+def items(arc,kind,q,limit,offset,category="",start=None,end=None):
     if kind not in ("all","clip","segment","journal") or len(q)>500 or not 1<=limit<=200 or not 0<=offset<=10_000_000:
         raise Failure(400,"Invalid archive query")
+    if category and category not in {*CLIP_LABELS.values(),"other"}:raise Failure(400,"Unknown clip category")
+    if (start is None)!=(end is None) or start is not None and not 0<=start<end<=253402300799999:
+        raise Failure(400,"Invalid date filter")
     where=[];args=[]
     if kind!="all": where.append("kind=?");args.append(kind)
-    for term in q.casefold().split()[:12]:
-        where.append("instr(lower(title||' '||content||' '||coalesce(json_extract(metadata,'$.note'),'')||' '||coalesce(json_extract(metadata,'$.category'),'')||' '||coalesce(json_extract(metadata,'$.correction'),'')),?)>0")
+    if start is not None:
+        where.append("startedAtMillis>=? AND startedAtMillis<?");args.extend((start,end))
+    if category:
+        where.append("kind='clip' AND has_clip_label(json_extract(metadata,'$.category'),?)")
+        args.append(category)
+    terms=q.casefold().split()[:12]
+    for term in terms:
+        where.append("instr(fold_text(title||' '||content||' '||coalesce(json_extract(metadata,'$.note'),'')||' '||coalesce(json_extract(metadata,'$.category'),'')||' '||coalesce(json_extract(metadata,'$.correction'),'')),?)>0")
         args.append(term)
     sql=" FROM ("+BASE_SQL+")"+(" WHERE "+" AND ".join(where) if where else "")
     with arc.connection() as db:
+        if category: db.create_function("has_clip_label",2,lambda value,wanted: wanted in category_keys(value),deterministic=True)
+        if terms: db.create_function("fold_text",1,str.casefold,deterministic=True)
         total=db.execute("SELECT count(*)"+sql,args).fetchone()[0]
-        rows=db.execute("SELECT *"+sql+" ORDER BY startedAtMillis DESC,id DESC LIMIT ? OFFSET ?",[*args,limit,offset])
-        return {"items":[item(r) for r in rows],"total":total}
+        rows=db.execute("SELECT *"+sql+" ORDER BY startedAtMillis DESC,id DESC,kind LIMIT ? OFFSET ?",[*args,limit,offset])
+        matches=[]
+        for row in rows:
+            found=item(row)
+            snippet=search_preview(row,terms)
+            if snippet: found["match"]=snippet
+            matches.append(found)
+        return {"items":matches,"total":total}
+
+def recordings_at(arc,instant):
+    if not 0<instant<=253402300799999:raise Failure(400,"Invalid recording time")
+    with arc.connection() as db:
+        rows=db.execute("""SELECT id,kind,title,started AS startedAtMillis,duration AS durationMs FROM (
+                SELECT id,'clip' AS kind,title,started,duration FROM clips WHERE started<=? AND started+duration>?
+                UNION ALL
+                SELECT id,'segment',coalesce(nullif(json_extract(metadata,'$.title'),''),'Continuous audio'),started,
+                       cast(json_extract(metadata,'$.durationMs') AS INTEGER) AS duration
+                FROM archive_uploads WHERE state='complete' AND kind='segment' AND started<=? AND
+                     started+cast(json_extract(metadata,'$.durationMs') AS INTEGER)>?)
+            ORDER BY CASE kind WHEN 'segment' THEN 0 ELSE 1 END,started DESC,id LIMIT 13""",(instant,)*4).fetchall()
+        return {"items":[dict(row) for row in rows[:12]],"more":len(rows)>12}
 
 def lookup(arc,kind,uid):
     if kind not in ("clip","segment","journal") or not UID.fullmatch(uid): raise Failure(404,"Missing item")
@@ -206,7 +251,11 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 name,mime={"/":("index.html","text/html; charset=utf-8"),"/app.css":("app.css","text/css; charset=utf-8"),"/app.js":("app.js","text/javascript; charset=utf-8")}[path]
                 self.emit(200,(self.server.assets/name).read_bytes(),mime);return
             if path=="/api/status": return self.json(200,arc.status())
-            if path=="/api/items": return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),int(param("offset","0"))))
+            if path=="/api/items":
+                start=param("from",None);end=param("to",None)
+                return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
+                    int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None))
+            if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0"))))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))
             route=re.fullmatch(r"/api/(items|media)/(segment|journal|clip)/([A-Za-z0-9_-]{1,128})",path)
             if not route: raise Failure(404,"Missing archive path")

@@ -6,7 +6,7 @@ const viewInfo = {
   archive:['Your archive','Search saved clips, original audio segments and journal entries.'],
   activity:['Archive activity','See when recordings arrived and how much audio they cover.']
 };
-const state={view:'overview',days:7,kind:'all',query:'',offset:0,version:0,detailVersion:0};
+const state={view:'overview',days:7,kind:'all',query:'',category:'',date:'',offset:0,version:0,detailVersion:0};
 const limit=25;
 let searchTimer, modalCleanup;
 const dateFmt=(value,options)=>new Intl.DateTimeFormat(undefined,options).format(new Date(value));
@@ -78,13 +78,13 @@ function kindName(kind){return KINDS[kind]||'Archive item';}
 function itemRow(item){const row=button('',()=>openItem(item),'row');row.dataset.itemId=item.id;row.dataset.kind=item.kind;
   const when=item.startedAtMillis?dateTime(item.startedAtMillis):'Time unavailable';const tag=item.category||kindName(item.kind);
   add(row,add(e('span',`row-icon ${item.kind}`),icon(KINDS[item.kind]?item.kind:'archive')),add(e('span','row-main'),e('span','row-title',item.title||tag),e('span','row-sub',`${tag} · ${when}`)),
-    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));return row;}
+    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));if(item.match)row.querySelector('.row-main').append(e('span','match-preview',item.match.field+' · '+item.match.text));return row;}
 function eventPanel(events){if(!events||!events.length)return panel(empty('No activity in this period.','New archive receipts will appear here.'));
   return panel(...events.map(v=>{const t=e('time','',dateTime(v.atMillis));t.dateTime=new Date(v.atMillis).toISOString();return add(e('div','event'),add(e('div'),e('b','',v.label||'Archive receipt'),v.detail?e('p','',v.detail):null,t));}));}
 async function dashboard(ver){const [overview,items,info]=await Promise.all([get('/api/overview',range()),get('/api/items',{kind:'clip',limit:5,offset:0}),get('/api/status')]);if(ver!==state.version)return;
   const selected=items.items||[],left=e('div'),right=e('div');add(left,heading('Latest clips',link('View archive','#archive')),panel(...(selected.length?selected.map(itemRow):[empty('No selected clips yet.','Clips appear here when your phone sends a saved moment to this archive.')])))
   add(right,heading('Workspace'),storage(info),heading('Recent activity',link('View activity','#activity')),eventPanel((overview.events||[]).slice(0,2)));
-  $('view').replaceChildren(hero(overview),add(e('div','section-grid'),left,right));}
+  $('view').replaceChildren(discovery(),hero(overview),add(e('div','section-grid'),left,right));}
 function metric(label,value){return add(e('div'),e('p','',label),e('strong','',value));}
 const patternNames={coined:'Coined-word candidates',verse:'Poetry and freestyle candidates',manual:'Manual keeps',
   missed:'Missed moments',decision:'Project decisions',connection:'Connections',excerpt:'Excerpts',other:'Other labels'};
@@ -120,15 +120,59 @@ async function activity(ver){const o=await get('/api/overview',range());if(ver!=
   const patterns=add(e('div','section-grid'),add(e('section'),heading('Saved clip patterns'),clipPatterns(o)),
     add(e('section'),heading('Busiest recorded day'),busiest(o)));
   $('view').replaceChildren(report,patterns,heading('Latest archive receipts'),eventPanel(o.events),note);}
-function makeArchive(){const form=e('form','archive-tools');form.setAttribute('role','search');const q=e('input');q.id='search';q.type='search';q.placeholder='Search your archive';q.autocomplete='off';q.value=state.query;q.setAttribute('aria-label','Search your archive');const kinds=e('select');kinds.id='kind';kinds.setAttribute('aria-label','Item type');for(const [v,label] of [['all','All items'],['clip','Selected clips'],['segment','Audio segments'],['journal','Journal entries']]){const o=e('option','',label);o.value=v;kinds.append(o);}kinds.value=state.kind;
-  form.addEventListener('submit',ev=>{ev.preventDefault();clearTimeout(searchTimer);search();});q.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(search,170);});kinds.addEventListener('change',()=>{clearTimeout(searchTimer);search();});
-  function search(){state.query=q.value.trim();state.kind=kinds.value;state.offset=0;refresh();}
-  add(form,add(e('label','searchbox'),icon('search'),q),kinds);const results=e('div');results.id='results';$('view').replaceChildren(form,results);}
-async function archive(ver){if(!$('results'))makeArchive();const response=await get('/api/items',{kind:state.kind,q:state.query,offset:state.offset,limit});if(ver!==state.version)return;
+function localDate(date) {
+  const pad=n=>String(n).padStart(2,'0');
+  return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate());
+}
+function dayBounds(value) {
+  if (!value) return {};
+  const start=new Date(value+'T00:00:00'),end=new Date(start);
+  end.setDate(end.getDate()+1);
+  return {from:start.getTime(),to:end.getTime()};
+}
+function findArchive(filters={}) {
+  Object.assign(state,{kind:'all',category:'',date:'',query:'',offset:0},filters);
+  if(location.hash==='#archive'){makeArchive();refresh();}else location.hash='archive';
+}
+function discovery() {
+  const yesterday=new Date();yesterday.setDate(yesterday.getDate()-1);
+  const form=e('form','find-form');const q=e('input');q.type='search';q.placeholder='A word or phrase you remember';q.setAttribute('aria-label','Find a remembered phrase');
+  const submit=e('button','btn primary','Find');submit.type='submit';
+  form.onsubmit=event=>{event.preventDefault();findArchive({query:q.value.trim()});};
+  const choices=add(e('div','quick-find'),
+    button('Coined words',()=>findArchive({kind:'clip',category:'coined'}),'btn'),
+    button('Poetry & freestyle',()=>findArchive({kind:'clip',category:'verse'}),'btn'),
+    button('Yesterday',()=>findArchive({date:localDate(yesterday)}),'btn'));
+  return add(e('section','panel find-panel'),e('h2','','Find a moment'),add(form,q,submit),choices);
+}
+function makeArchive(){
+  const form=e('form','find-panel panel');form.setAttribute('role','search');
+  const q=e('input');q.id='search';q.type='search';q.placeholder='A word or phrase you remember';q.autocomplete='off';q.value=state.query;q.setAttribute('aria-label','Search your archive');
+  function chooser(label,options,value) {
+    const select=e('select');select.setAttribute('aria-label',label);
+    for(const [key,name] of options){const opt=e('option','',name);opt.value=key;select.append(opt);}
+    select.value=value;return select;
+  }
+  const kinds=chooser('Item type',[['all','All items'],['clip','Selected clips'],['segment','Audio segments'],['journal','Journal entries']],state.kind);
+  const cats=chooser('Clip label',[['','All labels'],...Object.entries(patternNames)],state.category);
+  const date=e('input');date.type='date';date.setAttribute('aria-label','Date started');date.value=state.date;
+  function apply(){
+    state.query=q.value.trim();state.kind=kinds.value;state.category=cats.value;state.date=date.value;state.offset=0;refresh();
+  }
+  form.onsubmit=ev=>{ev.preventDefault();clearTimeout(searchTimer);apply();};
+  q.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(apply,180);};
+  kinds.onchange=()=>{if(kinds.value!=='clip'&&kinds.value!=='all')cats.value='';apply();};
+  cats.onchange=()=>{if(cats.value)kinds.value='clip';apply();};date.onchange=apply;
+  const filters=add(e('div','find-filters'),add(e('label'),'Item type',kinds),add(e('label'),'Clip label',cats),add(e('label'),'Date started',date));
+  const clear=button('Clear filters',()=>{clearTimeout(searchTimer);findArchive();},'text-link');
+  add(form,add(e('label','searchbox'),icon('search'),q),filters,clear);
+  const results=e('div');results.id='results';$('view').replaceChildren(form,results);
+}
+async function archive(ver){if(!$('results'))makeArchive();const response=await get('/api/items',{kind:state.kind,q:state.query,category:state.category,...dayBounds(state.date),offset:state.offset,limit});if(ver!==state.version)return;
   if(state.offset>0&&!response.items.length&&response.total>0){state.offset=Math.floor((response.total-1)/limit)*limit;return refresh();}
   const nodes=[],group=new Map();for(const item of [...response.items].sort((a,b)=>b.startedAtMillis-a.startedAtMillis)){const d=item.startedAtMillis?dateFmt(item.startedAtMillis,{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'Undated';if(!group.has(d))group.set(d,[]);group.get(d).push(item);}
   for(const [d,list] of group)nodes.push(e('h2','group-label',d),panel(...list.map(itemRow)));
-  if(!nodes.length)nodes.push(panel(empty(state.query?'No matches.':'No items in this view.',state.query?'Try another word or change the item type.':'Pair your phone in Total Recall Desk or import a recording to get started.')));
+  if(!nodes.length)nodes.push(panel(empty(state.query?'No matches.':'No items in this view.',state.query?'Try another word or change the item type.':'Clear filters to look across the archive. New items appear after your phone transfers them.')));
   const prev=button('Previous',()=>{state.offset=Math.max(0,state.offset-limit);refresh();}),next=button('Next',()=>{state.offset+=limit;refresh();});prev.disabled=state.offset===0;next.disabled=state.offset+limit>=response.total;
   const count=response.total?`${state.offset+1}–${Math.min(state.offset+response.items.length,response.total)} of ${plural(response.total,'item')}`:'0 items';const pager=add(e('div','pager'),e('span','',count),response.total>limit?add(e('div'),prev,next):null);
   $('results').replaceChildren(...nodes,pager);}
@@ -165,15 +209,79 @@ function excerptControls(item,audio,signal){const details=e('details'),summary=e
   const preview=button('Preview range',async()=>{try{const [from,to]=values();message.textContent='';audio.currentTime=from;await audio.play();boundary=to;check();}catch(err){message.textContent=err.message;}});
   const save=button('Download excerpt',async()=>{try{const [from,to]=values();save.disabled=true;message.textContent='Preparing WAV…';const blob=await excerptBlob(item,from,to,signal);if(signal.aborted)return;const url=URL.createObjectURL(blob),l=e('a');l.href=url;l.download=`${item.id}-${from.toFixed(2)}s-${to.toFixed(2)}s.wav`;l.click();setTimeout(()=>URL.revokeObjectURL(url),60000);message.textContent='Excerpt ready for download.';}catch(err){if(!signal.aborted)message.textContent=err.message;}finally{save.disabled=false;}},'btn primary');
   return add(e('div','detail-block'),add(details,fields,add(e('div','actions'),preview,save),message));}
-function player(item){const audio=e('audio');audio.controls=true;audio.preload='metadata';audio.src=mediaPath(item);audio.setAttribute('aria-label','Original recording');const rates=e('select');rates.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=e('option','',`${n}×`);o.value=n;o.selected=n===1;rates.append(o);}rates.onchange=()=>audio.playbackRate=Number(rates.value);
+function player(item,at){const audio=e('audio');audio.controls=true;audio.preload='metadata';audio.src=mediaPath(item);if(Number.isFinite(at))audio.addEventListener('loadedmetadata',()=>{
+    audio.currentTime=Math.max(0,Math.min((at-item.startedAtMillis)/1000-3,audio.duration||0));
+  },{once:true});audio.setAttribute('aria-label','Original recording');const rates=e('select');rates.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=e('option','',`${n}×`);o.value=n;o.selected=n===1;rates.append(o);}rates.onchange=()=>audio.playbackRate=Number(rates.value);
   const download=e('a','text-link','Download original');download.prepend(icon('download'));download.href=mediaPath(item)+'?download=1';download.download='';const help=e('p','status');help.hidden=true;audio.onerror=()=>{if(audio.getAttribute('src')){help.textContent='This browser could not play the file. Download the original to open it in another player.';help.hidden=false;}};
   const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();audio.removeAttribute('src');audio.load();};
   return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),download),help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
-async function openItem(item){const serial=++state.detailVersion;const dialog=$('detail');$('detail-kind').textContent=kindName(item.kind);$('detail-body').replaceChildren(e('p','empty','Loading item…'));if(!dialog.open)dialog.showModal();
+// The journal export uses the phone's local date plus its UTC offset at recognition.
+function journalLines(text) {
+  const result=[],pattern=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$/;
+  for(const line of text.split('\n')){
+    const m=pattern.exec(line);if(!m)continue;
+    const at=Date.parse(m[1]+'T'+m[2]+m[3]);
+    if(Number.isFinite(at))result.push({at,text:m[4],status:m[4].startsWith('[capture status]')});
+  }
+  return result;
+}
+function journalReader(full,saved={}){
+  const raw=full.text||'',lines=journalLines(raw);
+  if(!lines.length)return contentBlock('Journal text',raw||'No text supplied.');
+  const box=e('section','detail-block journal-reader'),q=e('input');q.type='search';q.value=saved.query??state.query;q.placeholder='Find words in this journal';q.setAttribute('aria-label','Find words in this journal');
+  const count=e('p','section-note'),results=e('div'),pages=e('div','quick-find');
+  const batch=20;let start=saved.start||0,version=0;
+  function draw(){
+    const revision=++version,terms=q.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+    const rows=lines.filter(row=>terms.every(term=>row.text.toLocaleLowerCase().includes(term)));
+    count.textContent=rows.length?((start+1)+'–'+Math.min(start+batch,rows.length)+' of '+plural(rows.length,'line')):'No matching lines.';
+    results.replaceChildren();pages.replaceChildren();
+    for(const line of rows.slice(start,start+batch)){
+      const entry=e('article','journal-line');
+      const stamp=e('time','row-sub',dateTime(line.at));stamp.dateTime=new Date(line.at).toISOString();
+      const choices=e('div','line-actions');
+      add(entry,stamp,e('p','',line.text),choices);results.append(entry);
+      if(line.status)continue;
+      const locate=button('Find audio here',async()=>{
+        locate.disabled=true;
+        try{
+          const match=await get('/api/recordings-at',{at:line.at});
+          if(revision!==version||!box.isConnected)return;
+          choices.replaceChildren();
+          if(!match.items.length){choices.append(e('span','section-note','No archived recording covers this timestamp.'));return;}
+          for(const recording of match.items){
+            const btn=button('Open '+(recording.kind==='segment'?'session audio':recording.title||'selected clip'),()=>openItem(recording,{at:line.at,journal:full,reader:{query:q.value,start}}),'btn');
+            choices.append(btn);
+          }
+          if(match.more)choices.append(e('span','section-note','Showing the first 12 overlapping recordings.'));
+        }catch(error){if(box.isConnected){locate.disabled=false;choices.append(e('span','status',error.message));}}
+      },'text-link');choices.append(locate);
+    }
+    if(start>0)pages.append(button('Previous lines',()=>{start=Math.max(0,start-batch);draw();}));
+    if(start+batch<rows.length)pages.append(button('More lines',()=>{start+=batch;draw();}));
+  }
+  q.oninput=()=>{start=0;draw();};draw();
+  const original=e('details');original.append(e('summary','','Full journal text'));
+  original.ontoggle=()=>{if(original.open&&original.childElementCount===1)original.append(e('p','raw-journal',raw));};
+  return add(box,e('h3','','Journal text'),q,e('p','section-note','Timestamps mark when speech was recognized. Linked audio opens with a short lead-in.'),count,results,pages,original);
+}
+function writingNote(full){
+  const text=[full.title||'Untitled clip',dateTime(full.startedAtMillis),full.category,
+    full.transcript&&('Recognized speech\n'+full.transcript),full.correction&&('Your correction\n'+full.correction),
+    full.note&&('Your note\n'+full.note)].filter(Boolean).join('\n\n');
+  const box=e('div','detail-block'),status=e('span','status');status.setAttribute('role','status');
+  const copy=button('Copy to writing notes',async()=>{
+    try{await navigator.clipboard.writeText(text);status.textContent='Copied. Paste it into your writing app.';}
+    catch{let field=box.querySelector('textarea');if(!field){field=e('textarea','pair-code');field.readOnly=true;field.value=text;field.setAttribute('aria-label','Text for your writing notes');box.append(field);}field.focus();field.select();status.textContent='Text selected. Use Copy to take it with you.';}
+  });
+  return add(box,copy,status);
+}
+async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalCleanup=null;}const serial=++state.detailVersion;const dialog=$('detail');$('detail-kind').textContent=kindName(item.kind);$('detail-body').replaceChildren(e('p','empty','Loading item…'));if(!dialog.open)dialog.showModal();
   try{const full=await get(`/api/items/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`);if(serial!==state.detailVersion||!dialog.open)return;
     const d=e('h2','',full.title||full.category||kindName(full.kind));d.id='detail-title';const meta=add(e('div','detail-meta'),e('span','',dateTime(full.startedAtMillis)),e('span','','·'),e('span','',full.kind==='journal'?bytes(full.bytes):duration(full.durationMs)));
-    const nodes=[d,meta];if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,contentBlock('Journal text',full.text||full.transcript||'No text supplied.'));}else{nodes.push(...player(full));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
+    const nodes=[d,meta];if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
     if(full.correction)nodes.push(contentBlock('Your correction',full.correction));if(full.note)nodes.push(contentBlock('Your note',full.note));
+    if(full.kind==='clip')nodes.push(writingNote(full));
     const provenance=e('details');provenance.append(e('summary','','Source details'));const facts=[`Item ID · ${full.id}`,`Stored size · ${bytes(full.bytes)}`];if(full.sessionId)facts.push(`Session · ${full.sessionId}`);if(full.parentId)facts.push(`Original · ${full.parentId}`);if(full.startSample!=null&&full.endSample!=null)facts.push(`Source samples · ${full.startSample}–${full.endSample}`);if(full.expiresAtMillis)facts.push(`Retention until · ${dateTime(full.expiresAtMillis)}`);provenance.append(e('p','',facts.join('\n')));if(full.sha256)provenance.append(e('p','digest',`SHA-256 · ${full.sha256}`));nodes.push(add(e('div','detail-block'),provenance));$('detail-body').replaceChildren(...nodes.filter(Boolean));
   }catch(err){if(serial===state.detailVersion)$('detail-body').replaceChildren(e('p','notice',err.message));}}
 $('close').onclick=()=>$('detail').close();$('detail').addEventListener('close',()=>{state.detailVersion++;if(modalCleanup){modalCleanup();modalCleanup=null;}$('detail-body').replaceChildren();});
