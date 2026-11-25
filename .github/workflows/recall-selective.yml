@@ -11,6 +11,9 @@ jobs:
     timeout-minutes: 35
     env:
       ANDROID_SERIAL: emulator-5554
+      ANDROID_AVD_HOME: ${{ github.workspace }}/device-tests/build/avds
+      ANDROID_USER_HOME: ${{ github.workspace }}/device-tests/build/android-user
+      ANDROID_EMULATOR_HOME: ${{ github.workspace }}/device-tests/build/android-user
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -37,7 +40,11 @@ jobs:
           yes | "$sdkmanager" --licenses >/dev/null || true
           "$sdkmanager" --install 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-36;default;x86_64'
           sudo chmod a+rw /dev/kvm
-          printf 'no\n' | "$(dirname "$sdkmanager")/avdmanager" create avd --force -n recall-synthetic -k 'system-images;android-36;default;x86_64'
+          mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
+          printf 'no\n' | "$(dirname "$sdkmanager")/avdmanager" create avd --force -n recall-synthetic --path "$ANDROID_AVD_HOME/recall-synthetic.avd" -k 'system-images;android-36;default;x86_64'
+          test -e "$ANDROID_AVD_HOME/recall-synthetic.avd/config.ini"
+          printf 'avd.ini.encoding=UTF-8\npath=%s\ntarget=android-36\n' "$ANDROID_AVD_HOME/recall-synthetic.avd" >"$ANDROID_AVD_HOME/recall-synthetic.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx recall-synthetic
       - name: Start disposable Android emulator
         run: |
           set -euo pipefail
