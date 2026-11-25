@@ -14,6 +14,7 @@ import secrets
 import struct
 import threading
 import time
+import tempfile
 from urllib.parse import parse_qs, urlsplit
 import zlib
 
@@ -26,6 +27,12 @@ DAY = 86400
 TRANSFER_CAP = 25_000_000_000
 MEDIA_CAP = 1_000_000_000_000
 KEY = re.compile(r"[0-9a-f]{64}")
+APK_NAME = "TotalRecall-0.12.0.apk"
+APK_SIZE = 56_121_560
+APK_SHA = "7fc15a16dcb448a601bea9334147be96ab6f3166419546e2c1d38626557457b1"
+APK_MIME = "application/vnd.android.package-archive"
+APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
+
 def login_page(failed=False):
     prompt = "That key did not match. Try the owner key from your private access file." if failed else "Use the owner key from your private access file."
     return ("""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Total Recall · Sign in</title><style>
@@ -131,15 +138,55 @@ class HostedHandler(recall_web.OwnerHandler):
         raw=json.dumps({"url":"https://"+self.server.public_host,"token":self.server.token,"tls":"public-ca"},separators=(",",":")).encode()
         return "TR1."+base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
+    def apk_path(self):
+        # This capability can download one specific release; archive credentials never enter the link.
+        tag=hmac.digest(self.server.session_key,("download-apk/"+APK_SHA).encode(),"sha256").hex()[:32]
+        return "/downloads/"+tag+"/"+APK_NAME
+
+    def download_apk(self):
+        media=self.server.archive.media_store
+        try:
+            head=media._head(APK_KEY)
+            if not head or head["ContentLength"]!=APK_SIZE or head.get("Metadata",{}).get("sha256")!=APK_SHA:
+                return self.json(503,{"error":"The Android installer is not available yet."})
+            method="head_object" if self.command=="HEAD" else "get_object"
+            url=media.s3.generate_presigned_url(method,Params={"Bucket":media.bucket,"Key":APK_KEY},ExpiresIn=3600)
+        except Exception:
+            return self.json(503,{"error":"The installer is temporarily unavailable."})
+        self.send_response(307);self.send_header("Location",url);self.send_header("Content-Length","0");self.end_headers()
+
+    def install_apk(self):
+        if not self.auth() or self.headers.get("Origin")!="https://"+self.server.public_host:
+            return self.json(403,{"error":"Owner sign-in required."})
+        try:
+            if self.length(APK_SIZE)!=APK_SIZE:return self.json(422,{"error":"Unexpected installer size."})
+            media=self.server.archive.media_store
+            with tempfile.TemporaryFile() as out:
+                remaining=APK_SIZE;digest=hashlib.sha256()
+                while remaining:
+                    data=self.rfile.read(min(remaining,256*1024))
+                    if not data:return self.json(400,{"error":"Incomplete installer."})
+                    out.write(data);digest.update(data);remaining-=len(data)
+                if digest.hexdigest()!=APK_SHA:return self.json(422,{"error":"Wrong release checksum."})
+                out.seek(0)
+                media.s3.put_object(Bucket=media.bucket,Key=APK_KEY,Body=out,ContentLength=APK_SIZE,
+                    ContentType=APK_MIME,ContentDisposition='attachment; filename="'+APK_NAME+'"',Metadata={"sha256":APK_SHA})
+        except recall_archive.Failure as err:return self.json(err.status,{"error":str(err)})
+        except Exception:return self.json(503,{"error":"Could not store the installer."})
+        return self.json(200,{"path":self.apk_path()})
+
     def do_GET(self):
         path=urlsplit(self.path).path
         if path=="/healthz": return self.json(200,{"ok":True})
         if not self.valid_host(self.headers.get("Host","")): return self.json(403,{"error":"Unrecognized origin"})
+        if path==self.apk_path():return self.download_apk()
         if path=="/v2/status": return recall_desk.TransferHandler.do_GET(self)
         if path.startswith("/open/"): return self.json(404,{"error":"Unknown route"})
         if not self.auth():
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
+        if path=="/downloads/android":return self.download_apk()
+        if path=="/api/android-installer":return self.json(200,{"path":self.apk_path()})
         if path=="/api/phone-pairing":return self.json(200,{"code":self.get_pair(),"origin":"https://"+self.server.public_host})
         if path=="/api/phone-qr.png":
             try:return self.emit(200,qr_png(self.get_pair()),"image/png")
@@ -183,6 +230,7 @@ class HostedHandler(recall_web.OwnerHandler):
 
     def do_PUT(self):
         if not self.valid_host(self.headers.get("Host","")):return self.json(403,{"error":"Unrecognized origin"})
+        if self.path=="/api/android-installer":return self.install_apk()
         return self.upload()
 
     def media(self,arc,kind,uid,download):
