@@ -165,18 +165,57 @@ public final class RecallSmoke extends Instrumentation {
         }
     }
     private void speech()throws Exception {
-        try(OfflineSpeech recognizer=new OfflineSpeech(target);InputStream input=getContext().getAssets().open("decision.pcm")){
-            byte[] data=bytes(input);StringBuilder words=new StringBuilder();short[] samples=new short[1600];
-            for(int offset=0;offset<data.length;){
-                int n=Math.min(samples.length,(data.length-offset)/2);
-                if(n==0)break;
-                for(int i=0;i<n;i++)samples[i]=(short)((data[offset++]&255)|((data[offset++]&255)<<8));
-                String text=recognizer.accept(samples,n);if(text!=null)words.append(text).append(' ');
+        try(Store store=new Store(target);OfflineSpeech recognizer=new OfflineSpeech(target);
+                InputStream input=getContext().getAssets().open("decision.pcm")){
+            byte[] fixture=bytes(input);
+            require(fixture.length%2==0 && fixture.length>0,"Invalid PCM fixture");
+            java.util.List<Long> saves=new java.util.ArrayList<>();
+            Method save=Store.class.getDeclaredMethod("save",SelectiveEngine.Clip.class);
+            save.setAccessible(true);
+            SelectiveEngine engine=new SelectiveEngine(new SelectiveEngine.Listener(){
+                public void onClip(SelectiveEngine.Clip clip){
+                    try{saves.add((Long)save.invoke(store,clip));}catch(Exception e){throw new RuntimeException(e);}
+                }
+                public void onPauseRequested(){throw new AssertionError("Unexpected voice pause");}
+            });
+            try {
+                // Same 100 ms blocks and ASR->command/final/partial->PCM order as the service.
+                byte[] stream=Arrays.copyOf(fixture,fixture.length+8*SelectiveEngine.RATE*2);
+                short[] samples=new short[1600];
+                int offset=0,nextPartialFrame=0;
+                while(offset<stream.length){
+                    int frame=offset/2;
+                    int n=Math.min(samples.length,(stream.length-offset)/2);
+                    for(int i=0;i<n;i++)samples[i]=(short)((stream[offset++]&255)|((stream[offset++]&255)<<8));
+                    String utterance=recognizer.accept(samples,n);
+                    String command=recognizer.pollCommand();
+                    require(command==null,"Fixture misheard as manual voice command");
+                    if(utterance!=null&&!utterance.isEmpty())engine.text(utterance,true);
+                    else if(frame>=nextPartialFrame){
+                        nextPartialFrame=frame+SelectiveEngine.RATE/4;
+                        String partial=recognizer.partial();
+                        if(partial!=null&&!partial.isEmpty())engine.text(partial,false);
+                    }
+                    engine.pcm(samples,n);
+                }
+                require(saves.size()==1,"Expected one automatic decision clip after silence; got "+saves.size());
+                Store.Moment saved=null;
+                for(Store.Moment row:store.search("blue book"))if(row.id==saves.get(0))saved=row;
+                require(saved!=null,"Saved synthetic speech missing from text search");
+                require(SelectiveEngine.DECISION.equals(saved.kind)&&saved.reason.toLowerCase(Locale.ROOT).contains("choice"),
+                    "Unexpected selection reason: "+saved.reason);
+                byte[] wav=file(saved.audio);
+                require(wav.length>=44+fixture.length && wav[0]=='R' && wav[8]=='W',"WAV missing fixture or header");
+                for(int i=0;i<fixture.length;i++)
+                    require(wav[44+i]==fixture[i],"Original PCM fixture changed at byte "+i);
+                require(hex(wav).equals(saved.sha256),"Automatic clip differs from its stored digest");
+                passed("Bundled offline ASR -> automatic project decision -> searchable SQLite row and original WAV. "
+                    +"Verified "+fixture.length+" input bytes and catalog SHA-256; no manual Keep or supplied transcript. Recognized: "
+                    +saved.transcript);
+            } finally {
+                engine.pause();
+                for(Long id:saves)store.delete(id);
             }
-            String tail=recognizer.finish();if(tail!=null)words.append(tail);
-            String heard=words.toString().trim();
-            require(heard.contains("book")&&heard.contains("blue"),"Unexpected synthetic ASR: "+heard);
-            passed("Packaged offline ASR decoded synthetic English audio: "+heard);
         }
     }
     private Activity launch(){
