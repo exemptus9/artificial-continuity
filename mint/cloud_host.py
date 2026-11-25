@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import sqlite3
 import struct
 import threading
 import time
@@ -272,7 +271,7 @@ def main():
     def maintenance():
         while True:
             try:
-                arc.trim();arc.media_store.maintain()
+                arc.media_store.maintain()
             except Exception as error:print("Archive maintenance deferred:",type(error).__name__,flush=True)
             time.sleep(3600)
     threading.Thread(target=maintenance,daemon=True).start()

@@ -9,7 +9,7 @@ install -d -m 755 "$stage/usr/share/total-recall-listening/web"
 install -m 644 "$src/recall_desk.py" "$src/recall_archive.py" "$src/recall_web.py" "$src/archive_backup.py" "$stage/usr/share/total-recall-listening/"
 install -m 644 "$src/web/index.html" "$src/web/app.css" "$src/web/app.js" "$stage/usr/share/total-recall-listening/web/"
 install -m 644 "$src/total-recall-desk.desktop" "$stage/usr/share/applications/"
-install -m 644 "$src/README.md" "$stage/usr/share/doc/total-recall-desk/"
+install -m 644 "$src/README.md" "$src/CLOUD.md" "$src/CLOUD_RECOVERY.md" "$stage/usr/share/doc/total-recall-desk/"
 cat > "$stage/usr/bin/total-recall-desk" <<'LAUNCH'
 #!/bin/sh
 exec /usr/bin/python3 -I /usr/share/total-recall-listening/recall_desk.py "$@"

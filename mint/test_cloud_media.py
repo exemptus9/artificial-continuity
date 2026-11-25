@@ -64,7 +64,7 @@ class PrivateStorage(TestCase):
         self.cloud.ensure(raw["id"])
         self.assertFalse((self.arc.files/raw["id"]).exists())
         self.assertEqual(self.arc.status()["usedBytes"],size)
-        self.assertEqual(self.arc.status()["quotaBytes"],350_000_000_000)
+        self.assertEqual(self.arc.status()["quotaBytes"],1_000_000_000_000)
         restarted=CloudMedia(self.arc,client=self.client,bucket=self.bucket)
         self.assertTrue(self.arc.begin(raw)["complete"])
         restarted.ensure(raw["id"])

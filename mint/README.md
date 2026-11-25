@@ -1,6 +1,6 @@
 # Total Recall Desk for Linux Mint
 
-Install the Debian package, open **Total Recall Desk**, and choose **Private archive**. The archive opens in your browser on this machine. Imported clips from earlier versions appear automatically. **Open cloud archive** opens the separately hosted owner-authenticated site. Local and hosted archives show the items sent to their respective destinations.
+Install the Debian package, open **Total Recall Desk**, and choose **Private archive**. The archive opens in your browser on this machine. Imported clips from earlier versions appear automatically. **Open cloud archive** opens the separately hosted owner-authenticated site. Local and hosted archives show the items sent to their respective destinations. For hosted sign-in, phone pairing and transfer allowances, see the [hosted archive guide](CLOUD.md).
 
 ## Connect the phone
 

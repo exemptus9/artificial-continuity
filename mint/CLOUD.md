@@ -6,9 +6,11 @@ On Android, open **Archive & sync → Connect website or Mint**, paste the pairi
 
 ## Capacity and cost
 
-The hosted app sets a 350 GB media allowance. It tracks upload and playback separately with a 25 GB allowance for each per UTC calendar month. A transfer can also wait for staging space. The phone shows pending items and keeps its copy until it verifies a receipt. **Check server space** shows current capacity.
+The hosted app sets a 1 TB media allowance (1,000 GB). It tracks upload and playback separately with a 25 GB allowance for each per UTC calendar month. A transfer can also wait for staging space. The phone shows pending items and keeps its copy until it verifies a receipt. **Check server space** shows current capacity.
 
-The owner's monthly hosting budget is $15–30. These app limits control bytes. Railway meters the service and storage separately, so check actual spend and alerts in Railway Billing. Seven years is the retention target for accepted captures. At 32 kbps, 24-hour listening for seven years would produce about 884 GB of AAC before overhead. Shorter listening sessions and selective clips use less space. The 350 GB allowance can fill before an item's seventh anniversary.
+The owner's monthly hosting budget is $15–30. Railway bills bucket storage at $0.015 per GB-month of actual usage. Holding a full 1,000 GB for a whole billing month would cost about $15 for bucket storage alone. An empty allowance costs no bucket storage. Bucket ingress and egress are free. Public **service** egress costs $0.05/GB, including data the service sends to the bucket and playback streamed from the service. Compute, the persistent volume and other workspace usage also contribute to the bill. Check actual spend and billing alerts in Railway. [Bucket billing](https://docs.railway.com/storage-buckets/billing) · [Service resource prices](https://docs.railway.com/pricing/plans)
+
+Seven years is the retention target for accepted captures. At 32 kbps, seven years of continuous AAC is about 884 GB before overhead. That fits within 1,000 GB on paper. Container overhead, additional WAV highlights, and other items use part of the remaining space. **Check server space** shows the actual remaining capacity.
 
 ## Receipts and recovery
 
@@ -16,18 +18,4 @@ Each completed phone transfer requires a matching item ID, byte count and SHA-25
 
 While the host is running, archive maintenance checks expiry hourly and creates a daily catalog snapshot in the bucket. It keeps the two newest verified daily snapshots. A recent upload may be newer than the last snapshot. Snapshot recovery requires access to the same bucket and its media objects. A separately retained export can also preserve an important recording.
 
-For an operator restoring after loss of the catalog volume, stop the web service and start an isolated recovery container from the same image with the archive's bucket configuration. Mount a recovery volume at `/data`. Run the following from `/app` to write a **new** database file. The helper checks the stored hash, archive identity and SQLite integrity and tries the older verified snapshot if needed.
-
-```sh
-python - <<'PY'
-from pathlib import Path
-from cloud_media import CloudMedia
-import recall_desk
-
-target = Path("/data/recovery/clips.sqlite3")
-CloudMedia(recall_desk.archive()).restore_latest(target)
-print(target)
-PY
-```
-
-Preserve the old volume. Use a copy of the restored database as `clips.sqlite3` at the root of the replacement volume. Point the service at that volume and the original bucket. After signing in, verify a known item's timestamp and play its original audio before resuming phone transfers. Keep any unsent or recently acknowledged phone copies until you have checked the recovery.
+If the catalog volume is lost, stop the service and restore the most recent verified database to a new volume while keeping the media bucket. The recovery command checks the stored hash, archive identity and SQLite integrity, then tries the previous snapshot if needed. Sign in and play a known recording before resuming phone transfers. [Operator recovery instructions](CLOUD_RECOVERY.md)

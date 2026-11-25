@@ -15,6 +15,8 @@ import json
 import os
 import re
 import sqlite3
+import shutil
+import time
 import tempfile
 import uuid
 
@@ -28,7 +30,7 @@ SHA = r"[0-9a-f]{64}"
 MEDIA_KEY = re.compile(re.escape(MEDIA) + rf"(\d{{16}})/(segment|journal|clip)/([A-Za-z0-9_-]{{1,128}})/({SHA})")
 SNAP_KEY = re.compile(re.escape(SNAPS) + rf"(\d{{8}})-({SHA})\.sqlite3")
 BLOCK = 1024 * 1024
-DEFAULT_QUOTA = 350_000_000_000
+DEFAULT_QUOTA = 1_000_000_000_000
 
 
 def _error_code(exc):
@@ -78,6 +80,8 @@ class CloudMedia:
                     retries={"mode":"standard","total_max_attempts":3}, s3={"addressing_style":style},
                     request_checksum_calculation="when_required",response_checksum_validation="when_required"))
         self.s3 = client
+        self.work = archive.root/"cloud-work"
+        self.work.mkdir(mode=0o700,exist_ok=True)
         self.locks = archive.root / "cloud-locks"
         self.locks.mkdir(mode=0o700, exist_ok=True)
         with self.db() as db:
@@ -122,6 +126,24 @@ class CloudMedia:
             fcntl.flock(handle, fcntl.LOCK_EX)
             yield
 
+    @contextmanager
+    def scratch(self,label):
+        with tempfile.TemporaryDirectory(dir=self.work,prefix=label+"-") as directory:
+            with (Path(directory)/"active").open("w") as marker:
+                fcntl.flock(marker,fcntl.LOCK_EX)
+                yield Path(directory)
+
+    def _clean_scratch(self):
+        for directory in self.work.iterdir():
+            if (directory.is_symlink() or not directory.is_dir() or
+                not re.fullmatch(r"(wav|catalog)-[a-zA-Z0-9_-]+",directory.name) or
+                time.time()-directory.stat().st_mtime<86400): continue
+            try:
+                with (directory/"active").open("a") as marker:
+                    fcntl.flock(marker,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    shutil.rmtree(directory)
+            except (BlockingIOError,FileNotFoundError): pass
+
     def stripe(self, uid):
         return self.lock("media-" + hashlib.sha256(uid.encode("ascii")).hexdigest()[:2])
 
@@ -158,6 +180,14 @@ class CloudMedia:
             if _error_code(exc) in {"PreconditionFailed","412","ConditionalRequestConflict","409"}:
                 if self._head(key) is not None:
                     return
+            code=_error_code(exc)
+            message=str(getattr(exc,"response",{}).get("Error",{}).get("Message","")).lower()
+            if code in {"NotImplemented","501","UnsupportedHeader"} or (code in {"InvalidArgument","InvalidRequest"} and
+                    any(field in message for field in ("checksum","if-none-match","conditional header"))):
+                if self._head(key) is not None: return
+                with path.open("rb") as source:
+                    self._call(self.s3.put_object,Key=key,Body=source,ContentLength=size,ContentType=mime,Metadata=metadata)
+                return
             raise Failure(503, "Private object upload failed. The local copy is retained.") from exc
 
     def _validate_head(self, head, size, sha, mime):
@@ -253,7 +283,7 @@ class CloudMedia:
             size=clip["n"] or (prior[0] if prior else 0)
             if not size: raise MissingOriginal(503,"A verified original WAV is required")
             data=dict(id=uid,kind="clip",sha=clip["sha"],bytes=size,expires=until)
-            with tempfile.TemporaryDirectory(dir=self.archive.root,prefix="wav-offload-") as temp:
+            with self.scratch("wav") as temp:
                 path=None
                 if clip["n"]:
                     path=Path(temp)/"original.wav"
@@ -384,7 +414,7 @@ class CloudMedia:
             if SNAP_KEY.fullmatch(catalogs[0])[1]>=day:
                 self._rotate(catalogs)
                 return False
-        with tempfile.TemporaryDirectory(dir=self.archive.root,prefix="catalog-snapshot-") as tmp:
+        with self.scratch("catalog") as tmp:
             path=Path(tmp)/"clips.sqlite3"
             self._snapshot_file(path)
             sha=sha_file(path);size=path.stat().st_size;mime="application/vnd.sqlite3"
@@ -413,6 +443,7 @@ class CloudMedia:
     def maintain(self,t=None):
         t=now() if t is None else t
         with self.lock("maintenance"):
+            self._clean_scratch()
             expired=self._expire(t)
             self.archive.trim(t)
             with self.db() as db:
@@ -471,3 +502,20 @@ class CloudMedia:
             except (Failure,OSError,sqlite3.Error) as exc:
                 last_error=exc
         raise Failure(503,"Could not restore either retained catalog snapshot") from last_error
+
+def main():
+    import argparse
+    parser=argparse.ArgumentParser(description="Restore the most recent verified hosted Total Recall catalog")
+    parser.add_argument("operation",choices=("restore",))
+    parser.add_argument("destination",type=Path,help="New SQLite path on a private persistent volume")
+    args=parser.parse_args()
+    from recall_archive import Archive
+    with tempfile.TemporaryDirectory(prefix="total-recall-restore-") as work:
+        import recall_desk as desk
+        desk.ROOT=Path(work);desk.DB=desk.ROOT/"clips.sqlite3"
+        try: CloudMedia(Archive(desk)).restore_latest(args.destination.expanduser().resolve())
+        except Failure as error: parser.exit(1,str(error)+"\n")
+    print("Verified catalog restored to",args.destination)
+
+if __name__=="__main__":
+    main()

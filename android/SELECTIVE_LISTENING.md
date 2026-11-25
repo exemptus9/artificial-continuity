@@ -35,7 +35,7 @@ Open **Archive & sync → Connect website or Mint**. For a later change of desti
 2. For a single batch, tap **Preview transfer**. Check the destination, item counts, exact bytes, and phone and server capacity. Tap **Queue this batch**. For regular transfers, choose **Set up automatic transfers → Enable automatic transfers**. The defaults require Wi-Fi and charging, with up to 32 MiB and 64 items per batch. Automatic batches run at most hourly after a completed batch. Android can delay a run.
 3. To check progress, open **Archive & sync**. **Check server space** shows available capacity. **Stop queued and automatic transfers** cancels pending work on the phone. An interrupted upload can resume from the last acknowledged byte after you approve another batch or the active job retries.
 
-A completed receipt matches the original item ID, byte count and SHA-256. Moving to a different destination makes retained phone audio eligible for the new server. Previously removed phone copies stay on their original server. The hosted archive has a seven-year retention policy and capacity limits. At 32 kbps, seven years of round-the-clock audio takes about 884 GB before overhead. [Hosted storage and recovery](../mint/CLOUD.md)
+A completed receipt matches the original item ID, byte count and SHA-256. Moving to a different destination makes retained phone audio eligible for the new server. Previously removed phone copies stay on their original server. The hosted archive has a seven-year retention policy and a 1 TB (1,000 GB) media allowance. At 32 kbps, seven years of round-the-clock audio takes about 884 GB before overhead and WAV highlights. [Hosted storage and recovery](../mint/CLOUD.md)
 
 ## Freestyle and invented words
 
