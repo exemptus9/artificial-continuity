@@ -21,8 +21,8 @@ import org.json.*;
 
 /** Native, source-first views over the existing encrypted vault. No second memory store. */
 public final class MemoryActivity extends Activity {
-  private static final int BG=0xff101c21, PANEL=0xff1b2b32, FG=0xffeef2ed,
-      MUTED=0xffb3c4c8, ACCENT=0xffb5edae;
+  private static final int BG=0xff142d28, PANEL=0xff203d36, FG=0xffeef2ed,
+      MUTED=0xffb3c4c8, ACCENT=0xffc0f0cb;
   private final ExecutorService worker=Executors.newSingleThreadExecutor();
   private LinearLayout body;
   private JSONObject state;

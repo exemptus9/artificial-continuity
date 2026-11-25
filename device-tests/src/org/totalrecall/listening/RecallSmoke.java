@@ -4,6 +4,14 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
+import android.accessibilityservice.AccessibilityServiceInfo;
+import android.graphics.Rect;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.os.ParcelFileDescriptor;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.provider.Settings;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
 import android.os.Bundle;
@@ -28,6 +36,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.io.ByteArrayInputStream;
@@ -57,6 +66,9 @@ public final class RecallSmoke extends Instrumentation {
             else if ("restart".equals(phase)) restart();
             else if ("asr".equals(phase)) speech();
             else if ("microphone".equals(phase)) microphone();
+            else if ("journal".equals(phase)) journal();
+            else if ("overlay".equals(phase)) overlay();
+            else if ("contention".equals(phase)) contention();
             else throw new IllegalArgumentException(phase);
             b.putString("receipt",receipt.toString()); b.putString("outcome","PASS_"+phase);
             finish(Activity.RESULT_OK,b);
@@ -178,6 +190,12 @@ public final class RecallSmoke extends Instrumentation {
                 }
                 public void onPauseRequested(){throw new AssertionError("Unexpected voice pause");}
             });
+            Method start=method(LiveCapture.class,"start");
+            Method words=method(LiveCapture.class,"words",String.class,boolean.class);
+            Method samplesIn=method(LiveCapture.class,"samples",short[].class,int.class);
+            Method stop=method(LiveCapture.class,"stop",String.class);
+            start.invoke(null);
+            boolean sawPartial=false, sawFinal=false, sawLevel=false;
             try {
                 // Same 100 ms blocks and ASR->command/final/partial->PCM order as the service.
                 byte[] stream=Arrays.copyOf(fixture,fixture.length+8*SelectiveEngine.RATE*2);
@@ -190,14 +208,29 @@ public final class RecallSmoke extends Instrumentation {
                     String utterance=recognizer.accept(samples,n);
                     String command=recognizer.pollCommand();
                     require(command==null,"Fixture misheard as manual voice command");
-                    if(utterance!=null&&!utterance.isEmpty())engine.text(utterance,true);
+                    if(utterance!=null&&!utterance.isEmpty()){
+                        words.invoke(null,utterance,true);
+                        LiveCapture.Snapshot live=LiveCapture.snapshot();
+                        sawFinal|=live.finals.contains(utterance) && live.partial.isEmpty();
+                        engine.text(utterance,true);
+                    }
                     else if(frame>=nextPartialFrame){
                         nextPartialFrame=frame+SelectiveEngine.RATE/4;
                         String partial=recognizer.partial();
-                        if(partial!=null&&!partial.isEmpty())engine.text(partial,false);
+                        if(partial!=null&&!partial.isEmpty()){
+                            words.invoke(null,partial,false);
+                            sawPartial|=partial.equals(LiveCapture.snapshot().partial);
+                            engine.text(partial,false);
+                        }
                     }
+                    samplesIn.invoke(null,samples,n);
+                    sawLevel|=LiveCapture.snapshot().level>0.05f;
                     engine.pcm(samples,n);
+                    if(offset<fixture.length)SystemClock.sleep(100);
                 }
+                require(sawPartial && sawFinal && sawLevel,"Missing production live observation: partial="
+                        +sawPartial+" final="+sawFinal+" meter="+sawLevel);
+                passed("Real offline ASR produced visible-state partial and finalized words; the same fixture PCM moved the production microphone meter.");
                 require(saves.size()==1,"Expected one automatic decision clip after silence; got "+saves.size());
                 Store.Moment saved=null;
                 for(Store.Moment row:store.search("blue book"))if(row.id==saves.get(0))saved=row;
@@ -214,9 +247,271 @@ public final class RecallSmoke extends Instrumentation {
                     +saved.transcript);
             } finally {
                 engine.pause();
+                stop.invoke(null,"Paused");
+                require(liveCleared(),"Transient captions or microphone level survived the pause boundary");
                 for(Long id:saves)store.delete(id);
             }
         }
+    }
+    private static final class SpeechChecks {
+        boolean partial,finalized,level;
+    }
+    private SpeechChecks feedWindow(Object window,Method tick,byte[] pcm,boolean pace)throws Exception{
+        SpeechChecks seen=new SpeechChecks();
+        int frame=1600;
+        byte[] data=Arrays.copyOf(pcm,pcm.length+4*32000);
+        short[] samples=new short[frame];
+        for(int at=0;at<data.length;){
+            int count=Math.min(frame,(data.length-at)/2);
+            for(int i=0;i<count;i++)samples[i]=(short)((data[at++]&255)|((data[at++]&255)<<8));
+            tick.invoke(window,samples,count);
+            LiveCapture.Snapshot live=LiveCapture.snapshot();
+            seen.partial|=!live.partial.isEmpty();
+            seen.finalized|=!live.finals.isEmpty() && live.partial.isEmpty();
+            seen.level|=live.level>0.05f;
+            if(pace && at<=pcm.length)SystemClock.sleep(110);
+        }
+        return seen;
+    }
+    private static java.util.Set<String> audioNames(Context context){
+        File[] files=new File(context.getFilesDir(),"listening-audio").listFiles();
+        java.util.Set<String> result=new java.util.HashSet<>();
+        if(files!=null)for(File f:files)result.add(f.getName());
+        return result;
+    }
+    private void journal()throws Exception{
+        Activity a=launch();
+        long session=-1;
+        try(Store clips=new Store(target);JournalStore journals=new JournalStore(target);
+                OfflineSpeech recognizer=new OfflineSpeech(target);
+                InputStream input=getContext().getAssets().open("ordinary.pcm")){
+            byte[] fixture=bytes(input);
+            require(!JournalStore.enabled(target),"Journal should default to off");
+            int initialSessions=journals.sessions().size(),initialClips=clips.search("").size();
+            java.util.Set<String> oldFiles=audioNames(target);
+            readWindows();
+            // Drive the exact PCM processing, ASR and persistence methods used by the foreground service.
+            // The fixture supplies input samples in place of Android AudioRecord; no release test hooks.
+            RecallService service=new RecallService();
+            method(android.content.ContextWrapper.class,"attachBaseContext",Context.class).invoke(service,target);
+            Class<?> windowType=Class.forName(RecallService.class.getName()+"$Window",true,
+                    RecallService.class.getClassLoader());
+            java.lang.reflect.Constructor<?> create=windowType.getDeclaredConstructor(RecallService.class,Store.class,
+                    JournalStore.class,OfflineSpeech.class,SelectiveEngine.Listener.class);
+            create.setAccessible(true);
+            Method save=method(Store.class,"save",SelectiveEngine.Clip.class);
+            SelectiveEngine.Listener listener=new SelectiveEngine.Listener(){
+                public void onClip(SelectiveEngine.Clip clip){try{save.invoke(clips,clip);}catch(Exception e){throw new RuntimeException(e);}}
+                public void onPauseRequested(){throw new AssertionError("Everyday speech misheard as a pause command");}
+            };
+            Object window=create.newInstance(service,clips,journals,recognizer,listener);
+            Method tick=method(windowType,"tick",short[].class,int.class);
+            Method end=method(windowType,"end",boolean.class,String.class);
+            method(LiveCapture.class,"start").invoke(null);
+            method(windowType,"begin",String.class).invoke(window,"instrumentation PCM");
+            try{
+                SpeechChecks off=feedWindow(window,tick,fixture,true);
+                require(off.partial && off.finalized && off.level,"Production PCM pipeline did not display a partial, a final and audio level");
+                require(journals.sessions().size()==initialSessions,"Disabled journal retained everyday speech");
+                click(waitText(a,"Text journal · off",10000));
+                tapNode("Save full-session text");tapNode("Close");
+                require(JournalStore.enabled(target),"Journal switch failed to opt in");
+                feedWindow(window,tick,fixture,true);
+                List<JournalStore.Session> sessions=journals.sessions();
+                require(sessions.size()==initialSessions+1,"Missing or duplicate journal session");
+                session=sessions.get(0).id;
+                require(sessions.get(0).count==1,"Expected one final utterance in opted-in journal");
+                click(waitText(a,"Text journal · on",10000));
+                tapNode("Save full-session text");tapNode("Close");
+                require(!JournalStore.enabled(target),"Journal switch failed to opt out");
+                feedWindow(window,tick,fixture,false);
+                require(journals.sessions().size()==initialSessions+1 && journals.sessions().get(0).count==1,
+                        "Speech recorded after journal opt-out");
+            }finally{
+                end.invoke(window,false,"Paused synthetic input");
+                method(LiveCapture.class,"stop",String.class).invoke(null,"Paused");
+            }
+            try(JournalStore reopened=new JournalStore(target)){
+                ByteArrayOutputStream text=new ByteArrayOutputStream();
+                reopened.export(session,text);
+                String exported=new String(text.toByteArray(),StandardCharsets.UTF_8);
+                require(exported.equals(reopened.text(session)) && exported.toLowerCase(Locale.ROOT).contains("table")
+                        && reopened.sessions().get(0).endMs>0,"Reopened/exported journal missing final line or session end");
+                require(clips.search("").size()==initialClips && oldFiles.equals(audioNames(target)),
+                        "An ordinary remark created a selected clip or audio file");
+                ByteArrayOutputStream archive=new ByteArrayOutputStream();
+                clips.exportZip(archive,Collections.emptyList());
+                try(ZipInputStream zip=new ZipInputStream(new ByteArrayInputStream(archive.toByteArray()))){
+                    for(ZipEntry e;(e=zip.getNextEntry())!=null;){
+                        require(e.getName().equals("index.json"),"Full-session text leaked into a clip export");
+                        require(!new String(bytes(zip),StandardCharsets.UTF_8).toLowerCase(Locale.ROOT).contains("table"),
+                                "Journal utterance leaked into clip archive index");
+                    }
+                }
+                reopened.delete(session);
+                final long deleted=session;
+                require(reopened.sessions().stream().noneMatch(r->r.id==deleted),"Deleted journal still present");
+                boolean absent=false;
+                try{reopened.export(session,new ByteArrayOutputStream());}catch(java.io.IOException expected){absent=true;}
+                require(absent,"A deleted session can still be exported");session=-1;
+            }
+            passed("Actual service PCM pipeline recognized ordinary synthetic speech, published a partial, final and meter value, wrote one opt-in journal entry and no standalone audio. Toggle-off blocked subsequent speech. Reopened text export and deletion verified.");
+        }finally{
+            JournalStore.setEnabled(target,false);
+            if(session>=0)try(JournalStore cleanup=new JournalStore(target)){cleanup.delete(session);}
+            runOnMainSync(a::finish);waitForIdleSync();
+        }
+    }
+    private void render(Activity a,String name)throws Exception{
+        final Bitmap[] out=new Bitmap[1];
+        runOnMainSync(()->{
+            View v=a.getWindow().getDecorView();
+            out[0]=Bitmap.createBitmap(v.getWidth(),v.getHeight(),Bitmap.Config.ARGB_8888);
+            v.draw(new Canvas(out[0]));
+        });
+        Bitmap bitmap=out[0];
+        try{
+            require(bitmap.getWidth()>=300 && bitmap.getHeight()>bitmap.getWidth(),"Expected phone-size portrait screen");
+            ParcelFileDescriptor[] pipe=getUiAutomation().executeShellCommandRw("dd of=/data/local/tmp/"+name+".png");
+            try(InputStream done=new ParcelFileDescriptor.AutoCloseInputStream(pipe[0])){
+                try(java.io.OutputStream dest=new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])){
+                    require(bitmap.compress(Bitmap.CompressFormat.PNG,100,dest),"Render PNG failed");
+                }
+                bytes(done);
+            }
+            passed("Rendered the listening app's own view at "+bitmap.getWidth()+" × "+bitmap.getHeight()+" into the emulator test receipt.");
+        }finally{bitmap.recycle();}
+    }
+    private static Method method(Class<?> type,String name,Class<?>... signature)throws Exception {
+        Method m=type.getDeclaredMethod(name,signature);
+        m.setAccessible(true);
+        return m;
+    }
+    private static boolean liveCleared(){
+        LiveCapture.Snapshot s=LiveCapture.snapshot();
+        return s.partial.isEmpty() && s.finals.isEmpty() && s.level==0 && !s.active;
+    }
+    private static void until(BooleanSupplier predicate,long timeout,String message){
+        long end=SystemClock.elapsedRealtime()+timeout;
+        do{if(predicate.getAsBoolean())return;SystemClock.sleep(100);}while(SystemClock.elapsedRealtime()<end);
+        throw new AssertionError(message);
+    }
+    private void click(View v){require(v!=null,"Missing clickable view");runOnMainSync(v::performClick);}
+    private void startListening(Activity a){
+        click(waitText(a,"Start listening",10000));
+        until(()->RecallService.isListening() && RecallService.status(target).startsWith("Listening"),120000,
+                "Foreground microphone failed to start");
+    }
+    private void stopListening(){
+        if(RecallService.isListening()){
+            target.startService(new Intent(target,RecallService.class).setAction(RecallService.PAUSE));
+            until(()->!RecallService.isListening(),20000,"Listening remained active after pause");
+        }
+    }
+    private void readWindows(){
+        AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        getUiAutomation().setServiceInfo(info);
+    }
+    private AccessibilityNodeInfo node(String label){
+        for(AccessibilityWindowInfo window:getUiAutomation().getWindows()){
+            AccessibilityNodeInfo root=window.getRoot();
+            if(root==null)continue;
+            for(AccessibilityNodeInfo n:root.findAccessibilityNodeInfosByText(label)){
+                if(label.equalsIgnoreCase(n.getText()==null?"":n.getText().toString())
+                        ||label.contentEquals(n.getContentDescription()==null?"":n.getContentDescription()))return n;
+            }
+        }
+        return null;
+    }
+    private AccessibilityNodeInfo waitNode(String label){
+        final AccessibilityNodeInfo[] result=new AccessibilityNodeInfo[1];
+        until(()->(result[0]=node(label))!=null,15000,"Missing accessibility node "+label);
+        return result[0];
+    }
+    private void tapNode(String label){
+        AccessibilityNodeInfo n=waitNode(label);
+        require(n.performAction(AccessibilityNodeInfo.ACTION_CLICK),"Control rejected click: "+label);
+    }
+    private void overlay()throws Exception{
+        String app=target.getPackageName(), handle="Expand or collapse. Drag to move";
+        Activity a=launch();
+        try{
+            readWindows();
+            RecallOverlay.reset(target);
+            deviceShell("appops set "+app+" SYSTEM_ALERT_WINDOW allow");
+            until(()->Settings.canDrawOverlays(target),10000,"Emulator failed to grant overlay access");
+            require(node(handle)==null,"Granting Android permission started an overlay without opt-in");
+            click(waitText(a,"Floating controls",10000));
+            tapNode("Show controls during listening");tapNode("Back to Total Recall");
+            startListening(a);
+            Rect before=new Rect();waitNode(handle).getBoundsInScreen(before);
+            int dx=Math.round(45*target.getResources().getDisplayMetrics().density);
+            int dy=Math.round(65*target.getResources().getDisplayMetrics().density);
+            deviceShell("input swipe "+before.centerX()+" "+before.centerY()+" "+(before.centerX()+dx)+" "
+                    +(before.centerY()+dy)+" 600");
+            until(()->{
+                AccessibilityNodeInfo n=node(handle);if(n==null)return false;
+                Rect after=new Rect();n.getBoundsInScreen(after);
+                return Math.abs(after.centerY()-before.centerY())>=dy/2;
+            },8000,"Floating control did not move on a physical pointer drag");
+            tapNode(handle);waitNode("Pause and clear temporary audio");
+            tapNode("Hide floating controls");
+            until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
+            require(RecallService.isListening(),"Hiding the overlay stopped listening");
+            passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, and Hide left the microphone running.");
+            stopListening();require(liveCleared(),"Live data survived explicit pause");
+        }finally{
+            stopListening();RecallOverlay.reset(target);
+            deviceShell("appops set "+app+" SYSTEM_ALERT_WINDOW default");
+            runOnMainSync(a::finish);waitForIdleSync();
+        }
+    }
+    private int countGaps(Store store,String value){
+        int count=0;for(String s:store.gaps())if(s.contains(value))count++;return count;
+    }
+    private void compete()throws Exception {
+        deviceShell("am start -W -n org.totalrecall.contender/.VoiceActivity");
+        waitNode("Competing microphone active");
+        until(()->RecallService.isListening() && RecallService.status(target).startsWith("Waiting for microphone"),
+                30000,"Android did not report microphone contention from the separate foreground voice app: "
+                        +RecallService.status(target));
+        LiveCapture.Snapshot live=LiveCapture.snapshot();
+        require(live.partial.isEmpty() && live.finals.isEmpty() && live.level==0,
+                "Unavailable microphone continued to report captions or samples");
+    }
+    private void releaseOther()throws Exception{deviceShell("am force-stop org.totalrecall.contender");}
+    private void contention()throws Exception{
+        Activity a=launch();
+        try(Store store=new Store(target)){
+            readWindows();
+            int opens=countGaps(store,"Microphone gap began"), ends=countGaps(store,"Microphone gap ended");
+            startListening(a);SystemClock.sleep(2300);
+            int rows=store.search("").size();
+            compete();
+            target.startService(new Intent(target,RecallService.class).setAction(RecallService.KEEP));
+            SystemClock.sleep(3000);
+            require(store.search("").size()==rows,"Saved unavailable audio during interruption");
+            long releaseTime=System.currentTimeMillis();
+            releaseOther();
+            until(()->RecallService.isListening() && RecallService.status(target).startsWith("Listening"),
+                    30000,"Releasing the competing app failed to resume the current session");
+            SystemClock.sleep(4500);
+            require(store.search("").size()==rows,"An action requested during the gap replayed after recovery");
+            require(countGaps(store,"Microphone gap began")==opens+1 && countGaps(store,"Microphone gap ended")==ends+1,
+                    "One interruption should have one start and one end in coverage history");
+            target.startService(new Intent(target,RecallService.class).setAction(RecallService.KEEP));
+            until(()->store.search("").size()>rows,30000,"Post-recovery audio could not be saved");
+            Store.Moment newest=store.search("").get(0);
+            require(newest.startMs>=releaseTime-650 && newest.kind.contains(SelectiveEngine.MANUAL)
+                    && file(newest.audio).length>44,"Post-recovery capture includes audio from before release");
+            store.delete(newest.id);
+            passed("A separate foreground privacy-sensitive Android recorder displaced Recall. Capture resumed without restarting, the catalog recorded one bounded gap, and retained audio began after the other recorder released the microphone.");
+            compete();stopListening();releaseOther();
+            SystemClock.sleep(6000);
+            require(!RecallService.isListening() && liveCleared(),"User pause while displaced was undone on mic release");
+            passed("Explicit pause while another app owned the mic prevented automatic resumption and cleared live data.");
+        }finally{releaseOther();stopListening();runOnMainSync(a::finish);waitForIdleSync();}
     }
     private Activity launch(){
         Intent intent=new Intent().setClassName(target.getPackageName(),"org.totalrecall.listening.RecallListenActivity")
@@ -249,10 +544,13 @@ public final class RecallSmoke extends Instrumentation {
         java.util.Set<String> previous=new java.util.HashSet<>();
         try(Store store=new Store(target)){
             for(Store.Moment row:store.search(""))previous.add(row.uid);
+            render(a,"recall-v11-paused");
             View start=waitText(a,"Start listening",8000);runOnMainSync(start::performClick);
             long end=SystemClock.elapsedRealtime()+120000;
             while(SystemClock.elapsedRealtime()<end&&!RecallService.status(target).startsWith("Listening"))SystemClock.sleep(250);
             require(RecallService.isListening()&&RecallService.status(target).startsWith("Listening"),"Foreground capture not active: "+RecallService.status(target));
+            waitText(a,"Pause listening",10000);
+            render(a,"recall-v11-listening");
             deviceShell("input keyevent KEYCODE_SLEEP");
             end=SystemClock.elapsedRealtime()+7000;
             while(power.isInteractive()&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);

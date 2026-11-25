@@ -51,7 +51,7 @@ jobs:
           mkdir -p device-tests/build/receipts
           "$ANDROID_HOME/platform-tools/adb" start-server
           nohup "$ANDROID_HOME/emulator/emulator" -avd recall-synthetic -port 5554 -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -camera-front none > device-tests/build/receipts/emulator.log 2>&1 < /dev/null &
-      - name: Build both packages with the same disposable CI key
+      - name: Build retained 0.10.0, current app and acceptance tools with the same disposable CI key
         run: |
           set -euo pipefail
           export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12"
@@ -61,15 +61,25 @@ jobs:
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass:env RECALL_KEY_PASSWORD -keypass:env RECALL_KEY_PASSWORD -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Recall Device Test'
           bash android/build.sh
           bash device-tests/build.sh
+          prior="$RUNNER_TEMP/recall-0.10.0"
+          git fetch --no-tags --depth 1 origin aa0457e4b6114ec3a35c3169fc03ea15edfb53c7
+          git worktree add --detach "$prior" aa0457e4b6114ec3a35c3169fc03ea15edfb53c7
+          # The old build script independently revalidates the same speech dependencies.
+          mkdir -p "$prior/android/build" "$prior/android/assets/offline-speech"
+          cp -a android/build/speech "$prior/android/build/"
+          cp android/assets/offline-speech/vosk-model-small-en-us-0.15.zip "$prior/android/assets/offline-speech/"
+          bash "$prior/android/build.sh"
           rm -f "$RECALL_KEYSTORE"
-      - name: Exercise archive, restart, speech model and capture controls
+      - name: Verify in-place upgrade and exercise current Android app
         run: |
           set -euo pipefail
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           adb="$ANDROID_HOME/platform-tools/adb"
           timeout 300 bash -c 'until [ "$("$1" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 3; done' _ "$adb"
           "$adb" shell input keyevent 82
-          timeout 600 bash device-tests/run.sh "$PWD/android/build/TotalRecall-0.10.0.apk"
+          current_apk="$(python3 -c 'import json; print("android/build/TotalRecall-"+json.load(open("android/build/build-receipt.json"))["version"]+".apk")')"
+          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.10.0/android/build/TotalRecall-0.10.0.apk" "$PWD/$current_apk"
+          timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="11" android:versionName="0.10.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="12" android:versionName="0.11.0">
  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -11,11 +11,13 @@
  <uses-permission android:name="android.permission.INTERNET"/>
  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
  <uses-permission android:name="android.permission.CAMERA"/>
+ <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
  <uses-feature android:name="android.hardware.camera" android:required="false"/>
  <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
  <queries><intent><action android:name="android.speech.RecognitionService"/></intent><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
- <application android:extractNativeLibs="true" android:label="Total Recall" android:theme="@style/AppTheme" android:icon="@drawable/icon" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
+ <application android:extractNativeLibs="true" android:label="Total Recall" android:theme="@style/AppTheme" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
   <activity android:name="org.totalrecall.listening.RecallListenActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
+  <activity android:name="org.totalrecall.listening.OverlaySettingsActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
   <activity android:name="org.totalrecall.listening.MintLinkActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
   <service android:name="org.continuity.recall.ListenTile" android:label="Recall listening"
       android:icon="@drawable/ic_listening" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"

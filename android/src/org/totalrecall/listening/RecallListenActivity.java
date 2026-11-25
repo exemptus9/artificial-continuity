@@ -40,7 +40,7 @@ import java.util.concurrent.Executors;
 
 /** Private on-device capture and review. All audio/database work stays off the UI thread. */
 public final class RecallListenActivity extends Activity {
-    private static final int MIC=31, EXPORT=32, RESTORE=33;
+    private static final int MIC=31, EXPORT=32, RESTORE=33, JOURNAL_EXPORT=34;
     private static final int PAPER=0xfff7f5ee, INK=0xff192c28, SECOND=0xff435955, TEAL=0xff1d5549,
         PALE=0xffe5ede6, WHITE=Color.WHITE, BORDER=0xffc9d2ca, RED=0xff963d31;
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -52,8 +52,14 @@ public final class RecallListenActivity extends Activity {
         @Override public void onReceive(Context context,Intent intent){refresh();}
     };
     private LinearLayout controls, manualActions;
-    private TextView state, summary, firstUse;
-    private Button toggle, ask, exportAll, restore;
+    private TextView state, summary, firstUse, stableText, partialText, latestCatch, micLabel;
+    private ProgressBar micMeter;
+    private Button journalButton;
+    private long journalExportId=-1;
+    private boolean meterLive;
+    private final Runnable tick=new Runnable(){public void run(){if(registered&&alive()){paintLive();main.postDelayed(this,200);}}};
+
+    private Button toggle, ask;
     private EditText search;
     private boolean reviewToday;
     private volatile int speechGeneration;
@@ -87,23 +93,45 @@ public final class RecallListenActivity extends Activity {
         list.setHeaderDividersEnabled(false); list.setFooterDividersEnabled(false);
         list.setClipToPadding(false); list.setPadding(dp(16),dp(8),dp(16),dp(24));
         LinearLayout header=column();
+        LinearLayout top=row();
+        ImageView emblem=new ImageView(this);emblem.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        int emblemId=getResources().getIdentifier("recall_emblem","drawable",getPackageName());
+        emblem.setImageResource(emblemId==0?getApplicationInfo().icon:emblemId);
+        LinearLayout.LayoutParams logoSize=new LinearLayout.LayoutParams(dp(38),dp(38));logoSize.setMargins(0,0,dp(8),0);top.addView(emblem,logoSize);
         TextView title=text("Total Recall",32,INK,true);title.setTypeface(Typeface.SERIF,Typeface.BOLD);
-        title.setPadding(dp(4),dp(14),0,dp(12));header.addView(title);
-        controls=column();controls.setBackground(card(WHITE,BORDER,18));pad(controls,16,14);
-        TextView label=text("Selective listening",21,INK,true);controls.addView(label);
-        firstUse=text("Start once, then speak naturally. Saved clips include the lead-in to a thought; other audio expires on this phone.",15,SECOND,false);
-        firstUse.setPadding(0,dp(7),0,dp(3));controls.addView(firstUse);
-        state=text("",15,SECOND,false);state.setPadding(0,dp(6),0,dp(12));
+        title.setPadding(dp(4),dp(12),0,dp(10));top.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button menu=link("More");menu.setContentDescription("More listening and archive options");
+        menu.setOnClickListener(v->more(menu));top.addView(menu);header.addView(top);
+        controls=column();controls.setBackground(card(INK,0,18));pad(controls,18,16);
+        LinearLayout identity=row();
+        TextView label=text("Selective listening",20,WHITE,true);identity.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+        micLabel=text("",13,0xffb3e5c5,true);identity.addView(micLabel);controls.addView(identity);
+        state=text("",14,0xffc1d7ca,false);state.setPadding(0,dp(5),0,dp(5));
         state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);controls.addView(state);
-        toggle=button("Start listening",true);toggle.setOnClickListener(v->tappedListen());controls.addView(toggle);
-        manualActions=row();
-        Button keep=button("Keep last minute",false), missed=button("Missed one",false);
-        keep.setOnClickListener(v->command(RecallService.KEEP));missed.setOnClickListener(v->command(RecallService.MISSED));
-        split(manualActions,keep,missed);controls.addView(manualActions);
-        header.addView(controls);
-        LinearLayout infoRow=row();
-        Button help=link("How listening works"), gaps=link("Coverage gaps");
-        help.setOnClickListener(v->about());gaps.setOnClickListener(v->showGaps());split(infoRow,help,gaps);header.addView(infoRow);
+        micMeter=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        micMeter.setIndeterminate(false);micMeter.setMax(100);
+        micMeter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xffb3e5c5));
+        micMeter.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff4d665f));
+        micMeter.setContentDescription("Microphone input level");controls.addView(micMeter,new LinearLayout.LayoutParams(-1,dp(8)));
+        firstUse=text("Speak naturally after starting. Recall keeps selected moments with their lead-in.",16,0xffe0ece3,false);
+        firstUse.setPadding(0,dp(12),0,dp(8));controls.addView(firstUse);
+        stableText=text("",22,WHITE,false);stableText.setTypeface(Typeface.SERIF);stableText.setMaxLines(6);
+        stableText.setEllipsize(TextUtils.TruncateAt.END);stableText.setPadding(0,dp(7),0,0);stableText.setLineSpacing(dp(2),1f);
+        controls.addView(stableText);
+        partialText=text("",18,0xffc1d7ca,false);partialText.setTypeface(Typeface.DEFAULT,Typeface.ITALIC);
+        partialText.setMinLines(1);partialText.setMaxLines(2);partialText.setEllipsize(TextUtils.TruncateAt.END);
+        partialText.setPadding(0,dp(2),0,dp(9));controls.addView(partialText);
+        toggle=button("Start listening",false);toggle.setOnClickListener(v->tappedListen());
+        Button keep=button("Keep last minute",false);
+        keep.setOnClickListener(v->command(RecallService.KEEP));keep.setTag("live-keep");
+        manualActions=row();split(manualActions,toggle,keep);controls.addView(manualActions);
+        latestCatch=text("",14,0xffd3e8d7,false);latestCatch.setPadding(0,dp(8),0,0);latestCatch.setMaxLines(3);
+        latestCatch.setEllipsize(TextUtils.TruncateAt.END);controls.addView(latestCatch);header.addView(controls);
+        LinearLayout sessionTools=row();journalButton=link("Text journal");
+        journalButton.setOnClickListener(v->showJournal());Button floating=link("Floating controls");
+        floating.setOnClickListener(v->{try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.OverlaySettingsActivity"));}
+            catch(Exception ex){problem("Couldn’t open floating controls",ex);}});
+        split(sessionTools,journalButton,floating);header.addView(sessionTools);
         LinearLayout headings=row();listHeading=text("Saved moments",23,INK,true);
         listHeading.setPadding(0,dp(8),0,dp(5));headings.addView(listHeading,new LinearLayout.LayoutParams(0,-2,1));
         daily=link("Review today");daily.setOnClickListener(v->{reviewToday=!reviewToday;search.setText("");refresh();});
@@ -111,21 +139,14 @@ public final class RecallListenActivity extends Activity {
         search=new EditText(this);search.setSingleLine();search.setTextColor(INK);search.setHintTextColor(SECOND);
         search.setHint("Search titles, transcripts or notes");search.setContentDescription("Search saved moments");
         search.setTextSize(16);search.setBackground(card(WHITE,BORDER,10));pad(search,12,10);search.setMinHeight(dp(50));
-        header.addView(search);
-        LinearLayout actions=row();ask=link("Voice search");exportAll=link("Export all");
-        ask.setOnClickListener(v->voiceSearch());exportAll.setOnClickListener(v->chooseExport(-1));split(actions,ask,exportAll);
-        header.addView(actions);
-        Button mint=link("Connect to Mint");mint.setOnClickListener(v->{
-            try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.MintLinkActivity"));}
-            catch(Exception ex){problem("Couldn’t open Mint connection",ex);}
-        });
-        restore=link("Restore ZIP");restore.setOnClickListener(v->chooseRestore());
-        LinearLayout transfer=row();split(transfer,restore,mint);header.addView(transfer);
+        LinearLayout find=row();find.addView(search,new LinearLayout.LayoutParams(0,-2,1));
+        ask=link("Voice search");ask.setMaxWidth(dp(118));ask.setOnClickListener(v->voiceSearch());find.addView(ask);
+        header.addView(find);
         summary=text("Reading saved moments…",14,SECOND,false);summary.setPadding(0,0,0,dp(8));
         header.addView(summary);
         list.addHeaderView(header,null,false);list.setAdapter(adapter);page.addView(list,new LinearLayout.LayoutParams(-1,-1));
         list.setOnItemClickListener((p,v,index,id)->{int pos=index-list.getHeaderViewsCount();if(pos>=0&&pos<items.size()) showMoment(items.get(pos));});
-        if(saved!=null){reviewToday=saved.getBoolean("reviewToday");search.setText(saved.getString("query",""));exportId=saved.getLong("exportId",-1);voicePermissionRequest=saved.getBoolean("voicePermission");}
+        if(saved!=null){journalExportId=saved.getLong("journalExportId",-1);reviewToday=saved.getBoolean("reviewToday");search.setText(saved.getString("query",""));exportId=saved.getLong("exportId",-1);voicePermissionRequest=saved.getBoolean("voicePermission");}
         if(saved==null)applyIntentQuery(getIntent());
         search.addTextChangedListener(new TextWatcher(){
             public void beforeTextChanged(CharSequence s,int start,int count,int after){}
@@ -138,34 +159,49 @@ public final class RecallListenActivity extends Activity {
         super.onNewIntent(intent);setIntent(intent);applyIntentQuery(intent);
     }
     private void applyIntentQuery(Intent intent){
+        if(intent!=null&&intent.getBooleanExtra("overlayStart",false)){
+            intent.removeExtra("overlayStart");
+            main.post(()->{if(alive()&&hasWindowFocus()&&!RecallService.isListening())tappedListen();
+                else if(alive()&&!RecallService.isListening())scheduleOverlayStart();});
+        }
         String q=intent==null?null:intent.getStringExtra("query");
         if(q!=null)search.setText(q);
         requestedMoment=intent==null?-1:intent.getLongExtra("moment_id",-1);
         if(requestedMoment>=0){reviewToday=false;search.setText("");scheduleRead(0);}
     }
+    private boolean overlayRequested;
+    private void scheduleOverlayStart(){overlayRequested=true;}
+    @Override public void onWindowFocusChanged(boolean focus){
+        super.onWindowFocusChanged(focus);
+        if(focus&&overlayRequested){overlayRequested=false;if(alive()&&!RecallService.isListening())tappedListen();}
+    }
     @Override protected void onSaveInstanceState(Bundle out){
         super.onSaveInstanceState(out);out.putBoolean("reviewToday",reviewToday);out.putString("query",search.getText().toString());
-        out.putLong("exportId",exportId);out.putBoolean("voicePermission",voicePermissionRequest);
+        out.putLong("exportId",exportId);out.putLong("journalExportId",journalExportId);out.putBoolean("voicePermission",voicePermissionRequest);
     }
     @Override protected void onStart(){super.onStart();IntentFilter filter=new IntentFilter(RecallService.ACTION_CHANGED);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(observer,filter,Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(observer,filter);
-        registered=true;refresh();
+        registered=true;refresh();main.removeCallbacks(tick);tick.run();
     }
     @Override protected void onResume(){super.onResume();if(state!=null)refresh();}
     @Override protected void onStop(){if(registered){unregisterReceiver(observer);registered=false;}
-        endSpeech();stopPlayer();super.onStop();}
+        main.removeCallbacks(tick);stableText.setText("");partialText.setText("");endSpeech();stopPlayer();super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy();}
 
     private boolean alive(){return !isFinishing()&&!isDestroyed();}
     private void updateControls(){
         boolean active=RecallService.isListening();
         if(active&&!getPreferences(0).getBoolean("listened",false))getPreferences(0).edit().putBoolean("listened",true).apply();
-        firstUse.setVisibility(getPreferences(0).getBoolean("listened",false)?View.GONE:View.VISIBLE);
+        firstUse.setVisibility(active||getPreferences(0).getBoolean("listened",false)?View.GONE:View.VISIBLE);
         String current=RecallService.status(this);
         state.setText(current==null||current.trim().isEmpty()?(active?"Listening on this phone.":"Paused. Start a session when you want to listen."):current);
         toggle.setText(active?"Pause listening":"Start listening");
-        toggle.setEnabled(!commandPending&&!searchRecording);manualActions.setVisibility(active?View.VISIBLE:View.GONE);
+        toggle.setEnabled(!commandPending&&!searchRecording);
+        View keep=manualActions.findViewWithTag("live-keep");keep.setVisibility(active?View.VISIBLE:View.GONE);
+        micLabel.setText(active?"MIC ON":"MIC OFF");meterLive=active;
+        journalButton.setText(JournalStore.enabled(this)?"Text journal · on":"Text journal · off");
+        paintLive();
         listHeading.setText(reviewToday?"Today’s catches":"Saved moments");
         daily.setText(reviewToday?"Show all":"Review today");
     }
@@ -191,7 +227,7 @@ public final class RecallListenActivity extends Activity {
                 main.post(()->{if(!alive()||token!=generation)return;items.clear();items.addAll(rows);adapter.notifyDataSetChanged();
                     summary.setText(today?dayLabel:rows.isEmpty()?(q.isEmpty()?"Your saved clips will appear here.":"No matching moments."):
                         rows.size()+" "+(related?"related ":"")+(rows.size()==1?"moment":"moments"));
-                    exportAll.setEnabled(!exporting&&!importing&&(!q.isEmpty()||!items.isEmpty()));
+
                     if(requestedMoment>=0){
                         long id=requestedMoment;requestedMoment=-1;boolean found=false;
                         for(Store.Moment row:rows)if(row.id==id){showMoment(row);found=true;break;}
@@ -235,6 +271,156 @@ public final class RecallListenActivity extends Activity {
         }
         return result;
     }
+    private void more(View anchor){
+        PopupMenu menu=new PopupMenu(this,anchor);
+        String[] options={"Missed one","How listening works","Coverage gaps","Export all clips","Restore ZIP","Connect to Mint","Open phone vault","Capture sensitivity"};
+        for(int i=0;i<options.length;i++)menu.getMenu().add(0,i,i==7?1:(i==0?0:i+1),options[i]);
+        menu.getMenu().findItem(0).setEnabled(RecallService.isListening());
+        menu.getMenu().findItem(3).setEnabled(!exporting&&!importing);
+        menu.getMenu().findItem(4).setEnabled(!exporting&&!importing);
+        menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){
+            case 0: command(RecallService.MISSED);break;
+            case 1: about();break;
+            case 2: showGaps();break;
+            case 3: chooseExport(-1);break;
+            case 4: chooseRestore();break;
+            case 5: try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.MintLinkActivity"));}
+                    catch(Exception e){problem("Couldn’t open Mint connection",e);}break;
+            case 6: startActivity(new Intent(this,org.continuity.recall.MainActivity.class)
+                        .setAction("org.totalrecall.action.OPEN_VAULT").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));break;
+            case 7: sensitivity();break;
+            default:return false;}return true;});menu.show();
+    }
+    private void sensitivity(){
+        android.content.SharedPreferences prefs=getSharedPreferences("recall-detector",MODE_PRIVATE);
+        int selected=Math.max(-1,Math.min(1,prefs.getInt("sensitivity",0)))+1;
+        String[] choices={"Fewer saves","Balanced (default)","More saves"};
+        new AlertDialog.Builder(this).setTitle("Capture sensitivity")
+            .setSingleChoiceItems(choices,selected,(d,which)->{
+                prefs.edit().putInt("sensitivity",which-1).apply();d.dismiss();
+                Toast.makeText(this,"Capture sensitivity · "+choices[which],Toast.LENGTH_SHORT).show();
+            }).setNegativeButton("Cancel",null).show();
+    }
+    private void updateText(TextView target,String value){if(!TextUtils.equals(target.getText(),value))target.setText(value);}
+    private void paintLive(){
+        LiveCapture.Snapshot snap=LiveCapture.snapshot();
+        boolean armed=meterLive&&RecallService.isListening();
+        boolean waiting=armed&&snap.state.startsWith("Waiting for microphone");
+        boolean warming=armed&&(snap.state.startsWith("Prepar")||!snap.active);
+        boolean listening=armed&&!waiting&&!warming;
+        manualActions.findViewWithTag("live-keep").setEnabled(listening);
+        updateText(micLabel,waiting?"WAITING":warming?"STARTING":listening?"MIC ON":"MIC OFF");
+        String status=armed?snap.state:RecallService.status(this);
+        if(nonempty(status))updateText(state,status);
+        micMeter.setVisibility(listening?View.VISIBLE:View.GONE);
+        micMeter.setProgress(listening?Math.round(100f*Math.max(0f,Math.min(1f,snap.level))):0);
+        String committed="";
+        if(listening&&!snap.finals.isEmpty()){
+            int from=Math.max(0,snap.finals.size()-2);
+            committed=TextUtils.join(" ",snap.finals.subList(from,snap.finals.size())).trim();
+            if(committed.length()>165){int boundary=committed.indexOf(' ',committed.length()-165);
+                committed="… "+committed.substring(boundary<0?committed.length()-165:boundary+1);}
+        }
+        String partial=listening&&snap.partial!=null?snap.partial:"";
+        stableText.setVisibility(listening?View.VISIBLE:View.GONE);partialText.setVisibility(listening?View.VISIBLE:View.GONE);
+        updateText(stableText,nonempty(committed)?committed:(!nonempty(partial)?"Listening for speech…":""));
+        updateText(partialText,partial);
+        String last=nonempty(snap.lastSave)?snap.lastSave:"";
+        if(!last.isEmpty()&&nonempty(snap.reason))last+=" · "+snap.reason;
+        updateText(latestCatch,last);latestCatch.setVisibility(nonempty(last)?View.VISIBLE:View.GONE);
+    }
+    private void showJournal(){
+        boolean enabled=JournalStore.enabled(this);
+        LinearLayout sheet=column();pad(sheet,18,12);ScrollView scroll=new ScrollView(this);scroll.addView(sheet);
+        TextView intro=text("Keep the words from a whole listening session as local text. Original audio is still saved only for selected moments.",16,INK,false);
+        sheet.addView(intro);
+        Switch toggleJournal=new Switch(this);toggleJournal.setText("Save full-session text");toggleJournal.setTextColor(INK);toggleJournal.setTextSize(16);
+        toggleJournal.setChecked(enabled);toggleJournal.setMinHeight(dp(54));sheet.addView(toggleJournal);
+        toggleJournal.setOnClickListener(v->{
+            boolean on=toggleJournal.isChecked();toggleJournal.setEnabled(false);
+            worker.execute(()->{
+                try {JournalStore.setEnabled(getApplicationContext(),on);}
+                catch(RuntimeException e){main.post(()->{if(alive())problem("Couldn’t change journal settings",e);});}
+                finally {main.post(()->{if(alive()){
+                    toggleJournal.setChecked(JournalStore.enabled(this));toggleJournal.setEnabled(true);updateControls();
+                }});}
+            });
+        });
+        TextView retentionLabel=text("Keep journals for",14,SECOND,true);retentionLabel.setPadding(0,dp(6),0,0);sheet.addView(retentionLabel);
+        final int[] days={1,7,30,90,0};String[] labels={"1 day","7 days","30 days","90 days","Until I delete them"};
+        final int existing=JournalStore.retentionDays(this);int selected=0;for(int i=0;i<days.length;i++)if(days[i]==existing)selected=i;
+        Button retention=button(labels[selected],false);sheet.addView(retention);
+        retention.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Journal retention").setItems(labels,(d,w)->{
+            if(days[w]==JournalStore.retentionDays(this))return;
+            Runnable apply=()->{
+                retention.setEnabled(false);
+                worker.execute(()->{
+                    try {JournalStore.setRetentionDays(this,days[w]);main.post(()->{if(alive())retention.setText(labels[w]);});}
+                    catch(RuntimeException e){main.post(()->{if(alive())problem("Couldn’t change retention",e);});}
+                    finally{main.post(()->{if(alive())retention.setEnabled(true);});}
+                });
+            };
+            if(days[w]>0&&(JournalStore.retentionDays(this)==0||days[w]<JournalStore.retentionDays(this)))new AlertDialog.Builder(this)
+                .setTitle("Shorten retention?").setMessage("Older session text outside the new window may be deleted.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Apply",(x,y)->apply.run()).show();
+            else apply.run();
+        }).show());
+        Button browse=button("Browse session journals",true);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.topMargin=dp(14);sheet.addView(browse,lp);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Text journal").setView(scroll).setPositiveButton("Close",null).create();
+        browse.setOnClickListener(v->{dialog.dismiss();listJournals();});dialog.show();
+    }
+    private void listJournals(){
+        worker.execute(()->{try(JournalStore store=new JournalStore(getApplicationContext())){
+            List<JournalStore.Session> sessions=store.sessions();
+            String[] rows=new String[sessions.size()];
+            for(int i=0;i<rows.length;i++){JournalStore.Session ses=sessions.get(i);
+                rows[i]=momentDate(ses.startMs)+(ses.endMs==0?" · Open":"")+"\n"+ses.count+" "+(ses.count==1?"entry":"entries");}
+            main.post(()->{if(!alive())return;
+                AlertDialog.Builder dlg=new AlertDialog.Builder(this).setTitle("Session journals").setNegativeButton("Close",null);
+                if(rows.length==0)dlg.setMessage("No journals yet. Turn on full-session text, then start speaking during a listening session.");
+                else dlg.setItems(rows,(di,pos)->openJournal(sessions.get(pos)));
+                dlg.show();});
+        }catch(Exception e){main.post(()->{if(alive())problem("Couldn’t list journals",e);});}});
+    }
+    private void openJournal(JournalStore.Session session){
+        worker.execute(()->{try(JournalStore store=new JournalStore(getApplicationContext())){
+            String transcript=store.text(session.id);
+            main.post(()->{if(!alive())return;ScrollView scroll=new ScrollView(this);LinearLayout column=column();
+                pad(column,18,8);scroll.addView(column);
+                if(nonempty(session.endReason)){
+                    TextView coverage=text(session.endReason,14,SECOND,true);coverage.setPadding(0,0,0,dp(12));column.addView(coverage);
+                }
+                TextView body=text(nonempty(transcript)?transcript:"No recognized speech yet.",17,INK,false);
+                body.setTextIsSelectable(true);body.setLineSpacing(dp(4),1f);column.addView(body);
+                new AlertDialog.Builder(this).setTitle(momentDate(session.startMs)).setView(scroll)
+                    .setNegativeButton("Delete",(d,w)->new AlertDialog.Builder(this).setTitle("Delete this journal?")
+                        .setMessage("Permanently remove this session’s saved text. Selected audio clips stay in your timeline.")
+                        .setNegativeButton("Cancel",null).setPositiveButton("Delete",(x,y)->deleteJournal(session.id)).show())
+                    .setNeutralButton("Export text",(d,w)->chooseJournalExport(session.id)).setPositiveButton("Close",null).show();});
+        }catch(Exception e){main.post(()->{if(alive())problem("Couldn’t open journal",e);});}});
+    }
+    private void deleteJournal(long id){
+        worker.execute(()->{try(JournalStore store=new JournalStore(getApplicationContext())){
+            store.delete(id);main.post(()->{if(alive()){Toast.makeText(this,"Journal deleted",Toast.LENGTH_SHORT).show();listJournals();}});
+        }catch(Exception e){main.post(()->{if(alive())problem("Couldn’t delete journal",e);});}});
+    }
+    private void chooseJournalExport(long id){
+        journalExportId=id;
+        Intent create=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/plain")
+            .putExtra(Intent.EXTRA_TITLE,"Total-Recall-journal-"+id+".txt");
+        try{startActivityForResult(create,JOURNAL_EXPORT);}catch(Exception e){problem("No document picker available",e);}
+    }
+    private void exportJournal(Uri destination){
+        long id=journalExportId;journalExportId=-1;
+        if(id<0){Toast.makeText(this,"Select the session again to export.",Toast.LENGTH_LONG).show();return;}
+        worker.execute(()->{try(JournalStore store=new JournalStore(getApplicationContext());
+                OutputStream stream=getContentResolver().openOutputStream(destination,"wt")){
+            if(stream==null)throw new java.io.IOException("Document provider returned no output stream.");
+            store.export(id,stream);
+        }catch(Exception e){main.post(()->{if(alive())problem("Journal export incomplete",e);});return;}
+        main.post(()->{if(alive())Toast.makeText(this,"Journal exported",Toast.LENGTH_SHORT).show();});});
+    }
     private void tappedListen(){
         endSpeech();stopPlayer();
         if(RecallService.isListening()){command(RecallService.PAUSE);return;}
@@ -269,9 +455,10 @@ public final class RecallListenActivity extends Activity {
     }
     private void about(){
         new AlertDialog.Builder(this).setTitle("Selective listening")
-            .setMessage("Start a session where people know the microphone is active. Keep the phone locked or use other apps while the listening service runs.\n\n"
-                +"Recall keeps a rolling window in memory. A detected idea or decision can save a clip with its lead-in and a searchable transcript. Ordinary audio expires as the window rolls forward.\n\n"
-                +"Use Keep last minute or say “Lexi, keep the last minute.” A brief vibration acknowledges a saved manual catch when vibration is available. Mark a catch Worth keeping or Less like this to tune later selections. Pause from this screen or the listening notification.")
+            .setMessage("Start a session while everyone nearby knows the microphone is active. Speak naturally as you work. The meter shows microphone input, and the live words are an on-device transcription.\n\n"
+                +"Repeated lines, rhymes, words you define and project decisions can trigger a clip. Recall includes the lead-in. Under More → Capture sensitivity, choose More saves for freestyle or Fewer saves for a quieter timeline.\n\n"
+                +"Keep last minute saves on demand. You can also say “Lexi, keep the last minute.” A brief vibration acknowledges a manual catch when available. Rate clips to tune later selections.\n\n"
+                +"Ordinary audio expires from memory. Turn on Text journal if you want to retain the session’s recognized words. If the microphone is interrupted, the waiting state marks a coverage gap until input returns; Pause ends the session.")
             .setPositiveButton("Got it",null).show();
     }
 
@@ -367,22 +554,23 @@ public final class RecallListenActivity extends Activity {
         try{startActivityForResult(choose,RESTORE);}catch(Exception e){problem("No document picker available",e);}
     }
     private void restoreZip(Uri uri){
-        importing=true;restore.setEnabled(false);exportAll.setEnabled(false);summary.setText("Checking listening archive…");
+        importing=true;summary.setText("Checking listening archive…");
         worker.execute(()->{
             try(Store store=new Store(getApplicationContext());InputStream input=getContentResolver().openInputStream(uri)){
                 if(input==null)throw new java.io.IOException("The selected document could not be opened.");
                 String report=store.importZip(input);
-                main.post(()->{if(alive()){importing=false;restore.setEnabled(true);search.setText("");refresh();
+                main.post(()->{if(alive()){importing=false;search.setText("");refresh();
                     new AlertDialog.Builder(this).setTitle("Restore complete").setMessage(report).setPositiveButton("Close",null).show();}});
-            }catch(Exception e){main.post(()->{if(alive()){importing=false;restore.setEnabled(true);refresh();problem("Couldn’t restore this archive",e);}});}
+            }catch(Exception e){main.post(()->{if(alive()){importing=false;refresh();problem("Couldn’t restore this archive",e);}});}
         });
     }
     @Override protected void onActivityResult(int req,int result,Intent data){
         super.onActivityResult(req,result,data);
         if(result!=RESULT_OK||data==null||data.getData()==null)return;
+        if(req==JOURNAL_EXPORT){exportJournal(data.getData());return;}
         if(req==RESTORE){restoreZip(data.getData());return;}
         if(req!=EXPORT)return;
-        final Uri uri=data.getData();final long id=exportId;exporting=true;exportAll.setEnabled(false);summary.setText("Exporting audio and transcripts…");
+        final Uri uri=data.getData();final long id=exportId;exporting=true;summary.setText("Exporting audio and transcripts…");
         worker.execute(()->{try(Store store=new Store(getApplicationContext());OutputStream out=getContentResolver().openOutputStream(uri,"wt")){
             if(out==null)throw new java.io.IOException("Document provider returned no output stream.");
             if(id<0)store.exportZip(out);else store.exportZip(out,Collections.singletonList(id));

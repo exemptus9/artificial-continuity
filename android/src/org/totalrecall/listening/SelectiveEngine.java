@@ -67,6 +67,197 @@ public final class SelectiveEngine {
         }
     }
 
+    private static final class Pronunciation {
+        final int syllables;
+        final String rhyme;
+        Pronunciation(int syllables, String rhyme) {
+            this.syllables = syllables;
+            this.rhyme = rhyme;
+        }
+    }
+
+    private static volatile Map<String, Pronunciation> dictionary = java.util.Collections.emptyMap();
+
+    /** Loads the pinned stress/syllable/rhyme projection from a packaged asset, once per process. */
+    public static synchronized void loadPronunciations(java.io.InputStream gzip) throws java.io.IOException {
+        if (!dictionary.isEmpty()) return;
+        Map<String, Pronunciation> index = new HashMap<>(180000);
+        Map<String, Pronunciation> shared = new HashMap<>();
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new java.util.zip.GZIPInputStream(gzip), java.nio.charset.StandardCharsets.US_ASCII))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                int first = line.indexOf('\t'), second = line.lastIndexOf('\t');
+                if (first < 1 || second <= first || second == line.length() - 1)
+                    throw new java.io.IOException("Damaged pronunciation index");
+                String key = line.substring(first + 1);
+                Pronunciation value = shared.get(key);
+                if (value == null) {
+                    int count;
+                    try { count = Integer.parseInt(line.substring(first+1,second)); }
+                    catch (NumberFormatException ex) { throw new java.io.IOException("Invalid syllable count",ex); }
+                    value = new Pronunciation(count,line.substring(second+1));
+                    shared.put(key,value);
+                }
+                index.put(line.substring(0,first),value);
+            }
+        }
+        if (index.size() != 124903) throw new java.io.IOException("Incomplete pronunciation index");
+        dictionary = index;
+    }
+
+    public static int pronunciationCount() { return dictionary.size(); }
+    private int sensitivity;
+    /** -1 stricter, 0 balanced, +1 exploratory. Explicit commands always retain their meaning. */
+    public synchronized void setSensitivity(int value) { sensitivity = Math.max(-1, Math.min(1, value)); }
+
+    private static final Pattern LETTER_RUN = Pattern.compile("(?:^| )(?:[a-z] ){2,}[a-z](?: |$)");
+    private static final Set<String> ROUTINE = new HashSet<>(Arrays.asList(
+        "buy","buying","bought","shopping","groceries","grocery","receipt","ingredients",
+        "errands","appointment","appointments","laundry","items","checklist","orders","order",
+        "checkout","percent","dollars","invoice","discount","quantity","restock","pickup"));
+    private static boolean routineLine(String s) {
+        if (s.matches(".*\\d.*")) return true;
+        for (String word : s.split(" ")) if (ROUTINE.contains(word)) return true;
+        return has(s,"pick up","i need to get","i need the","on the list","we need some","do we have","i also need");
+    }
+    private static String endRhyme(String word) {
+        if (word == null || word.length() < 2 || BOILERPLATE.contains(word)) return "";
+        Pronunciation p = dictionary.get(word);
+        return p == null ? "" : p.rhyme;
+    }
+    private static int syllables(String word) {
+        Pronunciation p = dictionary.get(word);
+        return p == null ? Math.max(1,word.replaceAll("[^aeiouy]+"," ").trim().split(" +").length) : p.syllables;
+    }
+    private static final class Line {
+        final String[] words;
+        final int rhythm;
+        final String end;
+        Line(String line) {
+            words=line.split(" ");
+            int total=0;
+            for (String word:words) total+=syllables(word);
+            rhythm=total; end=words[words.length-1];
+        }
+    }
+    private static boolean similarLength(int a,int b) { return Math.abs(a-b)<= Math.max(2,Math.min(a,b)/3); }
+    private static boolean rhymes(String a,String b) {
+        if (a.equals(b) || a.endsWith(b) && a.length()-b.length()>2 && b.length()>4 || b.endsWith(a) && b.length()-a.length()>2 && a.length()>4) return false;
+        String rhyme=endRhyme(a);
+        return !rhyme.isEmpty() && rhyme.equals(endRhyme(b));
+    }
+    private static boolean alliterates(Line line) {
+        Set<String> unique = new HashSet<>();
+        int[] initials = new int[26];
+        for (String word:line.words) {
+            if (word.length()<3 || COMMON.contains(word) || BOILERPLATE.contains(word) || !unique.add(word)) continue;
+            char initial=word.charAt(0);
+            if (initial>='a' && initial<='z' && ++initials[initial-'a']>=3) return true;
+        }
+        return false;
+    }
+    private static boolean repeatedOpening(Line a,Line b) {
+        return a.words.length>=4 && b.words.length>=4 && a.words[0].equals(b.words[0]) && a.words[1].equals(b.words[1])
+            && !a.end.equals(b.end) && !COMMON.contains(a.words[0]) && !COMMON.contains(a.words[1]);
+    }
+    /** ASR can emit a single long breath instead of line breaks. Detect three different rhyming
+        words at similar syllabic intervals, including the final word of the recognized phrase. */
+    private static boolean internalVerse(Line line) {
+        String[] words=line.words;
+        if (words.length<10 || words.length>90) return false;
+        int end=words.length-1;
+        int[] beats=new int[words.length+1];
+        for(int i=0;i<words.length;i++) beats[i+1]=beats[i]+syllables(words[i]);
+        for(int mid=Math.max(2,end-13);mid<=end-3;mid++){
+            if(!rhymes(words[mid],words[end]))continue;
+            for(int first=Math.max(2,mid-13);first<=mid-3;first++){
+                if(rhymes(words[first],words[end]) && rhymes(words[first],words[mid])
+                    && similarLength(beats[mid+1]-beats[first+1],beats[end+1]-beats[mid+1]))return true;
+            }
+        }
+        return false;
+    }
+
+    private Hit verse(Segment current) {
+        if(routineLine(current.normalized)) return null;
+        Line now=new Line(current.normalized);
+        if(internalVerse(now))return new Hit(POETRY,"Three different words rhyme at similar syllabic intervals inside one utterance.",5);
+        if(now.words.length<3||now.words.length>20)return null;
+        List<Line> lines=new ArrayList<>();
+        lines.add(now);
+        java.util.Iterator<Segment> reverse=recent.descendingIterator();
+        long newer=at;
+        while(reverse.hasNext() && lines.size()<4){
+            Segment past=reverse.next();
+            if(newer-past.at>14L*RATE || at-past.at>36L*RATE || routineLine(past.normalized))break;
+            Line candidate=new Line(past.normalized);
+            if(candidate.words.length<3 || candidate.words.length>20)break;
+            lines.add(candidate);
+            newer=past.at;
+        }
+        if(lines.size()<3)return null;
+        Line prev=lines.get(1), oldest=lines.get(2);
+        if(!similarLength(now.rhythm,prev.rhythm)||!similarLength(prev.rhythm,oldest.rhythm))return null;
+        if(rhymes(now.end,prev.end)&&rhymes(prev.end,oldest.end)&&rhymes(now.end,oldest.end))
+            return new Hit(POETRY,"Three successive phrases have similar lengths and distinct rhyming endings.",5);
+        if(lines.size()==4 && rhymes(now.end,oldest.end) && rhymes(prev.end,lines.get(3).end)
+                && similarLength(oldest.rhythm,lines.get(3).rhythm))
+            return new Hit(POETRY,"Four similarly paced phrases form an alternating end-rhyme pattern.",5);
+        int soundPatterns=(alliterates(now)?1:0)+(alliterates(prev)?1:0)+(alliterates(oldest)?1:0);
+        if(soundPatterns>=2 && (rhymes(now.end,prev.end)||rhymes(now.end,oldest.end)
+                || repeatedOpening(now,prev) || repeatedOpening(prev,oldest) || soundPatterns==3))
+            return new Hit(POETRY,"Repeated line lengths, clustered initial sounds and parallel phrasing.",4);
+        return null;
+    }
+    private static boolean unknownCandidate(String word) {
+        return !dictionary.isEmpty() && word.length()>=5 && word.length()<=35 && word.matches("[a-z]+")
+            && !dictionary.containsKey(word);
+    }
+    private static Hit coinage(String now,String previous) {
+        if(has(now,"a word i made up","word that i made up","word i just made up","a word i invented",
+                "a word i coined","just coined","just invented a word","just made up a word",
+                "i made up the word","i made up a word","my own word","this is my neologism","i coined the term",
+                "i made that word up","i made this word up","word i just invented","word i invented","i call this word"))
+            return new Hit(FORGE,"You explicitly described a word as one you invented.",7);
+        boolean correction = has(now,"no i mean","no wait","no it's","i mean","actually it's","it's pronounced","i pronounce it");
+        if (correction && !previous.isEmpty() && previous.split(" ").length<=6 && now.split(" ").length<=10) {
+            // ASR often splits a coined word into familiar words: compare compact spoken forms.
+            String before=previous.replaceFirst("^(?:a |the |it's |a word )","").replace(" ","");
+            String after=now.replaceFirst("^(?:no i mean |no wait |no it's |i mean |actually it's |it's pronounced |i pronounce it )","").replace(" ","");
+            int commonPrefix=0;
+            while(commonPrefix<Math.min(before.length(),after.length()) && before.charAt(commonPrefix)==after.charAt(commonPrefix))commonPrefix++;
+            if(Math.min(before.length(),after.length())>=7 && commonPrefix>=5 &&
+                    (unknownCandidate(before)||unknownCandidate(after)))return new Hit(FORGE,"A short name or term was repeated with a pronunciation correction.",4);
+        }
+        if(LETTER_RUN.matcher(now).find() && (has(now+" "+previous,"word","spell","spelled","spelling","i call it","letters")
+                    || previous.split(" ").length<=5 && !previous.isEmpty() && !routineLine(previous)))
+            return new Hit(FORGE,"A short candidate term was followed by spoken spelling.",5);
+        String[] words=now.split(" ");
+        if(words.length>18)return null;
+        for(String w:words) {
+            if(!unknownCandidate(w))continue;
+            if(has(previous,w) || java.util.Collections.frequency(Arrays.asList(words),w)>1)
+                return new Hit(FORGE,"A candidate outside the local pronunciation dictionary was repeated.",4);
+            for(String candidate:previous.split(" ")){
+                if(!unknownCandidate(candidate) || candidate.length()<6 || w.length()<6)continue;
+                if(smallEdit(candidate,w) && previous.split(" ").length<=7 && words.length<=7)
+                    return new Hit(FORGE,"Two short phrases try similar spellings of a candidate term.",4);
+            }
+        }
+        return null;
+    }
+    private static boolean smallEdit(String a,String b) {
+        if(Math.abs(a.length()-b.length())>1)return false;
+        int i=0,j=0,edits=0;
+        while(i<a.length()&&j<b.length()){
+            if(a.charAt(i)==b.charAt(j)){i++;j++;continue;}
+            if(++edits>1)return false;
+            if(a.length()>=b.length())i++;
+            if(a.length()<=b.length())j++;
+        }
+        return edits+(a.length()-i)+(b.length()-j)==1;
+    }
     private static final class Hit {
         final String category, reason;
         final int score;
@@ -144,7 +335,9 @@ public final class SelectiveEngine {
     private long lastVoiceCommand = -10L * RATE;
     private boolean active, stopped, heldVoiceCommand;
     private String interim = "";
-    private long interimAt = -1;
+    private long interimAt = -1, scoredPartialAt = -3L * RATE;
+    private int lastPartialLength;
+    private String partialSuffix = "";
     private short[] selected;
     private int length;
 
@@ -171,6 +364,7 @@ public final class SelectiveEngine {
         // Check silence in short blocks regardless of the audio adapter's batch size.
         for (int offset = 0; offset < count; ) {
             int n = Math.min(320, count - offset);
+            if (active) n = Math.min(n, MAX_CLIP - length);
             long energy = 0;
             for (int i = offset; i < offset + n; i++) {
                 int sample = samples[i];
@@ -190,7 +384,13 @@ public final class SelectiveEngine {
             if (energy > (long) n * 270 * 270) lastLoud = at;
             if (active && (length == MAX_CLIP ||
                 (at - triggerAt >= MIN_TAIL && at - lastLoud >= END_SILENCE))) {
+                boolean continueVerse = length == MAX_CLIP && tags.contains(POETRY)
+                    && at - triggerAt <= 30L * RATE && at - lastLoud < END_SILENCE;
                 commit();
+                if (continueVerse && !stopped) {
+                    select(POETRY, "Continuation of the selected passage after the clip length limit.", 0);
+                    keptWords.clear(); // the next final utterance is indexed in the new chunk
+                }
             }
         }
         discardExpired();
@@ -200,7 +400,7 @@ public final class SelectiveEngine {
     public synchronized void text(String words, boolean isFinal) {
         if (stopped || words == null) return;
         String body = words.trim();
-        if (body.length() > MAX_TEXT) body = body.substring(0, MAX_TEXT);
+        if (body.length() > MAX_TEXT) body = body.substring(body.length() - MAX_TEXT);
         if (!isFinal && !body.equals(interim)) interimAt = at;
         if (!isFinal) interim = body;
         String n = normalize(body);
@@ -225,7 +425,25 @@ public final class SelectiveEngine {
             heldVoiceCommand = !isFinal;
             return;
         }
-        if (!isFinal) return;
+        // A fast uninterrupted passage may not endpoint for many seconds. Score a growing
+        // hypothesis sparingly, and require two independent signals (or a clear coining cue).
+        if (!isFinal) {
+            String suffix = body.substring(Math.max(0, body.length()-60));
+            boolean growing = body.length() >= lastPartialLength + 15 || body.length() == MAX_TEXT && !suffix.equals(partialSuffix);
+            if (at - scoredPartialAt >= 2L * RATE && growing) {
+                partialSuffix = suffix;
+                scoredPartialAt = at;
+                lastPartialLength = body.length();
+                String[] tokens = n.split(" ");
+                String candidate = n;
+                if (tokens.length > 70)
+                    candidate = String.join(" ",Arrays.asList(tokens).subList(tokens.length - 70,tokens.length));
+                Hit hint = detect(new Segment(candidate, at));
+                if (hint != null && hint.score >= 5 && (hint.category.equals(POETRY) || hint.category.equals(FORGE)))
+                    select(hint.category, hint.reason, RATE * 45);
+            }
+            return;
+        }
         heldVoiceCommand = false;
         clearInterim();
         discardExpired();
@@ -234,7 +452,7 @@ public final class SelectiveEngine {
         Hit hit = detect(current);
         recent.addLast(current);
         while (recent.size() > MAX_SEGMENTS) recent.removeFirst();
-        if (hit != null) select(hit.category, hit.reason, CONTEXT);
+        if (hit != null) select(hit.category, hit.reason, hit.category.equals(POETRY) ? RATE * 45 : CONTEXT);
     }
 
     public synchronized void keep() {
@@ -276,6 +494,9 @@ public final class SelectiveEngine {
     private void clearInterim() {
         interim = "";
         interimAt = -1;
+        lastPartialLength = 0;
+        partialSuffix = "";
+        scoredPartialAt = at - 3L * RATE;
     }
 
     private void discardExpired() {
@@ -368,9 +589,13 @@ public final class SelectiveEngine {
                 "build", "app", "chapter", "draft", "prototype", "feature", "instructions");
         boolean edit = s.matches("(?:let's |please |we should |i'll )?(?:put|move|change|rename|keep|remove|replace|add) .+");
         List<Hit> options = new ArrayList<>();
+        Hit invented = coinage(s, earlier);
+        if (invented != null) options.add(invented);
+        Hit verse = verse(current);
+        if (verse != null) options.add(verse);
         if (coin || meaning) options.add(new Hit(FORGE, "Language for coining or defining a term.",
             (coin ? 3 : 0) + (meaning ? 2 : 0) + (shared || repeated || definitionAfterName ? 2 : 0)));
-        int nearRepeat = nearRepeatedLine(s, earlier) ? 4 : 0;
+        int nearRepeat = !routineLine(s) && !routineLine(earlier) && nearRepeatedLine(s, earlier) ? 4 : 0;
         if (poetry || nearRepeat > 0) options.add(new Hit(POETRY,
             nearRepeat > 0 ? "A short line was repeated or revised in succession." : "An explicit poetry cue.",
             nearRepeat + (poetry ? 4 : 0)));
@@ -397,7 +622,7 @@ public final class SelectiveEngine {
         for (Hit h : options) {
             int net = feedback.containsKey(h.category) ? feedback.get(h.category) : 0;
             int adjusted = h.score + reviewAdjustment + (net >= 2 ? 1 : net <= -2 ? -1 : 0);
-            if (adjusted >= 4 && (best == null || adjusted > best.score))
+            if (adjusted >= 4 - sensitivity && (best == null || adjusted > best.score))
                 best = new Hit(h.category, h.reason, adjusted);
         }
         return best;

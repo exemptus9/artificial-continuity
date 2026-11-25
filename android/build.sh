@@ -11,6 +11,7 @@ version=$(python3 -c 'from xml.etree import ElementTree as E; print(E.parse("And
 commit=$(git rev-parse HEAD 2>/dev/null || echo source-export)
 output="build/TotalRecall-$version.apk"
 python3 prepare-speech.py
+python3 tests/prepare-prosody.py
 rm -rf build/classes build/dex build/generated
 mkdir -p build/classes build/dex build/generated/org/continuity/recall
 printf 'package org.continuity.recall; public final class BuildInfo { public static final String VERSION="%s"; public static final String COMMIT="%s"; }\n' "$version" "$commit" >build/generated/org/continuity/recall/BuildInfo.java

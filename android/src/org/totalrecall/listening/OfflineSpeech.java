@@ -58,6 +58,13 @@ public final class OfflineSpeech implements AutoCloseable {
         return heard;
     }
 
+    /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
+    public void resetStream() {
+        recognizer.reset();
+        commandRecognizer.reset();
+        pendingCommand = null;
+    }
+
     public String partial() {
         return text(recognizer.getPartialResult(), "partial");
     }

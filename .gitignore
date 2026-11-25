@@ -12,7 +12,9 @@ android/build/
 
 # Generated speech assets, device tests and local release packaging
 android/assets/offline-speech/
+android/assets/listening/cmudict-prosody.tsv.gz
 device-tests/build/
 *.p12
 *.apk
 *.deb
+

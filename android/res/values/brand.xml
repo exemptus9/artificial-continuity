@@ -1,0 +1,5 @@
+<resources>
+    <color name="recall_launcher_background">#142D28</color>
+    <string name="vault_shortcut_short">Phone vault</string>
+    <string name="vault_shortcut_long">Open phone vault</string>
+</resources>

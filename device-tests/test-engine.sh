@@ -2,6 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 SOURCE="${RECALL_ENGINE_SOURCE:-../android/src/org/totalrecall/listening/SelectiveEngine.java}"
+if [[ ! -f ../android/assets/listening/cmudict-prosody.tsv.gz ]]; then
+  python3 ../android/tests/prepare-prosody.py
+fi
 mkdir -p build/host
-javac -encoding UTF-8 -source 8 -target 8 -d build/host "$SOURCE" host/SelectiveEngineTest.java
+listen=../android/src/org/totalrecall/listening
+javac -encoding UTF-8 --release 8 -d build/host "$SOURCE" host/SelectiveEngineTest.java \
+  "$listen/LiveCapture.java" "$listen/MicrophoneContinuity.java" ../android/tests/LiveCaptureTest.java
 java -cp build/host org.totalrecall.listening.SelectiveEngineTest
+java -cp build/host org.totalrecall.listening.LiveCaptureTest

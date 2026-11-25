@@ -8,7 +8,7 @@ ns='{http://schemas.android.com/apk/res/android}'
 manifest=ET.parse(root/'AndroidManifest.xml').getroot()
 version=manifest.get(ns+'versionName')
 apk=root/'build'/f'TotalRecall-{version}.apk'
-inputs=sorted([root/'AndroidManifest.xml',root/'build.sh',root/'build-receipt.py',root/'prepare-speech.py']+
+inputs=sorted([root/'AndroidManifest.xml',root/'build.sh',root/'build-receipt.py',root/'prepare-speech.py',root/'tests/prepare-prosody.py']+
               list((root/'src').rglob('*.java'))+list((root/'res').rglob('*'))+list((root/'assets').rglob('*')))
 hashes={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs if p.is_file()}
 def git(*args):

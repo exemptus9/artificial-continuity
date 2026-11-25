@@ -21,11 +21,11 @@ import java.util.*;
 import org.json.*;
 
 public class MainActivity extends Activity {
-  static final int BG = 0xff101c21,
-      CARD = 0xff203139,
-      FG = 0xffeef2ed,
-      MUTED = 0xffb3c4c8,
-      ACCENT = 0xffb5edae;
+  static final int BG = 0xff142d28,
+      CARD = 0xff203d36,
+      FG = 0xfff5f4ec,
+      MUTED = 0xffbfd2c6,
+      ACCENT = 0xffc0f0cb;
   LinearLayout page, body, nav;
   TextView status, recordState, draftState;
   ScrollView scroll;
@@ -64,6 +64,13 @@ public class MainActivity extends Activity {
       showCapture();
       receive(getIntent());
       navigate(getIntent());
+      if (b == null && Intent.ACTION_MAIN.equals(getIntent().getAction())
+          && getIntent().hasCategory(Intent.CATEGORY_LAUNCHER)
+          && !getIntent().hasExtra("section") && !getIntent().hasExtra("record_id")
+          && !getIntent().hasExtra("context_ids") && !getIntent().getBooleanExtra("opened_listening",false)) {
+        getIntent().putExtra("opened_listening", true);
+        openListening();
+      }
     } catch (Exception e) {
       fatal(e);
     }
@@ -178,8 +185,16 @@ public class MainActivity extends Activity {
           return in;
         });
     setContentView(page);
-    TextView brand = label(page, "TOTAL RECALL", 24, ACCENT);
-    brand.setTypeface(null, Typeface.BOLD);
+    LinearLayout masthead = new LinearLayout(this);
+    masthead.setGravity(Gravity.CENTER_VERTICAL);
+    page.addView(masthead);
+    ImageView emblem = new ImageView(this);
+    emblem.setImageResource(getResources().getIdentifier("recall_emblem","drawable",getPackageName()));
+    emblem.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    masthead.addView(emblem,new LinearLayout.LayoutParams(dp(40),dp(40)));
+    TextView brand = label(masthead, "Total Recall", 26, FG);
+    brand.setTypeface(Typeface.SERIF, Typeface.BOLD);
+    brand.setPadding(dp(8),0,0,0);
     status = label(page, "Private inbox · on this phone", 13, MUTED);
     nav = new LinearLayout(this);
     page.addView(nav);
@@ -188,7 +203,11 @@ public class MainActivity extends Activity {
       Button b = new Button(this);
       b.setAllCaps(false);
       b.setText(t);
-      b.setTextSize(12);
+      b.setTextSize(13);
+      b.setTextColor(FG);
+      b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(CARD));
+      b.setMinWidth(0);
+      b.setPadding(dp(2),0,dp(2),0);
       b.setMinHeight(dp(52));
       nav.addView(b, new LinearLayout.LayoutParams(0, dp(52), 1));
       b.setOnClickListener(
@@ -227,6 +246,12 @@ public class MainActivity extends Activity {
     scroll.post(() -> scroll.scrollTo(0, 0));
   }
 
+  private void openListening() throws Exception {
+    if (recorder != null) throw new Exception("Finish the current voice note first.");
+    saveDraft();
+    startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class));
+  }
+
   void openMemory(String section, String record) throws Exception {
     saveDraft();
     startActivity(new Intent(this, MemoryActivity.class).putExtra("section", section)
@@ -237,11 +262,13 @@ public class MainActivity extends Activity {
   void navigate(Intent intent) throws Exception {
     if (intent == null || Intent.ACTION_SEND.equals(intent.getAction())
         || Intent.ACTION_SEND_MULTIPLE.equals(intent.getAction())) return;
+    if ("org.totalrecall.action.OPEN_VAULT".equals(intent.getAction())) {
+      showCapture();
+      return;
+    }
     if ("org.totalrecall.action.OPEN_LISTENING".equals(intent.getAction())) {
-      if (recorder != null) throw new Exception("Finish the current voice note first.");
-      saveDraft();
-      intent.setAction(Intent.ACTION_MAIN);
-      startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class));
+      intent.putExtra("opened_listening", true);
+      openListening();
       return;
     }
     ArrayList<String> ids = intent.getStringArrayListExtra("context_ids");
@@ -266,11 +293,14 @@ public class MainActivity extends Activity {
 
   void showCapture() throws Exception {
     screen("capture", "Capture");
-    button(body, "Selective listening", () -> {
-      if (recorder != null) throw new Exception("Finish the current voice note first.");
-      saveDraft();
-      startActivity(new Intent(this, org.totalrecall.listening.RecallListenActivity.class));
-    });
+    Button listening = button(body, "Selective listening", this::openListening);
+    listening.setTextColor(BG);
+    GradientDrawable accent = new GradientDrawable();
+    accent.setColor(ACCENT);
+    accent.setCornerRadius(dp(14));
+    listening.setBackgroundTintList(null);
+    listening.setBackground(new android.graphics.drawable.RippleDrawable(
+        android.content.res.ColorStateList.valueOf(0x44405e46), accent, null));
     label(
         body,
         "Text, voice notes and shared items",
@@ -1256,6 +1286,9 @@ public class MainActivity extends Activity {
                                       getSystemService(JOB_SCHEDULER_SERVICE))
                                   .cancel(UsageJob.ID);
                               org.totalrecall.listening.Store.reset(this);
+                              org.totalrecall.listening.JournalStore.reset(this);
+                              org.totalrecall.listening.RecallOverlay.reset(this);
+                              getSharedPreferences("recall-detector",MODE_PRIVATE).edit().clear().apply();
                               org.totalrecall.listening.MintSync.reset(this);
                               Vault.remove(this);
                               pendingAttachments = new JSONArray();

@@ -64,7 +64,7 @@ public final class RecallService extends Service {
         }return b.build();
     }
     private void progress(String message){
-        current=message; changed();
+        current=message;LiveCapture.state(message); changed();
         if(!destroyed && running){
             try{notifications().notify(NOTIFICATION,notification(message));}catch(SecurityException ignored){}
         }
@@ -83,12 +83,12 @@ public final class RecallService extends Service {
                 changed();stopSelf(startId);return START_NOT_STICKY;
             }
             if(worker==null){
-                stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;changed();
+                stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
                 worker=new Thread(this::listen,"Recall-Mic");worker.start();
             }
         }else if(worker!=null){
             if(PAUSE.equals(action)){
-                stopping.set(true);progress("Pausing");
+                stopping.set(true);LiveCapture.stop("Pausing");RecallOverlay.sessionEnded(this);progress("Pausing");
                 // stop() also unblocks a native read if the microphone route went away.
                 AudioRecord rec=liveRecorder;
                 if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
@@ -100,127 +100,242 @@ public final class RecallService extends Service {
         SessionIssue(String message){super(message);}
         SessionIssue(String message,Throwable cause){super(message,cause);}
     }
+    private boolean stillArmed(){
+        if(stopping.get())return false;
+        if(ListenPolicy.allowed(this))return true;
+        stopping.set(true);return false;
+    }
+    private void waitArmed(long delay){
+        long end=SystemClock.elapsedRealtime()+delay;
+        while(stillArmed()&&SystemClock.elapsedRealtime()<end){
+            SystemClock.sleep(Math.min(150,Math.max(1,end-SystemClock.elapsedRealtime())));
+        }
+    }
+    private static void release(AudioRecord rec){
+        if(rec==null)return;
+        try{rec.stop();}catch(IllegalStateException ignored){}
+        rec.release();
+    }
+    private AudioRecord openMic(int buffer){
+        AudioRecord rec=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,AudioFormat.CHANNEL_IN_MONO,
+                                       AudioFormat.ENCODING_PCM_16BIT,buffer);
+        try{
+            if(rec.getState()!=AudioRecord.STATE_INITIALIZED)throw new IllegalStateException("initialization unavailable");
+            rec.startRecording();
+            if(rec.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new IllegalStateException("start unavailable");
+            return rec;
+        }catch(RuntimeException ex){release(rec);throw ex;}
+    }
+    /** Finalization of an active selection is explicit on interruption; unselected PCM is always dropped. */
+    private final class Window {
+        final Store store;
+        final JournalStore journal;
+        final OfflineSpeech speech;
+        final SelectiveEngine.Listener listener;
+        SelectiveEngine engine;
+        long epoch=-1,session=-1,nextPartial,nextFeedback,nextPrune,nextSensitivity;
+        Window(Store s,JournalStore j,OfflineSpeech asr,SelectiveEngine.Listener l){
+            store=s;journal=j;speech=asr;listener=l;
+        }
+        void begin(String route,String resumeNote){
+            engine=new SelectiveEngine(listener);applyFeedback(engine,store);
+            epoch=JournalStore.epoch(RecallService.this);
+            session=JournalStore.enabled(RecallService.this)?journal.begin(epoch):-1;
+            if(session>=0&&!resumeNote.isEmpty())journal.markResumed(session,resumeNote);
+            nextPartial=0;nextSensitivity=0;nextFeedback=SystemClock.elapsedRealtime()+15000;
+            nextPrune=SystemClock.elapsedRealtime()+3600000;
+            LiveCapture.resume("Listening · "+route);progress("Listening · "+route);
+        }
+        void tick(short[] data,int count){
+            long clock=SystemClock.elapsedRealtime();
+            long latest=JournalStore.epoch(RecallService.this);
+            if(latest!=epoch){
+                // A decoder can span an opt-in boundary. Finish and reset it before a fresh
+                // journal epoch, so previously overheard speech never enters the new journal.
+                String before=speech.finish();
+                if(before!=null){LiveCapture.words(before,true);engine.text(before,true);}
+                speech.resetStream();
+                journal.finish(session,"Journal setting changed");epoch=latest;
+                session=JournalStore.enabled(RecallService.this)?journal.begin(epoch):-1;
+                if(stopping.get())return;
+            }
+            if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
+            if(clock>=nextSensitivity){
+                engine.setSensitivity(getSharedPreferences("recall-detector",MODE_PRIVATE).getInt("sensitivity",0));
+                nextSensitivity=clock+500;
+            }
+            if(clock>=nextPrune && session>=0){journal.prune();nextPrune=clock+3600000;}
+            LiveCapture.samples(data,count);
+            String utterance=speech.accept(data,count),command=speech.pollCommand();
+            if(utterance!=null){
+                LiveCapture.words(utterance,true);
+                journal.append(session,epoch,utterance,false);
+            }else if(clock>=nextPartial){
+                nextPartial=clock+250;String partial=speech.partial();
+                LiveCapture.words(partial,false);
+                if(command==null && partial!=null)engine.text(partial,false);
+            }
+            if(command!=null)engine.text(command,true);
+            else if(utterance!=null)engine.text(utterance,true);
+            if(!stopping.get())engine.pcm(data,count);
+        }
+        void end(boolean gap,String reason){
+            if(engine==null)return;
+            try{
+                // Consume the recognizer tail once. Never persist an utterance from before opt-in,
+                // after opt-out, or while app-wide capture policy is disabled.
+                if(ListenPolicy.allowed(RecallService.this)){
+                    String partial=speech.partial();
+                    String finalWords=speech.finish();
+                    if(finalWords!=null){
+                        journal.append(session,epoch,finalWords,false);
+                        if(gap && !stopping.get())engine.text(finalWords,true);
+                    }else if(partial!=null){journal.append(session,epoch,partial,true);}
+                    if(gap && !stopping.get())engine.finish();
+                }
+            }finally{
+                engine.pause();engine=null;speech.resetStream();
+                journal.finish(session,reason);session=-1;
+            }
+        }
+    }
     private void listen(){
-        Context app=getApplicationContext();
+        final Context app=getApplicationContext();
         SharedPreferences prefs=app.getSharedPreferences(PREFS,MODE_PRIVATE);
         PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
         PowerManager.WakeLock lock=power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,getPackageName()+":selective-listening");
         lock.setReferenceCounted(false);
         String end="Paused";
-        AudioRecord recorder=null;
-        SelectiveEngine engine=null;
-        try(Store store=new Store(app)){
+        AudioRecord rec=null;
+        try(Store store=new Store(app);JournalStore journal=new JournalStore(app)){
             try{
                 if(!ListenPolicy.allowed(app))throw new SessionIssue("Total Recall is paused; enable capture before starting.");
                 if(prefs.getBoolean("active",false))store.gap("Prior listening session was interrupted; coverage after its last update is unknown.");
-                prefs.edit().putBoolean("active",true).commit();
-                store.recover();
-                lock.acquire();
+                prefs.edit().putBoolean("active",true).commit();store.recover();journal.recover();lock.acquire();
                 final long[] lastSaved={-1L};
                 SelectiveEngine.Listener listener=new SelectiveEngine.Listener(){
                     @Override public void onClip(SelectiveEngine.Clip clip){
-                        if(stopping.get())return;
-                        if(!ListenPolicy.allowed(app)){stopping.set(true);return;}
-                        try{lastSaved[0]=store.save(clip);progress("Saved · "+clip.category);}
+                        if(!stillArmed())return;
+                        try{lastSaved[0]=store.save(clip);LiveCapture.saved(clip.category,clip.reason);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
                         if(clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
-                            try {
-                                Vibrator haptic=(Vibrator)getSystemService(VIBRATOR_SERVICE);
-                                if(haptic!=null&&haptic.hasVibrator())haptic.vibrate(45);
-                            }catch(SecurityException ignored){}
+                            try {Vibrator h=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(h!=null&&h.hasVibrator())h.vibrate(45);}
+                            catch(SecurityException ignored){}
                         }
                         try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
                     }
                     @Override public void onPauseRequested(){stopping.set(true);}
                 };
                 try(OfflineSpeech speech=new OfflineSpeech(app)){
-                    if(!stopping.get()){
-                        int min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
-                        if(min<=0)throw new SessionIssue("Microphone cannot open at 16 kHz");
-                        recorder=new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,AudioFormat.CHANNEL_IN_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,Math.max(min*3,64000));
-                        if(recorder.getState()!=AudioRecord.STATE_INITIALIZED)throw new SessionIssue("Microphone initialization failed");
-                        recorder.startRecording();liveRecorder=recorder;
-                        if(recorder.getRecordingState()!=AudioRecord.RECORDSTATE_RECORDING)throw new SessionIssue("Microphone could not start");
-                        engine=new SelectiveEngine(listener);applyFeedback(engine,store);
-                        String route=route(recorder);
-                        progress("Listening · "+route);
-                        short[] frame=new short[1600]; long nextPoll=0,nextFeedback=0,nextPartial=0,nextPolicy=0;
-                        boolean selecting=false;
-                        while(!stopping.get()){
-                            int count=recorder.read(frame,0,frame.length);
-                            if(stopping.get())break;
-                            if(count<0)throw new SessionIssue("Microphone interrupted ("+count+")");
-                            if(count==0){SystemClock.sleep(15);continue;}
-                            long clock=SystemClock.elapsedRealtime();
-                            if(clock>=nextPolicy){
-                                nextPolicy=clock+2000;
-                                if(!ListenPolicy.allowed(app)){stopping.set(true);break;}
+                    try(java.io.InputStream dictionary=getAssets().open("listening/cmudict-prosody.tsv.gz")){SelectiveEngine.loadPronunciations(dictionary);}
+                    int min=AudioRecord.getMinBufferSize(16000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT);
+                    if(min<=0)throw new SessionIssue("Microphone cannot open at 16 kHz");
+                    AudioManager manager=(AudioManager)getSystemService(AUDIO_SERVICE);
+                    Window window=new Window(store,journal,speech,listener);
+                    short[] frame=new short[1600];MicrophoneContinuity continuity=new MicrophoneContinuity();
+                    long retry=500,zeroSince=0;boolean selecting=false;String route="",resumeNote="";
+                    try {
+                        while(stillArmed()){
+                            if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+                                throw new SessionIssue("Microphone permission was revoked. Grant it in Settings, then start a new session.");
+                            String unavailable=null;int count=0;boolean broken=false;
+                            if(manager.isMicrophoneMute())unavailable="microphone muted or privacy switch active";
+                            if(rec==null && unavailable==null){
+                                try{
+                                    rec=openMic(Math.max(min*3,64000));liveRecorder=rec;
+                                    if(!stillArmed())break;
+                                }catch(IllegalStateException e){unavailable="microphone unavailable";}
                             }
-                            if(clock>=nextPoll){
-                                nextPoll=clock+500;
-                                if(Build.VERSION.SDK_INT>=29){
-                                    AudioRecordingConfiguration config=recorder.getActiveRecordingConfiguration();
-                                    if(config!=null && config.isClientSilenced())throw new SessionIssue("Android silenced this microphone (privacy setting, call or other recorder).");
+                            if(rec!=null && unavailable==null && Build.VERSION.SDK_INT>=29){
+                                AudioRecordingConfiguration config=rec.getActiveRecordingConfiguration();
+                                if(config!=null && config.isClientSilenced())unavailable="another app or call has microphone access";
+                            }
+                            if(unavailable==null){
+                                // Non-blocking I/O lets pause and policy changes interrupt a stalled device route.
+                                count=rec.read(frame,0,frame.length,AudioRecord.READ_NON_BLOCKING);
+                                if(count<0){unavailable="input route interrupted ("+count+")";broken=true;}
+                                else if(count==0){
+                                    long now=SystemClock.elapsedRealtime();
+                                    if(zeroSince==0)zeroSince=now;
+                                    if(now-zeroSince<5000){waitArmed(25);continue;}
+                                    unavailable="recorder produced no audio";broken=true;
+                                }else if(Build.VERSION.SDK_INT>=29){
+                                    AudioRecordingConfiguration config=rec.getActiveRecordingConfiguration();
+                                    if(config!=null && config.isClientSilenced())unavailable="another app or call has microphone access";
                                 }
-                                String nextRoute=route(recorder);
-                                if(!route.equals(nextRoute)){
-                                    store.gap("Input changed from "+route+" to "+nextRoute);
-                                    route=nextRoute;progress("Listening · "+route);
+                            }
+                            if(count>0 || unavailable!=null)zeroSince=0;
+                            if(unavailable!=null){
+                                if(continuity.lose(SystemClock.elapsedRealtime())){
+                                    String waiting="Waiting for microphone · "+unavailable;
+                                    window.end(true,"Microphone gap: "+unavailable);
+                                    LiveCapture.waitFor(waiting);progress(waiting);commands.clear();
+                                    store.gap("Microphone gap began · "+unavailable);
                                 }
+                                if(broken){liveRecorder=null;release(rec);rec=null;}
+                                if(rec!=null){
+                                    // Keep our original (silenced) recorder. Starting a new recorder can
+                                    // compete with voice mode in the other app. Drain & discard its backlog.
+                                    for(int passes=0;passes<24;passes++){
+                                        if(rec.read(frame,0,frame.length,AudioRecord.READ_NON_BLOCKING)<=0)break;
+                                    }
+                                    Arrays.fill(frame,(short)0);
+                                    waitArmed(650);
+                                }else{
+                                    waitArmed(retry);retry=Math.min(8000,retry*2);
+                                }
+                                continue;
                             }
-                            if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
-                            // Deliver text for this block first so a silence boundary or command cannot
-                            // finalize an earlier snapshot before its last available hypothesis arrives.
-                            String utterance=speech.accept(frame,count);
-                            String spokenCommand=speech.pollCommand();
-                            if(spokenCommand!=null)engine.text(spokenCommand,true);
-                            else if(utterance!=null&&!utterance.isEmpty())engine.text(utterance,true);
-                            else if(clock>=nextPartial){
-                                nextPartial=clock+250;String partial=speech.partial();
-                                if(partial!=null&&!partial.isEmpty())engine.text(partial,false);
+                            if(!stillArmed())break;
+                            if(continuity.waiting()){
+                                long lost=continuity.resume(SystemClock.elapsedRealtime());
+                                resumeNote="Resumed after a microphone gap of "+lost/1000+" s";
+                                store.gap("Microphone gap ended · resumed after "+lost/1000+" s");
+                                // The current block may predate recovery. Drain older queued audio too.
+                                for(int passes=0;passes<24;passes++)if(rec.read(frame,0,frame.length,AudioRecord.READ_NON_BLOCKING)<=0)break;
+                                Arrays.fill(frame,(short)0);commands.clear();continue;
                             }
-                            if(stopping.get())break;
-                            engine.pcm(frame,count);
+                            retry=500;
+                            String next=route(rec);
+                            if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
+                            else if(!next.equals(route)){store.gap("Input changed from "+route+" to "+next);route=next;progress("Listening · "+route);}
+                            window.tick(frame,count);
                             if(stopping.get())break;
                             String action;
                             while((action=commands.poll())!=null){
-                                if(KEEP.equals(action))engine.keep();
-                                else if(MISSED.equals(action))engine.missed();
+                                if(KEEP.equals(action))window.engine.keep();
+                                else if(MISSED.equals(action))window.engine.missed();
                                 else if(DISCARD_LAST.equals(action)&&lastSaved[0]>=0){
                                     store.delete(lastSaved[0]);lastSaved[0]=-1;progress("Latest saved clip removed");
                                 }
                             }
-                            if(selecting!=engine.isSelecting()){
-                                selecting=engine.isSelecting();progress(selecting?"Keeping a moment · "+route:"Listening · "+route);
+                            if(selecting!=window.engine.isSelecting()){
+                                selecting=window.engine.isSelecting();progress(selecting?"Keeping a moment · "+route:"Listening · "+route);
                             }
                         }
-                        Arrays.fill(frame,(short)0);
+                    }finally{
+                        try{window.end(false,stopping.get()?"Paused":"Session ended");}
+                        finally{
+                            long lost=continuity.stop(SystemClock.elapsedRealtime());
+                            if(lost>=0)store.gap("Microphone gap ended · session stopped after "+lost/1000+" s");
+                            Arrays.fill(frame,(short)0);
+                        }
                     }
                 }
-            }catch(Exception | LinkageError error){
+            }catch(Exception|LinkageError failure){
                 if(!stopping.get()){
-                    end="Listening stopped · "+message(error);
+                    end="Listening stopped · "+message(failure);
                     try{store.gap(end);}catch(RuntimeException ignored){}
                 }
             }
-        }catch(RuntimeException e){end="Listening stopped · "+message(e);}
+        }catch(RuntimeException failure){end="Listening stopped · "+message(failure);}
         finally{
-            if(engine!=null)engine.pause();
-            liveRecorder=null;
-            if(recorder!=null){
-                try{recorder.stop();}catch(IllegalStateException ignored){}
-                recorder.release();
-            }
-            if(lock.isHeld())lock.release();
-            String result=end;
+            liveRecorder=null;release(rec);if(lock.isHeld())lock.release();
+            String result=end;LiveCapture.stop(result);RecallOverlay.sessionEnded(this);
             new Handler(Looper.getMainLooper()).post(()->{
-                worker=null;commands.clear();
-                prefs.edit().putBoolean("active",false).putString("last",result).commit();
+                worker=null;commands.clear();prefs.edit().putBoolean("active",false).putString("last",result).commit();
                 current=result;running=false;
-                if(!destroyed){
-                    stopForeground(true);changed();stopSelf(lastStart);
-                }
+                if(!destroyed){stopForeground(true);changed();stopSelf(lastStart);}
             });
         }
     }
@@ -253,7 +368,7 @@ public final class RecallService extends Service {
         }return "input route unreported";
     }
     @Override public void onDestroy(){
-        destroyed=true;stopping.set(true);
+        destroyed=true;stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.sessionEnded(this);
         AudioRecord rec=liveRecorder;
         if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
         super.onDestroy();
