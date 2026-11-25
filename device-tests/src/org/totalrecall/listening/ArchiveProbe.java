@@ -42,6 +42,13 @@ public final class ArchiveProbe extends Instrumentation {
             context = getTargetContext();
             if ("codec".equals(phase)) codec();
             else if ("transfer".equals(phase)) transfer();
+            else if ("bulk".equals(phase)) {
+                try {
+                    shell("dumpsys battery unplug");
+                    BacklogProbe.verify(context,pair);
+                    step("A metadata-only 3,200-segment fixture totalled exactly 800 MiB. The separate one-time approval included every ID, validated reported destination space, queued durably under charging constraints and left automation disabled.");
+                } finally { shell("dumpsys battery reset"); }
+            }
             else throw new IllegalArgumentException("Unknown archive phase");
             result.putString("outcome", "PASS_" + phase);
             finish(Activity.RESULT_OK, result);

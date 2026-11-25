@@ -86,6 +86,7 @@ public final class ArchiveSyncActivity extends Activity {
         button("Open archive website",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(ArchiveDestination.WEBSITE))));
         button("Full audio & phone storage",()->go(1));button("Browse phone audio",()->{offset=0;go(3);});
         button(host.isEmpty()?"Connect website or Mint":"Change archive · "+host,()->startActivity(new Intent(this,MintLinkActivity.class).putExtra("archiveOnly",true).putExtra("fromArchive",true)));
+        if(!host.isEmpty())button("Set up continuous backup",this::guided);
         if(!host.isEmpty())button("Disconnect archive",()->new AlertDialog.Builder(this).setTitle("Disconnect archive?").setMessage("Queued transfers will stop. Existing archive copies remain accessible on the server.").setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(d,w)->{ArchiveSync.disconnect(this);render();}).show());
         button("Transfer choices",()->go(2));
         transferStatus=label(status(),16);
@@ -96,8 +97,9 @@ public final class ArchiveSyncActivity extends Activity {
                 .setNegativeButton("Cancel",null).setPositiveButton("Switch",(d,w)->{
                     MintSync.prefs(this).edit().putBoolean("legacyUploads",false).commit();MintSync.cancel(this);render();}).show());
         }
-        button("Preview transfer",()->review(false));
-        button(ArchiveSync.auto(this)?"Review automatic transfers":"Set up automatic transfers",()->review(true));
+        button("Preview transfer",()->review(false,false));
+        button("Preview all pending",()->review(false,true));
+        button(ArchiveSync.auto(this)?"Review automatic transfers":"Set up automatic transfers",()->review(true,false));
         if(ArchiveSync.auto(this)||ArchiveSync.prefs(this).contains("manual"))button("Stop queued and automatic transfers",()->{
             ArchiveSync.stop(this);render();
         });
@@ -106,7 +108,7 @@ public final class ArchiveSyncActivity extends Activity {
     }
     private String host(){try{return new ArchiveDestination(ArchiveSync.pair(this)).host;}catch(Exception e){return "";}}
     private String limits(){return (ArchiveSync.wifi(this)?"Wi-Fi required":"Any available network")+" · "+
-        (ArchiveSync.charging(this)?"charging required":"battery power allowed")+" · "+size(ArchiveSync.cap(this))+" per batch";}
+        (ArchiveSync.charging(this)?"charging required":"battery power allowed")+" · "+size(ArchiveSync.cap(this))+" and "+num(ArchiveSync.maxItems(this))+" items per batch";}
     private String selected(){
         List<String> a=new ArrayList<>();if(ArchiveSync.selected(this,"clip"))a.add("selected clips and edits");
         if(ArchiveSync.selected(this,"segment"))a.add("full audio");if(ArchiveSync.selected(this,"journal"))a.add("closed text journals");
@@ -128,10 +130,14 @@ public final class ArchiveSyncActivity extends Activity {
         });
         check("Require Wi-Fi",ArchiveSync.wifi(this),(b,on)->opt("wifi",on));
         check("Require charging",ArchiveSync.charging(this),(b,on)->opt("charging",on));
-        button("Batch limit · "+size(ArchiveSync.cap(this)),()->pick("Maximum per transfer batch",new String[]{"8 MiB","32 MiB","128 MiB","256 MiB"},i->{
-            ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("capMiB",new int[]{8,32,128,256}[i]).commit();
+        button("Batch limit · "+size(ArchiveSync.cap(this)),()->pick("Maximum per transfer batch",new String[]{"8 MiB","32 MiB","128 MiB","256 MiB","512 MiB","1 GiB"},i->{
+            ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("capMiB",new int[]{8,32,128,256,512,1024}[i]).commit();
         }));
-        label("Automatic transfers run at most once per hour after a completed batch. Android may defer them. Up to 64 items fit in each batch.",15);
+        button("Items per batch · "+num(ArchiveSync.maxItems(this)),()->pick("Maximum items per transfer batch",
+            new String[]{"64","256","512","1,024","4,096"},i->{
+                ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("maxItems",new int[]{64,256,512,1024,4096}[i]).commit();
+            }));
+        label("Automatic transfers run at most once per hour after a completed batch. Android may defer them. Preview all pending can approve one larger batch independently.",15);
     }
     private void pick(String title,String[] values,java.util.function.IntConsumer chosen){
         new AlertDialog.Builder(this).setTitle(title).setItems(values,(d,i)->{chosen.accept(i);render();}).setNegativeButton("Cancel",null).show();
@@ -169,36 +175,60 @@ public final class ArchiveSyncActivity extends Activity {
             catch(Exception e){runOnUiThread(()->{if(tag==revision)fail(e);});}finally{runOnUiThread(()->{if(tag==revision)busy=false;});}
         });
     }
-    private void review(boolean automatic){
+    private void guided(){
+        final String destination,policy;
+        try{destination=ArchiveSync.binding(this);policy=ArchiveSync.settings(this);}catch(Exception e){fail(e);return;}
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(8),dp(20),0);
+        TextView info=new TextView(this);info.setTextColor(INK);info.setText("Destination · "+host()+"\n\nRecord full microphone sessions as "+ArchiveStore.bitrate(this)/1000+
+            " kbps AAC while listening, including people nearby. Keep selected moments as usual. Automatically transfer new and pending full audio.\n\nHourly limits · "+limits()+
+            "\nPhone budget · "+ArchiveStore.budgetMiB(this)+" MiB · keep "+ArchiveStore.reserveMiB(this)+" MiB free"+
+            "\nSelected-clip transfers · "+(ArchiveSync.selected(this,"clip")?"on":"off")+
+            "\nClosed text-journal transfers · "+(ArchiveSync.selected(this,"journal")?"on":"off")+
+            "\n\nPending transfer approvals are replaced by these choices. Capture starts when you tap Start listening, or immediately during an active session.");
+        box.addView(info);CheckBox free=new CheckBox(this);free.setText("Free oldest phone copies when space is tight, only after a verified server receipt");
+        free.setChecked(ArchiveStore.evictSynced(this));box.addView(free);ScrollView scroll=new ScrollView(this);scroll.addView(box);
+        new AlertDialog.Builder(this).setTitle("Set up continuous backup").setView(scroll).setNegativeButton("Cancel",null)
+            .setPositiveButton("Enable continuous backup",(d,w)->{boolean evict=free.isChecked();submit(()->ArchiveSync.enableContinuous(this,destination,policy,evict));}).show();
+    }
+    private interface Change {void perform()throws Exception;}
+    private void submit(Change change){
+        if(busy)return;busy=true;int tag=revision;if(transferStatus!=null)transferStatus.setText("Saving transfer choices…");
+        io.execute(()->{
+            try{change.perform();runOnUiThread(()->{if(tag==revision)render();});}
+            catch(Exception e){runOnUiThread(()->{if(tag==revision){busy=false;if(transferStatus!=null)transferStatus.setText(status());fail(e);}});}
+        });
+    }
+    private void review(boolean automatic,boolean backlog){
         if(host().isEmpty()){say("Pair your private archive first.");return;}if(busy)return;
         final int tag=revision;busy=true;transferStatus.setText("Preparing an exact preview…");
         io.execute(()->{
             try{
-                ArchiveSync.Plan plan=ArchiveSync.preview(this);String remote;
-                try{remote=server(ArchiveSync.capacity(this));}catch(Exception e){remote="Server capacity unavailable · transfer waits for a verified connection and available space.";}
+                ArchiveSync.Plan plan=ArchiveSync.preview(this,backlog);String remote;
+                boolean space=false;
+                try{JSONObject response=ArchiveSync.capacity(this);space=plan.checkSpace(response.getLong("availableBytes"));remote=server(response);}
+                catch(Exception e){remote="Server capacity unavailable · restore connection to check capacity.";}
+                final boolean enough=space;
                 int clips=0,full=0,journals=0;for(JSONObject item:plan.batch){switch(item.getString("kind")){case "clip": clips++;break;case "segment":full++;break;case "journal":journals++;break;}}
                 String gate=ArchiveSync.constraints(this);
                 String message="To "+host()+" · "+selected()+"\n\nPending: "+num(plan.totalCount)+" items · "+exact(plan.totalBytes)+
                     "\nThis batch: "+plan.batch.size()+" items · "+exact(plan.batchBytes)+"\n"+clips+" clips · "+full+" full-audio segments · "+journals+" journals"+
-                    (plan.oversized==0?"":"\n"+plan.oversized+" items exceed the batch or server item limit.")+"\n\n"+limits()+
+                    (plan.oversized==0?"":"\n"+plan.oversized+" items exceed the batch or server item limit.")+"\n\n"+(backlog?"One-time backlog limit · 1 GiB / 4,096 items. Wi-Fi and charging choices still apply.\nRegular limits · ":"")+limits()+
                     (gate.isEmpty()?"":"\n"+gate)+"\nPhone free "+size(getFilesDir().getUsableSpace())+" · keep "+ArchiveStore.reserveMiB(this)+" MiB free\n"+remote+
+                    (backlog&&!enough?"\nLarge-batch confirmation requires enough available server space for the exact reviewed bytes.":"")+
                     (automatic?"\n\nFuture eligible items of these types can transfer once per hour under these limits.":"\n\nOnly these reviewed revisions can transfer.");
                 runOnUiThread(()->{
                     if(tag!=revision||isFinishing()||isDestroyed())return;
                     busy=false;transferStatus.setText(status());
-                    AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(automatic?"Automatic archive transfers":"Confirm archive transfer")
+                    AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(automatic?"Automatic archive transfers":backlog?"Confirm one-time backlog":"Confirm archive transfer")
                         .setMessage(message).setNegativeButton("Cancel",null);
-                    if(automatic||!plan.batch.isEmpty())dialog.setPositiveButton(automatic?"Enable automatic transfers":"Queue this batch",(d,w)->{
-                        try{
+                    if(automatic||(!plan.batch.isEmpty()&&(!backlog||enough)))dialog.setPositiveButton(automatic?"Enable automatic transfers":backlog?"Queue this backlog":"Queue this batch",(d,w)->submit(()->{
                             if(automatic){
                                 if(!ArchiveSync.selected(this,"clip")&&!ArchiveSync.selected(this,"segment")&&!ArchiveSync.selected(this,"journal"))throw new IOException("Select content first.");
-                                if(!plan.paired.equals(ArchiveSync.binding(this)))throw new IOException("Archive changed. Preview again.");
+                                if(!plan.paired.equals(ArchiveSync.binding(this))||!plan.settings.equals(ArchiveSync.settings(this)))throw new IOException("Archive changed. Preview again.");
                                 if(!ArchiveSync.prefs(this).edit().putBoolean("auto",true).commit())throw new IOException("Could not save consent");
                                 ArchiveSync.schedule(this);
                             }else ArchiveSync.approve(this,plan);
-                            render();
-                        }catch(Exception e){fail(e);}
-                    });dialog.show();
+                    }));dialog.show();
                 });
             }catch(Exception e){runOnUiThread(()->{if(tag==revision){busy=false;transferStatus.setText(status());fail(e);}});}
         });

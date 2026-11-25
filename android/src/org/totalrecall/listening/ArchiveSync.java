@@ -26,7 +26,8 @@ import javax.net.ssl.HttpsURLConnection;
 /** Bounded, resumable transfers to the owner's pinned archive. Approvals name exact content hashes. */
 public final class ArchiveSync extends JobService {
     static final long MIB=1048576L, INTERVAL=3600000L;
-    static final int JOB=0x54524132, MAX_ITEMS=64;
+    static final int JOB=0x54524132, BACKLOG_ITEMS=4096;
+    static final long BACKLOG_BYTES=1024*MIB;
     private static final ReentrantLock WORK=new ReentrantLock();
     private static volatile Transfer running;
     private Transfer jobRun;
@@ -36,17 +37,45 @@ public final class ArchiveSync extends JobService {
     static synchronized void setDestination(Context c,String code)throws Exception{
         ArchiveDestination destination=new ArchiveDestination(code);String previous=prefs(c).getString("destinationIdentity","");
         if(previous.isEmpty()&&!pair(c).isEmpty())previous=new ArchiveDestination(pair(c)).identity;
-        stop(c);SharedPreferences.Editor edit=prefs(c).edit().putString("destination",code).putString("destinationIdentity",destination.identity);
+        migrateLimits(c);stop(c);SharedPreferences.Editor edit=prefs(c).edit().putString("destination",code).putString("destinationIdentity",destination.identity);
         if(!destination.identity.equals(previous)){
             try(ArchiveStore store=new ArchiveStore(c)){store.requeueLocal();}
             for(String key:prefs(c).getAll().keySet())if(key.startsWith("ack:"))edit.remove(key);
         }
         if(!edit.putString("status","Paired. Preview a batch to send content.").commit())throw new IOException("Could not save archive destination");
     }
+    static synchronized void enableContinuous(Context c,String expectedPair,String expectedPolicy,boolean freeVerified)throws Exception{
+        if(pair(c).isEmpty()||!binding(c).equals(expectedPair)||!settings(c).equals(expectedPolicy))throw new IOException("Destination or transfer settings changed. Open setup again.");
+        if(!ListenPolicy.allowed(c))throw new IOException("Resume sharing in the phone vault first.");
+        stop(c);
+        boolean earlier=ArchiveStore.enabled(c),eviction=ArchiveStore.evictSynced(c);
+        try{
+            ArchiveStore.setEvictSynced(c,freeVerified);
+            ArchiveStore.setEnabled(c,true);
+            if(!prefs(c).edit().putBoolean("segment",true).putBoolean("auto",true).remove("next")
+                .putString("status","Continuous backup enabled").commit())throw new IOException("Could not save continuous backup choices");
+        }catch(Exception e){
+            ArchiveStore.setEnabled(c,earlier);ArchiveStore.setEvictSynced(c,eviction);throw e;
+        }
+        schedule(c);
+    }
     static synchronized void disconnect(Context c){stop(c);prefs(c).edit().putString("destination","").commit();}
     static String sha(byte[] b)throws Exception{return MintSync.hex(MessageDigest.getInstance("SHA-256").digest(b));}
     static String binding(Context c)throws Exception{return sha(pair(c).getBytes(StandardCharsets.UTF_8));}
-    static long cap(Context c){return Math.min(256,Math.max(8,prefs(c).getInt("capMiB",32)))*MIB;}
+    private static synchronized void migrateLimits(Context c){
+        SharedPreferences p=prefs(c);if(p.contains("limitsVersion"))return;
+        boolean earlier=p.contains("auto")||p.contains("capMiB")||p.contains("manual")||p.contains("automaticPlan")||p.contains("manualSettings");
+        SharedPreferences.Editor edit=p.edit().putInt("limitsVersion",1);
+        if(!p.contains("capMiB"))edit.putInt("capMiB",earlier?32:128);
+        if(!p.contains("maxItems"))edit.putInt("maxItems",earlier?64:256);
+        if(!edit.commit())throw new IllegalStateException("Could not save transfer limits");
+    }
+    static long cap(Context c){
+        migrateLimits(c);return Math.min(1024,Math.max(8,prefs(c).getInt("capMiB",128)))*MIB;
+    }
+    static int maxItems(Context c){
+        migrateLimits(c);return Math.min(BACKLOG_ITEMS,Math.max(1,prefs(c).getInt("maxItems",256)));
+    }
     static boolean selected(Context c,String kind){return prefs(c).getBoolean(kind,"clip".equals(kind));}
     static boolean auto(Context c){return prefs(c).getBoolean("auto",false);}
     static boolean wifi(Context c){return prefs(c).getBoolean("wifi",true);}
@@ -61,33 +90,43 @@ public final class ArchiveSync extends JobService {
         if(charging(c)&&(battery==null||!battery.isCharging()))return "Waiting for charging";
         return "";
     }
-    private static String settings(Context c){
-        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c);
+    static String settings(Context c){
+        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c)+"|"+maxItems(c);
     }
     public static final class Plan {
         public long totalCount,oversized;
         public long totalBytes,batchBytes;
         public final ArrayList<JSONObject> batch=new ArrayList<>();
         final String paired,settings;
+        final long byteLimit;final int itemLimit;final boolean backlog;
+        private long checkedSpace=-1;
         private final Map<String,List<JSONObject>> candidates=new LinkedHashMap<>();
-        Plan(Context c)throws Exception{paired=binding(c);settings=ArchiveSync.settings(c);}
+        Plan(Context c)throws Exception{this(c,false);}
+        Plan(Context c,boolean backlog)throws Exception{
+            this(backlog,backlog?BACKLOG_BYTES:cap(c),backlog?BACKLOG_ITEMS:maxItems(c),binding(c),ArchiveSync.settings(c));
+        }
+        Plan(boolean backlog,long byteLimit,int itemLimit,String paired,String settings){
+            this.backlog=backlog;this.byteLimit=byteLimit;this.itemLimit=itemLimit;this.paired=paired;this.settings=settings;
+        }
+        boolean checkSpace(long bytes){checkedSpace=bytes;return bytes>=batchBytes;}
         void add(Context c,JSONObject item)throws Exception{
             long bytes=item.getLong("bytes");
             totalCount++;totalBytes+=bytes;
             long limit="segment".equals(item.getString("kind"))?128*MIB:16*MIB;
-            if(bytes>limit||bytes>cap(c)){oversized++;return;}
+            if(bytes<=0||bytes>limit||bytes>byteLimit){oversized++;return;}
             List<JSONObject> group=candidates.computeIfAbsent(item.getString("kind"),key->new ArrayList<>());
-            if(group.size()<MAX_ITEMS)group.add(item);
+            if(group.size()<itemLimit)group.add(item);
         }
         void select(Context c)throws Exception{
-            for(int i=0;i<MAX_ITEMS&&batch.size()<MAX_ITEMS;i++){
+            for(int i=0;i<itemLimit&&batch.size()<itemLimit;i++){
                 for(String kind:new String[]{"clip","journal","segment"}){
                     List<JSONObject> group=candidates.get(kind);
-                    if(group==null||i>=group.size()||batch.size()>=MAX_ITEMS)continue;
+                    if(group==null||i>=group.size()||batch.size()>=itemLimit)continue;
                     JSONObject obj=group.get(i);long bytes=obj.getLong("bytes");
-                    if(batchBytes+bytes<=cap(c)){batch.add(obj);batchBytes+=bytes;}
+                    if(bytes<=byteLimit-batchBytes){batch.add(obj);batchBytes+=bytes;}
                 }
             }
+            candidates.clear();
         }
     }
     private static final class Fingerprint extends OutputStream {
@@ -101,12 +140,18 @@ public final class ArchiveSync extends JobService {
                 .put("durationMs",duration).put("bytes",bytes).put("sha256",hash).put("title",title.substring(0,Math.min(400,title.length()))).put("mediaType",mime);
     }
     private static boolean sent(Context c,String id,String hash){return hash.equals(prefs(c).getString("ack:"+id,""));}
-    public static Plan preview(Context c)throws Exception{
-        Plan plan=new Plan(c);
+    public static Plan preview(Context c)throws Exception{return preview(c,false);}
+    public static Plan preview(Context c,boolean backlog)throws Exception{
+        Plan plan=new Plan(c,backlog);
         if(selected(c,"segment")) try(ArchiveStore store=new ArchiveStore(c)){
             ArchiveStore.Summary totals=store.summary();
-            for(ArchiveStore.Segment s:store.pending(MAX_ITEMS)){
-                plan.add(c,item("segment",s.id,0,s.startMs,s.durationMs,s.bytes,s.sha256,"Continuous audio","audio/aac"));
+            long examine=Math.min(totals.pendingCount,plan.itemLimit);
+            for(int offset=0;offset<examine;){
+                List<ArchiveStore.Segment> segments=store.pending((int)Math.min(256,examine-offset),offset);
+                if(segments.isEmpty())break;
+                for(ArchiveStore.Segment s:segments)
+                    plan.add(c,item("segment",s.id,0,s.startMs,s.durationMs,s.bytes,s.sha256,"Continuous audio","audio/aac"));
+                offset+=segments.size();
             }
             plan.totalCount=totals.pendingCount;plan.totalBytes=totals.pendingBytes;
         }
@@ -141,19 +186,35 @@ public final class ArchiveSync extends JobService {
         if(!ListenPolicy.allowed(c))throw new IOException("Resume sharing first.");
         if(running!=null || prefs(c).contains("manual"))throw new IOException("A batch is already queued. Stop it before confirming another.");
         if(plan.batch.isEmpty())throw new IOException("No eligible items in this batch.");
+        if(plan.backlog && plan.checkedSpace<plan.batchBytes)throw new IOException("Check server space for this backlog and preview again.");
+        long total=0;for(JSONObject obj:plan.batch)total=Math.addExact(total,obj.getLong("bytes"));
+        if(plan.batch.size()>plan.itemLimit||total!=plan.batchBytes||total>plan.byteLimit)throw new IOException("Preview exceeds its confirmed limits");
+        try(ArchiveBatchQueue q=new ArchiveBatchQueue(c)){
+            SharedPreferences p=prefs(c);
+            q.retain(p.getString("manual",null),p.getString("automaticPlan",null));
+            String ref=q.put(plan.batch);
+            if(!p.edit().putString("manual",ref).putBoolean("manualBacklog",plan.backlog).putString("manualPair",plan.paired)
+                .putString("manualSettings",plan.settings).putString("status","Confirmed batch queued").commit())
+                throw new IOException("Unable to store confirmation");
+        }
         JobScheduler scheduler=c.getSystemService(JobScheduler.class);if(scheduler!=null)scheduler.cancel(JOB);
-        if(!prefs(c).edit().putString("manual",new JSONArray(plan.batch).toString()).putString("manualPair",plan.paired)
-                .putString("manualSettings",plan.settings).putString("status","Confirmed batch queued").commit())throw new IOException("Unable to store confirmation.");
         schedule(c);
     }
     static synchronized void changed(Context c){
-        cancel(c);
-        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("automaticPlan").putString("status","Transfer settings changed. Preview or enable automatic transfers.").commit();
+        migrateLimits(c);cancel(c);
+        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfer settings changed. Preview or enable automatic transfers.").commit();
+        clearQueue(c);
     }
     public static synchronized void stop(Context c){
-        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("automaticPlan").putString("status","Transfers stopped").commit();cancel(c);
+        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfers stopped").commit();cancel(c);clearQueue(c);
     }
-    public static synchronized void reset(Context c){stop(c);prefs(c).edit().clear().commit();}
+    public static synchronized void reset(Context c){
+        stop(c);prefs(c).edit().clear().commit();
+    }
+    private static void clearQueue(Context c){
+        if(c.getDatabasePath("archive-transfer-queue.sqlite").exists())
+            try(ArchiveBatchQueue q=new ArchiveBatchQueue(c)){q.retain(null,null);}
+    }
     private static void cancel(Context c){
         Transfer t=running;if(t!=null)t.abort();
         JobScheduler scheduler=c.getSystemService(JobScheduler.class);if(scheduler!=null)scheduler.cancel(JOB);
@@ -278,36 +339,46 @@ public final class ArchiveSync extends JobService {
                 File[] stale=c.getCacheDir().listFiles((dir,name)->name.startsWith("archive-out-")&&name.endsWith(".tmp"));
                 if(stale!=null)for(File f:stale)f.delete();
                 SharedPreferences p=prefs(c);
-                String manual=p.getString("manual",null);List<JSONObject> batch=new ArrayList<>();
+                String manual=p.getString("manual",null),key=manual!=null?"manual":"automaticPlan";
+                String ref=p.getString(key,null);
+                boolean backlog=manual!=null&&p.getBoolean("manualBacklog",false);
                 if(manual!=null){
-                    if(!binding(c).equals(p.getString("manualPair",""))||!config.equals(p.getString("manualSettings","")))throw new IOException("Confirmation expired");
-                    JSONArray arr=new JSONArray(manual);for(int i=0;i<arr.length();i++)batch.add(arr.getJSONObject(i));
-                }else{
-                    if(!auto(c))return;
-                    String pending=p.getString("automaticPlan",null);
-                    if(pending!=null){
-                        JSONArray arr=new JSONArray(pending);for(int i=0;i<arr.length();i++)batch.add(arr.getJSONObject(i));
-                    }else{
-                        if(p.getLong("next",0)>System.currentTimeMillis())return;
-                        batch=preview(c).batch;
-                        synchronized(ArchiveSync.class){check();if(!p.edit().putString("automaticPlan",new JSONArray(batch).toString()).commit())throw new IOException("Unable to queue batch");}
+                    String stored=p.getString("manualSettings","");
+                    boolean legacy=!ArchiveBatchQueue.reference(ref)&&maxItems(c)==64&&config.equals(stored+"|64");
+                    if(!binding(c).equals(p.getString("manualPair",""))||(!config.equals(stored)&&!legacy))throw new IOException("Confirmation expired");
+                }else if(!auto(c))return;
+                try(ArchiveBatchQueue q=new ArchiveBatchQueue(c)){
+                    synchronized(ArchiveSync.class){check();q.retain(p.getString("manual",null),p.getString("automaticPlan",null));}
+                    if(!ArchiveBatchQueue.reference(ref)){
+                        List<JSONObject> batch=new ArrayList<>();
+                        if(ref!=null){
+                            JSONArray arr=new JSONArray(ref);for(int i=0;i<arr.length();i++)batch.add(arr.getJSONObject(i));
+                        }else{
+                            if(p.getLong("next",0)>System.currentTimeMillis())return;
+                            batch=preview(c).batch;
+                        }
+                        synchronized(ArchiveSync.class){
+                            check();ref=q.put(batch);SharedPreferences.Editor edit=p.edit().putString(key,ref);
+                            if(manual!=null)edit.putString("manualSettings",config);
+                            if(!edit.commit())throw new IOException("Unable to persist transfer queue");
+                        }
                     }
-                }
-                long bytes=0;for(JSONObject obj:batch)bytes=Math.addExact(bytes,obj.getLong("bytes"));
-                if(bytes>cap(c)||batch.size()>MAX_ITEMS)throw new IOException("Batch exceeds confirmed limit");
-                if(!batch.isEmpty()){
-                    JSONObject remoteStatus=exchange(remote,"/v2/status","GET",null,0,-1,this);
-                    if(remoteStatus.getLong("availableBytes")<0)throw new IOException("Invalid server capacity");
-                }
-                while(!batch.isEmpty()){
-                    check();one(batch.get(0));batch.remove(0);
+                    ArchiveBatchQueue.Summary summary=q.summary(ref);
+                    if(summary.bytes>(backlog?BACKLOG_BYTES:cap(c))||summary.count>(backlog?BACKLOG_ITEMS:maxItems(c)))
+                        throw new IOException("Batch exceeds confirmed limits");
+                    if(summary.count>0){
+                        JSONObject remoteStatus=exchange(remote,"/v2/status","GET",null,0,-1,this);
+                        if(remoteStatus.getLong("availableBytes")<0)throw new IOException("Invalid server capacity");
+                    }
+                    for(ArchiveBatchQueue.Row row;(row=q.next(ref))!=null;){
+                        check();one(row.item);
+                        synchronized(ArchiveSync.class){check();q.done(ref,row.position);}
+                    }
                     synchronized(ArchiveSync.class){
-                        check();if(!p.edit().putString(manual!=null?"manual":"automaticPlan",new JSONArray(batch).toString()).commit())throw new IOException("Unable to save batch progress");
+                        check();SharedPreferences.Editor edit=p.edit().putString("status","Batch complete · "+java.text.DateFormat.getDateTimeInstance().format(new Date()));
+                        if(manual!=null)edit.remove("manual").remove("manualBacklog");else edit.remove("automaticPlan").putLong("next",System.currentTimeMillis()+INTERVAL);
+                        if(!edit.commit())throw new IOException("Unable to save transfer completion");
                     }
-                }
-                synchronized(ArchiveSync.class){
-                    check();SharedPreferences.Editor edit=p.edit().putString("status","Batch complete · "+java.text.DateFormat.getDateTimeInstance().format(new Date()));
-                    if(manual!=null)edit.remove("manual");else edit.remove("automaticPlan").putLong("next",System.currentTimeMillis()+INTERVAL);edit.commit();
                 }
             }finally{running=null;WORK.unlock();}
         }

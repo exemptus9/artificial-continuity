@@ -75,6 +75,7 @@ def main():
             print(report, flush=True)
             if p.returncode:
                 raise RuntimeError("Browser did not verify Android's original segment")
+            phase(adb, "bulk", config["pairingCode"])
         finally:
             receiver.terminate()
             try: receiver.wait(timeout=8)
