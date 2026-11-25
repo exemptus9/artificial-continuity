@@ -449,40 +449,93 @@ def setting(key):
         return EMPTY
     raise Issue("OpenClaw could not read "+key+". Run setup from your normal Mint desktop account.")
 
-def modify(key,prior,value):
-    guard=["--expect-current-absent"] if prior is EMPTY else ["--expect-current-json",json.dumps(prior)]
-    attempt=oc("config","set",key,json.dumps(value),"--strict-json",*guard)
-    if attempt.returncode or setting(key)!=value:
-        raise Issue("OpenClaw did not confirm "+key+". Check your current CLI configuration.")
+def modify(key,prior,value,flags):
+    guarded=all(flag in flags for flag in ("--expect-current-absent","--expect-current-json"))
+    args=["--strict-json"] if "--strict-json" in flags else ["--json"] if re.search(r"(?:^|\s)--json(?:,|\s|$)",flags) else []
+    address=key
+    payload=value
+    parent,leaf=key.rsplit(".",1)
+    if not guarded:
+        current=setting(parent)
+        previous=current.get(leaf,EMPTY) if isinstance(current,dict) else EMPTY
+        if previous != prior:
+            raise Issue("OpenClaw settings changed during setup. Click Connect Lexi to re-read them.")
+        # Add a single leaf to an existing array on releases predating conditional writes.
+        if isinstance(prior,list) and isinstance(value,list) and value[:-1]==prior:
+            address=key+"["+str(len(prior))+"]"
+            payload=value[-1]
+    else:
+        args+=(["--expect-current-absent"] if prior is EMPTY else ["--expect-current-json",json.dumps(prior)])
+    attempt=oc("config","set",address,json.dumps(payload),*args)
+    if attempt.returncode:
+        raise Issue("OpenClaw declined the setting "+address+". Its existing values are left available for review.")
+    actual=setting(parent)
+    after=actual.get(leaf,EMPTY) if isinstance(actual,dict) else EMPTY
+    if after!=value:
+        raise Issue("OpenClaw did not confirm "+key+". Click Connect Lexi to check its current value.")
+
+PREVIOUS_INSTALL={"67734a236ee3b8bb828d3554dc0f3d7a21255590a799116cc12ba629f41087d6"}
+
+def install_runtime():
+    payload=Path(__file__).read_bytes()
+    digest=hashlib.sha256(payload).hexdigest()
+    receipt=ROOT/"installed-source.sha256"
+    if APP.is_symlink() or receipt.is_symlink():
+        raise Issue("The Total Recall install path is a symbolic link.")
+    if APP.exists():
+        current=hashlib.sha256(APP.read_bytes()).hexdigest()
+        known=set(PREVIOUS_INSTALL)
+        if receipt.exists(): known.add(receipt.read_text().strip())
+        if current!=digest and current not in known:
+            raise Issue("The local Recall connector was edited outside the installer. Preserve that copy before updating it.")
+    if not APP.exists() or APP.read_bytes()!=payload:
+        fd,tmp=tempfile.mkstemp(dir=ROOT,prefix=".recall-desk-")
+        with os.fdopen(fd,"wb") as f:
+            f.write(payload);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,APP)
+    fd,tmp=tempfile.mkstemp(dir=ROOT,prefix=".desk-digest-")
+    with os.fdopen(fd,"w") as f: f.write(digest+"\n")
+    os.replace(tmp,receipt)
 
 def install():
     setup()
+    with (ROOT/"connect.lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        return register_connector()
+
+def register_connector():
     if not shutil.which("openclaw"):
-        raise Issue("OpenClaw CLI isn't visible here. Run python3 recall_desk.py connect from Mint Terminal.")
-    options=oc("config","set","--help").stdout
-    if not all(k in options for k in ("--expect-current-json","--expect-current-absent","--strict-json")):
-        raise Issue("OpenClaw lacks guarded config writes. Use settings to view the manual server configuration.")
-    raw=Path(__file__).read_bytes()
-    with tempfile.NamedTemporaryFile(dir=ROOT) as f:
-        f.write(raw); f.flush()
-        try: os.link(f.name, APP)
-        except FileExistsError: pass
-    if APP.is_symlink() or APP.read_bytes()!=raw:
-        raise Issue("A different Total Recall Desk is already registered at "+str(APP)+". Review that file before replacing it.")
+        raise Issue("OpenClaw CLI isn't visible here. Run total-recall-desk connect from your normal Mint Terminal.")
+    help_result=oc("config","set","--help")
+    if help_result.returncode: raise Issue("The installed OpenClaw does not provide config set.")
+    flags=help_result.stdout+" "+help_result.stderr
+    install_runtime()
     servers=setting("mcp.servers")
     if servers is EMPTY: servers={}
     if not isinstance(servers,dict): raise Issue("Unexpected MCP configuration.")
     previous=servers.get(SERVER,EMPTY)
     spec={"command":sys.executable,"args":["-I",str(APP),"serve"]}
     if previous is EMPTY:
-        modify("mcp.servers."+SERVER,previous,spec)
+        modify("mcp.servers."+SERVER,previous,spec,flags)
     else:
         normal=dict(previous) if isinstance(previous,dict) else {}
         if normal.get("enabled") is True: normal.pop("enabled")
         if normal.get("transport")=="stdio": normal.pop("transport")
         if normal!=spec:
             raise Issue("OpenClaw already uses the name totalrecall for a different or disabled server.")
-    policy=setting(SCOPE)
+    scope=SCOPE
+    try: policy=setting(scope)
+    except Issue:
+        policy=EMPTY
+    if policy is EMPTY:
+        # Older OpenClaw variants store per-agent settings in agents.list.
+        roster=setting("agents")
+        if isinstance(roster,dict) and not (isinstance(roster.get("entries"),dict) and "lexidaimon" in roster["entries"]):
+            candidates=[i for i,row in enumerate(roster.get("list") or []) if isinstance(row,dict) and row.get("id")=="lexidaimon"]
+            if len(candidates)==1:
+                scope=f"agents.list[{candidates[0]}].tools.sandbox.tools"
+                policy=setting(scope)
+
     if policy is EMPTY: policy={}
     if not isinstance(policy,dict): raise Issue("Unexpected Lexi sandbox configuration.")
     field="allow" if "allow" in policy else "alsoAllow"
@@ -491,7 +544,7 @@ def install():
     if inherited is EMPTY: inherited=[]
     if not isinstance(inherited,list): raise Issue("Unexpected inherited sandbox grants.")
     if FULL_TOOL not in inherited:
-        modify(SCOPE+"."+field,prior,inherited+[FULL_TOOL])
+        modify(scope+"."+field,prior,inherited+[FULL_TOOL],flags)
     return {"tool":FULL_TOOL,"next":"In a new Lexi chat ask: Use totalrecall__find_capture to find my latest imported thought."}
 
 AUTOSTART = Path(os.getenv("XDG_CONFIG_HOME") or Path.home()/".config")/"autostart/total-recall-desk.desktop"
@@ -503,13 +556,7 @@ def autostart_entry(host):
     script=Path(__file__).resolve()
     if script != Path("/usr/share/total-recall-listening/recall_desk.py") and script!=APP:
         # Source launches may be from a removable drive or Downloads. Retain this version at a stable path.
-        payload=script.read_bytes()
-        with tempfile.NamedTemporaryFile(dir=ROOT) as f:
-            f.write(payload); f.flush()
-            try: os.link(f.name, APP)
-            except FileExistsError: pass
-        if APP.is_symlink() or APP.read_bytes()!=payload:
-            raise Issue("Another installed desk occupies the startup path. Start that copy or install the Mint package.")
+        install_runtime()
         script=APP
     def quote(value):
         value=str(value)

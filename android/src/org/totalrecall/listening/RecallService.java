@@ -123,6 +123,12 @@ public final class RecallService extends Service {
                         if(!ListenPolicy.allowed(app)){stopping.set(true);return;}
                         try{lastSaved[0]=store.save(clip);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
+                        if(clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
+                            try {
+                                Vibrator haptic=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+                                if(haptic!=null&&haptic.hasVibrator())haptic.vibrate(45);
+                            }catch(SecurityException ignored){}
+                        }
                         try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
                     }
                     @Override public void onPauseRequested(){stopping.set(true);}

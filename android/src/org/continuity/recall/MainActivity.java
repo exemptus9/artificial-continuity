@@ -220,9 +220,9 @@ public class MainActivity extends Activity {
     status.setText(
         s.getJSONObject("policy").getBoolean("paused")
             ? "PAUSED · capture and sharing disabled"
-            : "Local only · "
+            : "Phone vault · "
                 + s.getJSONObject("events").length()
-                + " records · no cloud connection");
+                + " records");
     label(body, title, 28, FG).setTypeface(null, Typeface.BOLD);
     scroll.post(() -> scroll.scrollTo(0, 0));
   }

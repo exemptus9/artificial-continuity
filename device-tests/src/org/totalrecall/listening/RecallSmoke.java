@@ -129,6 +129,8 @@ public final class RecallSmoke extends Instrumentation {
                 }
             }
             require(audio&&index,"Archive contents mismatch");
+            require(store.importZip(new ByteArrayInputStream(output.toByteArray())).contains("1 already present"),"Duplicate ZIP failed dedup");
+            require(store.search(marker).size()==1,"Duplicate clip after ZIP restore");
             require(target.getSharedPreferences("recall_test_fixture",0).edit().putString("marker",marker)
                 .putString("sha256",m.sha256).commit(),"Cannot save test receipt");
             passed("Feedback, correction, original preservation, multi-term search and scoped ZIP content verified.");
@@ -152,7 +154,11 @@ public final class RecallSmoke extends Instrumentation {
                 waitText(activity,"1 moment",10000);
                 passed("Listening activity launched and its search filtered the persisted record.");
             }finally{runOnMainSync(activity::finish);waitForIdleSync();}
+            ByteArrayOutputStream restored=new ByteArrayOutputStream();
+            store.exportZip(restored, Collections.singletonList(m.id));
             store.delete(m.id);
+            require(store.importZip(new ByteArrayInputStream(restored.toByteArray())).contains("1 previously deleted"),
+                    "Restore revived a forgotten clip");
             require(!m.audio.exists()&&store.search(marker).isEmpty(),"Deleted fixture remains");
             target.getSharedPreferences("recall_test_fixture",0).edit().clear().commit();
             passed("Fixture row and audio deleted.");

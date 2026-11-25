@@ -1,12 +1,14 @@
-# Total Recall for Android · 0.8.1 test release
+# Total Recall for Android · 0.10.0
 
 See [Selective listening on Galaxy and Mint](SELECTIVE_LISTENING.md) for the 0.10.0 release.
 
-Install the supplied `TotalRecall-0.8.1-test.apk`. This is one native companion
-inside the existing `artificial-continuity` repository, not a new product service.
-It has no Internet permission, analytics SDK, paid dependency, or required desktop.
-It requests special permissions only for optional app history, notifications and
-user-triggered recording. Everything begins off with empty allowlists.
+Install the signed TotalRecall-0.10.0.apk over the original Total Recall Android test app. The microphone starts when you tap Start listening. Speech recognition runs on the phone. Pairing a Mint receiver enables optional local network transfers of selected clips.
+
+Selective moments use the listening screen's export and restore controls. The existing vault backup covers the original capture and timeline store.
+
+## Original vault and 0.8.1 release reference
+
+The following reference documents the previous release's capture, backup and transfer tools.
 
 **0.8.1:** unfinished drafts and selected files are protected when preparing a storage test.
 

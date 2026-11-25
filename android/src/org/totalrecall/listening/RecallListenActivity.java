@@ -55,7 +55,11 @@ public final class RecallListenActivity extends Activity {
     private TextView state, summary, firstUse;
     private Button toggle, ask, exportAll, restore;
     private EditText search;
-    private SpeechRecognizer recognizer;
+    private boolean reviewToday;
+    private volatile int speechGeneration;
+    private boolean searchRecording;
+    private TextView listHeading;
+    private Button daily;
     private MediaPlayer player;
     private int generation;
     private long exportId=-1, requestedMoment=-1;
@@ -100,7 +104,10 @@ public final class RecallListenActivity extends Activity {
         LinearLayout infoRow=row();
         Button help=link("How listening works"), gaps=link("Coverage gaps");
         help.setOnClickListener(v->about());gaps.setOnClickListener(v->showGaps());split(infoRow,help,gaps);header.addView(infoRow);
-        TextView heading=text("Saved moments",23,INK,true);heading.setPadding(0,dp(8),0,dp(5));header.addView(heading);
+        LinearLayout headings=row();listHeading=text("Saved moments",23,INK,true);
+        listHeading.setPadding(0,dp(8),0,dp(5));headings.addView(listHeading,new LinearLayout.LayoutParams(0,-2,1));
+        daily=link("Review today");daily.setOnClickListener(v->{reviewToday=!reviewToday;search.setText("");refresh();});
+        headings.addView(daily);header.addView(headings);
         search=new EditText(this);search.setSingleLine();search.setTextColor(INK);search.setHintTextColor(SECOND);
         search.setHint("Search titles, transcripts or notes");search.setContentDescription("Search saved moments");
         search.setTextSize(16);search.setBackground(card(WHITE,BORDER,10));pad(search,12,10);search.setMinHeight(dp(50));
@@ -118,7 +125,7 @@ public final class RecallListenActivity extends Activity {
         header.addView(summary);
         list.addHeaderView(header,null,false);list.setAdapter(adapter);page.addView(list,new LinearLayout.LayoutParams(-1,-1));
         list.setOnItemClickListener((p,v,index,id)->{int pos=index-list.getHeaderViewsCount();if(pos>=0&&pos<items.size()) showMoment(items.get(pos));});
-        if(saved!=null){search.setText(saved.getString("query",""));exportId=saved.getLong("exportId",-1);voicePermissionRequest=saved.getBoolean("voicePermission");}
+        if(saved!=null){reviewToday=saved.getBoolean("reviewToday");search.setText(saved.getString("query",""));exportId=saved.getLong("exportId",-1);voicePermissionRequest=saved.getBoolean("voicePermission");}
         if(saved==null)applyIntentQuery(getIntent());
         search.addTextChangedListener(new TextWatcher(){
             public void beforeTextChanged(CharSequence s,int start,int count,int after){}
@@ -134,10 +141,10 @@ public final class RecallListenActivity extends Activity {
         String q=intent==null?null:intent.getStringExtra("query");
         if(q!=null)search.setText(q);
         requestedMoment=intent==null?-1:intent.getLongExtra("moment_id",-1);
-        if(requestedMoment>=0){search.setText("");scheduleRead(0);}
+        if(requestedMoment>=0){reviewToday=false;search.setText("");scheduleRead(0);}
     }
     @Override protected void onSaveInstanceState(Bundle out){
-        super.onSaveInstanceState(out);out.putString("query",search.getText().toString());
+        super.onSaveInstanceState(out);out.putBoolean("reviewToday",reviewToday);out.putString("query",search.getText().toString());
         out.putLong("exportId",exportId);out.putBoolean("voicePermission",voicePermissionRequest);
     }
     @Override protected void onStart(){super.onStart();IntentFilter filter=new IntentFilter(RecallService.ACTION_CHANGED);
@@ -158,22 +165,31 @@ public final class RecallListenActivity extends Activity {
         String current=RecallService.status(this);
         state.setText(current==null||current.trim().isEmpty()?(active?"Listening on this phone.":"Paused. Start a session when you want to listen."):current);
         toggle.setText(active?"Pause listening":"Start listening");
-        toggle.setEnabled(!commandPending);manualActions.setVisibility(active?View.VISIBLE:View.GONE);
-        ask.setVisibility(Build.VERSION.SDK_INT>=31&&SpeechRecognizer.isOnDeviceRecognitionAvailable(this)?View.VISIBLE:View.GONE);
+        toggle.setEnabled(!commandPending&&!searchRecording);manualActions.setVisibility(active?View.VISIBLE:View.GONE);
+        listHeading.setText(reviewToday?"Today’s catches":"Saved moments");
+        daily.setText(reviewToday?"Show all":"Review today");
     }
     private void refresh(){updateControls();scheduleRead(70);}
     private void scheduleRead(long delay){
         generation++;main.removeCallbacks(queryLater);main.postDelayed(queryLater,delay);
     }
     private void readMoments(){
-        int token=generation;String q=search.getText().toString().trim();
+        int token=generation;final boolean today=reviewToday;String q=search.getText().toString().trim();
         worker.execute(()->{
             try(Store store=new Store(getApplicationContext())){
                 List<Store.Moment> exact=store.search(q);
                 boolean related=exact.isEmpty()&&!q.isEmpty();
-                List<Store.Moment> rows=related?relatedMoments(store,q):exact;
+                List<Store.Moment> rows=new ArrayList<>(related?relatedMoments(store,q):exact);
+                if(today){
+                    long[] day=localDay(System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+                    rows.removeIf(m->m.endMs<day[0]||m.endMs>=day[1]);
+                }
+                int pending=0;
+                for(Store.Moment m:rows)if(!nonempty(m.feedback)||"none".equals(m.feedback))pending++;
+                String dayLabel=rows.isEmpty()?(q.isEmpty()?"No clips saved today.":"No matching clips today."):
+                    rows.size()+(rows.size()==1?" catch":" catches")+" · "+pending+" awaiting feedback";
                 main.post(()->{if(!alive()||token!=generation)return;items.clear();items.addAll(rows);adapter.notifyDataSetChanged();
-                    summary.setText(rows.isEmpty()?(q.isEmpty()?"Your saved clips will appear here.":"No matching moments."):
+                    summary.setText(today?dayLabel:rows.isEmpty()?(q.isEmpty()?"Your saved clips will appear here.":"No matching moments."):
                         rows.size()+" "+(related?"related ":"")+(rows.size()==1?"moment":"moments"));
                     exportAll.setEnabled(!exporting&&!importing&&(!q.isEmpty()||!items.isEmpty()));
                     if(requestedMoment>=0){
@@ -184,6 +200,12 @@ public final class RecallListenActivity extends Activity {
                 });
             }catch(Exception e){main.post(()->{if(alive()&&token==generation)summary.setText("Couldn’t read saved moments. "+message(e));});}
         });
+    }
+    /** End-of-clip time assigns an overnight capture to the day it finished. Handles DST. */
+    static long[] localDay(long now,java.time.ZoneId zone){
+        java.time.LocalDate date=java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
+        return new long[]{date.atStartOfDay(zone).toInstant().toEpochMilli(),
+            date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()};
     }
     private static final Set<String> COMMON=new HashSet<>(Arrays.asList(
         "a","an","i","in","for","of","or","on","the","to","a","and","me","my","you","was","were",
@@ -249,7 +271,7 @@ public final class RecallListenActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Selective listening")
             .setMessage("Start a session where people know the microphone is active. Keep the phone locked or use other apps while the listening service runs.\n\n"
                 +"Recall keeps a rolling window in memory. A detected idea or decision can save a clip with its lead-in and a searchable transcript. Ordinary audio expires as the window rolls forward.\n\n"
-                +"Use Keep last minute or say “Lexi, keep the last minute.” Mark a catch Worth keeping or Less like this to tune later selections. Pause from this screen or the listening notification.")
+                +"Use Keep last minute or say “Lexi, keep the last minute.” A brief vibration acknowledges a saved manual catch when vibration is available. Mark a catch Worth keeping or Less like this to tune later selections. Pause from this screen or the listening notification.")
             .setPositiveButton("Got it",null).show();
     }
 
@@ -368,27 +390,48 @@ public final class RecallListenActivity extends Activity {
         main.post(()->{if(alive()){exporting=false;refresh();Toast.makeText(this,"Export saved",Toast.LENGTH_LONG).show();}});});
     }
     private void voiceSearch(){
-        if(Build.VERSION.SDK_INT<31||!SpeechRecognizer.isOnDeviceRecognitionAvailable(this)){Toast.makeText(this,"On-device voice search is unavailable. Type in the search field.",Toast.LENGTH_LONG).show();return;}
+        if(searchRecording){endSpeech();return;}
         if(RecallService.isListening()){Toast.makeText(this,"Pause listening to use voice search, or type a phrase.",Toast.LENGTH_LONG).show();return;}
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){
             voicePermissionRequest=true;requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},MIC);return;}
-        endSpeech();stopPlayer();try{
-            recognizer=SpeechRecognizer.createOnDeviceSpeechRecognizer(this);ask.setText("Cancel voice search");
-            ask.setOnClickListener(v->endSpeech());recognizer.setRecognitionListener(new RecognitionListener(){
-                public void onReadyForSpeech(Bundle b){} public void onBeginningOfSpeech(){} public void onRmsChanged(float f){}
-                public void onBufferReceived(byte[] b){} public void onEndOfSpeech(){} public void onPartialResults(Bundle b){}
-                public void onEvent(int i,Bundle b){}
-                public void onError(int i){endSpeech();Toast.makeText(RecallListenActivity.this,"No search phrase captured. Try again or type a phrase.",Toast.LENGTH_SHORT).show();}
-                public void onResults(Bundle b){ArrayList<String> lines=b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-                    if(lines!=null&&!lines.isEmpty())search.setText(lines.get(0));endSpeech();}
-            });
-            recognizer.startListening(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE,true));
-        }catch(Exception e){endSpeech();problem("Couldn’t start on-device voice search",e);}
+        final int run=++speechGeneration;stopPlayer();searchRecording=true;toggle.setEnabled(false);
+        ask.setText("Preparing · cancel");ask.setContentDescription("Preparing offline voice search. Tap to cancel.");
+        new Thread(()->{
+            android.media.AudioRecord mic=null;String phrase=null, failure=null;
+            try(OfflineSpeech local=new OfflineSpeech(getApplicationContext())){
+                if(run!=speechGeneration)return;
+                int minimum=android.media.AudioRecord.getMinBufferSize(16000,android.media.AudioFormat.CHANNEL_IN_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT);
+                if(minimum<=0)throw new java.io.IOException("This microphone does not offer 16 kHz input.");
+                mic=new android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION,16000,
+                    android.media.AudioFormat.CHANNEL_IN_MONO,android.media.AudioFormat.ENCODING_PCM_16BIT,Math.max(minimum,8192));
+                if(mic.getState()!=android.media.AudioRecord.STATE_INITIALIZED)throw new java.io.IOException("Microphone unavailable.");
+                mic.startRecording();
+                if(mic.getRecordingState()!=android.media.AudioRecord.RECORDSTATE_RECORDING)throw new java.io.IOException("Microphone is busy.");
+                main.post(()->{if(alive()&&run==speechGeneration){ask.setText("Listening · cancel");ask.setContentDescription("Listening for a search phrase. Tap to cancel.");ask.announceForAccessibility("Speak your search phrase");}});
+                short[] block=new short[1600];
+                long deadline=android.os.SystemClock.elapsedRealtime()+12000;
+                while(run==speechGeneration&&android.os.SystemClock.elapsedRealtime()<deadline){
+                    int n=mic.read(block,0,block.length,android.media.AudioRecord.READ_NON_BLOCKING);
+                    if(n<0)throw new java.io.IOException("Audio input stopped.");
+                    if(n==0){android.os.SystemClock.sleep(30);continue;}
+                    phrase=local.accept(block,n);if(nonempty(phrase))break;
+                }
+                if(run==speechGeneration&&!nonempty(phrase))phrase=local.finish();
+            }catch(Exception|LinkageError e){failure=message(e);}
+            finally{
+                if(mic!=null){try{mic.stop();}catch(IllegalStateException ignored){}mic.release();}
+                final String result=phrase, error=failure;
+                main.post(()->{searchRecording=false;if(!alive())return;ask.setText("Voice search");ask.setContentDescription("Voice search");updateControls();
+                    if(run!=speechGeneration)return;
+                    if(error!=null)Toast.makeText(this,"Voice search: "+error,Toast.LENGTH_LONG).show();
+                    else if(nonempty(result))search.setText(result);
+                    else Toast.makeText(this,"No search phrase captured. Try again or type a phrase.",Toast.LENGTH_SHORT).show();
+                });
+            }
+        },"Recall-Voice-Search").start();
     }
-    private void endSpeech(){if(recognizer!=null){SpeechRecognizer r=recognizer;recognizer=null;r.destroy();}
-        if(ask!=null){ask.setText("Voice search");ask.setOnClickListener(v->voiceSearch());}}
+    private void endSpeech(){speechGeneration++;if(searchRecording&&ask!=null)ask.setText("Stopping…");}
     private static boolean nonempty(String s){return s!=null&&!s.trim().isEmpty();}
     private String momentDate(long ms){return DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(new Date(ms));}
     private String duration(Store.Moment m){long sec=Math.max(1,(m.endMs-m.startMs)/1000);return sec<60?sec+" sec":sec/60+" min "+sec%60+" sec";}
@@ -423,7 +466,8 @@ public final class RecallListenActivity extends Activity {
                 name.setPadding(0,dp(3),0,dp(3));excerpt.setMaxLines(2);excerpt.setEllipsize(TextUtils.TruncateAt.END);
                 body.addView(meta);body.addView(name);body.addView(excerpt);wrap.addView(body);
             }else{wrap=(LinearLayout)convert;body=(LinearLayout)wrap.getChildAt(0);}
-            Store.Moment m=getItem(i);((TextView)body.getChildAt(0)).setText(momentDate(m.startMs)+"  ·  "+duration(m));
+            Store.Moment m=getItem(i);String feedback="keep".equals(m.feedback)?" · Worth keeping":"skip".equals(m.feedback)?" · Less like this":" · Unreviewed";
+            ((TextView)body.getChildAt(0)).setText(momentDate(m.startMs)+"  ·  "+duration(m)+(reviewToday?feedback:""));
             ((TextView)body.getChildAt(1)).setText(m.title);
             ((TextView)body.getChildAt(2)).setText(nonempty(m.correction)?m.correction:(nonempty(m.transcript)?m.transcript:m.reason));return wrap;
         }
