@@ -200,17 +200,53 @@ public final class RecallSmoke extends Instrumentation {
         throw new AssertionError("Control or value missing: "+text);
     }
     private void assertControl(Activity a,String text){require(waitText(a,text,8000) instanceof Button,"Expected button "+text);}
+    private void deviceShell(String command)throws Exception {
+        android.os.ParcelFileDescriptor fd=getUiAutomation().executeShellCommand(command);
+        try(InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){bytes(in);}
+    }
     private void microphone()throws Exception{
         Activity a=launch();
-        try{
+        android.os.PowerManager power=(android.os.PowerManager) target.getSystemService(Context.POWER_SERVICE);
+        java.util.Set<String> previous=new java.util.HashSet<>();
+        try(Store store=new Store(target)){
+            for(Store.Moment row:store.search(""))previous.add(row.uid);
             View start=waitText(a,"Start listening",8000);runOnMainSync(start::performClick);
             long end=SystemClock.elapsedRealtime()+120000;
             while(SystemClock.elapsedRealtime()<end&&!RecallService.status(target).startsWith("Listening"))SystemClock.sleep(250);
             require(RecallService.isListening()&&RecallService.status(target).startsWith("Listening"),"Foreground capture not active: "+RecallService.status(target));
-            View pause=waitText(a,"Pause listening",5000);runOnMainSync(pause::performClick);
+            deviceShell("input keyevent KEYCODE_SLEEP");
+            end=SystemClock.elapsedRealtime()+7000;
+            while(power.isInteractive()&&SystemClock.elapsedRealtime()<end)SystemClock.sleep(100);
+            require(!power.isInteractive(),"Emulator display did not turn off");
+            SystemClock.sleep(4000);
+            require(!power.isInteractive()&&RecallService.isListening(),"Listening interrupted while screen was off");
+            // Dispatch the same foreground service intent used by the notification's Keep action.
+            target.startService(new Intent(target,RecallService.class).setAction(RecallService.KEEP));
+            Store.Moment kept=null;
+            end=SystemClock.elapsedRealtime()+35000;
+            while(kept==null && SystemClock.elapsedRealtime()<end){
+                require(!power.isInteractive(),"Display became interactive before the save finished");
+                for(Store.Moment row:store.search(""))if(!previous.contains(row.uid)&&row.kind.contains(SelectiveEngine.MANUAL)){
+                    kept=row;break;
+                }
+                if(kept==null)SystemClock.sleep(250);
+            }
+            require(kept!=null,"No buffered Keep saved while asleep: "+RecallService.status(target));
+            byte[] wav=file(kept.audio);
+            require(kept.endMs>kept.startMs && wav.length>44 && hex(wav).equals(kept.sha256),"Asleep clip missing audio or hash");
+            require(!power.isInteractive(),"Display woke before WAV verification");
+            passed("Screen off throughout retrospective save: foreground microphone accepted Keep, stored "
+                +(kept.endMs-kept.startMs)+" ms of emulator PCM and verified WAV bytes against catalog SHA-256.");
+            deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
+            View pause=waitText(a,"Pause listening",10000);runOnMainSync(pause::performClick);
             waitText(a,"Start listening",20000);
             require(!RecallService.isListening(),"UI pause did not stop service");
+            store.delete(kept.id);
             passed("UI start/pause and emulator microphone foreground service, real ASR model initialization and release.");
-        }finally{runOnMainSync(a::finish);waitForIdleSync();}
+        }finally{
+            deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
+            if(RecallService.isListening())target.startService(new Intent(target,RecallService.class).setAction(RecallService.PAUSE));
+            runOnMainSync(a::finish);waitForIdleSync();
+        }
     }
 }
