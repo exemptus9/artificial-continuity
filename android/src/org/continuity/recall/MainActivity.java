@@ -1285,6 +1285,8 @@ public class MainActivity extends Activity {
                               ((android.app.job.JobScheduler)
                                       getSystemService(JOB_SCHEDULER_SERVICE))
                                   .cancel(UsageJob.ID);
+                              org.totalrecall.listening.ArchiveSync.reset(this);
+                              org.totalrecall.listening.ArchiveStore.reset(this);
                               org.totalrecall.listening.Store.reset(this);
                               org.totalrecall.listening.JournalStore.reset(this);
                               org.totalrecall.listening.RecallOverlay.reset(this);
@@ -1661,7 +1663,10 @@ public class MainActivity extends Activity {
   @Override
   protected void onResume() {
     super.onResume();
-    if (ListenPolicy.allowed(this)) org.totalrecall.listening.MintSync.schedule(this);
+    if (ListenPolicy.allowed(this)) {
+      org.totalrecall.listening.MintSync.schedule(this);
+      org.totalrecall.listening.ArchiveSync.schedule(this);
+    }
     new Thread(
             () -> {
               try {

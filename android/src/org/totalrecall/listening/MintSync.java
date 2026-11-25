@@ -72,11 +72,37 @@ public final class MintSync extends JobService {
             oct[i] = Integer.parseInt(parts[i]);
             if (oct[i] > 255) return false;
         }
-        return oct[0]==10 || (oct[0]==192 && oct[1]==168) || (oct[0]==172 && oct[1]>=16 && oct[1]<=31);
+        return oct[0]==10 || (oct[0]==100 && oct[1]>=64 && oct[1]<=127) || (oct[0]==192 && oct[1]==168) || (oct[0]==172 && oct[1]>=16 && oct[1]<=31);
+    }
+
+    static HttpsURLConnection open(Pair pair,String path) throws Exception {
+        X509TrustManager pinned = new X509TrustManager() {
+                @Override public X509Certificate[] getAcceptedIssuers(){ return new X509Certificate[0]; }
+                @Override public void checkClientTrusted(X509Certificate[] chain,String type) throws CertificateException { throw new CertificateException("Server pin only"); }
+                @Override public void checkServerTrusted(X509Certificate[] chain,String type) throws CertificateException {
+                    try {
+                        if (chain==null || chain.length==0 || !pair.pin.equals(hex(MessageDigest.getInstance("SHA-256").digest(chain[0].getEncoded()))))
+                            throw new CertificateException("Unrecognized Mint certificate");
+                        chain[0].checkValidity();
+                    } catch (java.security.NoSuchAlgorithmException e) { throw new CertificateException(e); }
+                }
+            };
+            SSLContext tls = SSLContext.getInstance("TLS");
+            tls.init(null,new TrustManager[]{pinned},null);
+            HttpsURLConnection conn=(HttpsURLConnection)new URL(pair.base+path).openConnection(Proxy.NO_PROXY);
+                conn.setSSLSocketFactory(tls.getSocketFactory());
+                // Full DER pin above authenticates the receiver, including a self-signed certificate.
+                conn.setHostnameVerifier((host,session) -> pair.host.equals(host));
+                conn.setInstanceFollowRedirects(false);
+                conn.setConnectTimeout(9000); conn.setReadTimeout(20000);
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Authorization","Bearer "+pair.token);
+        return conn;
     }
 
     public static synchronized void schedule(Context c) {
-        if (prefs(c).getString("pair", "").isEmpty() || !ListenPolicy.allowed(c)) return;
+        ArchiveSync.schedule(c);
+        if (!prefs(c).getBoolean("legacyUploads",true) || prefs(c).getString("pair", "").isEmpty() || !ListenPolicy.allowed(c)) return;
         requestNumber++;
         try {
             JobScheduler scheduler = c.getSystemService(JobScheduler.class);
@@ -92,6 +118,7 @@ public final class MintSync extends JobService {
     }
 
     public static synchronized void reset(Context c) {
+        if(!ArchiveSync.prefs(c).contains("destination"))ArchiveSync.reset(c);
         prefs(c).edit().clear().commit();
         cancel(c);
         clearInterruptedExports(c);
@@ -126,7 +153,7 @@ public final class MintSync extends JobService {
         }
 
         void check() throws IOException {
-            if (stopped || !ListenPolicy.allowed(MintSync.this) || code.isEmpty() || !code.equals(prefs(MintSync.this).getString("pair","")))
+            if (stopped || !prefs(MintSync.this).getBoolean("legacyUploads",true) || !ListenPolicy.allowed(MintSync.this) || code.isEmpty() || !code.equals(prefs(MintSync.this).getString("pair","")))
                 throw new IOException("Transfer stopped");
         }
 
@@ -192,30 +219,11 @@ public final class MintSync extends JobService {
         }
 
         void post(final Pair pair, File archive, Store.Moment m) throws Exception {
-            X509TrustManager pinned = new X509TrustManager() {
-                @Override public X509Certificate[] getAcceptedIssuers(){ return new X509Certificate[0]; }
-                @Override public void checkClientTrusted(X509Certificate[] chain,String type) throws CertificateException { throw new CertificateException("Server pin only"); }
-                @Override public void checkServerTrusted(X509Certificate[] chain,String type) throws CertificateException {
-                    try {
-                        if (chain==null || chain.length==0 || !pair.pin.equals(hex(MessageDigest.getInstance("SHA-256").digest(chain[0].getEncoded()))))
-                            throw new CertificateException("Unrecognized Mint certificate");
-                        chain[0].checkValidity();
-                    } catch (java.security.NoSuchAlgorithmException e) { throw new CertificateException(e); }
-                }
-            };
-            SSLContext tls = SSLContext.getInstance("TLS");
-            tls.init(null,new TrustManager[]{pinned},null);
-            HttpsURLConnection conn=(HttpsURLConnection)new URL(pair.base+"/v1/import").openConnection(Proxy.NO_PROXY);
+            HttpsURLConnection conn=open(pair,"/v1/import");
             connection=conn;
             try {
                 check();
-                conn.setSSLSocketFactory(tls.getSocketFactory());
-                // Full DER pin above authenticates the receiver, including a self-signed certificate.
-                conn.setHostnameVerifier((host,session) -> pair.host.equals(host));
-                conn.setInstanceFollowRedirects(false);
-                conn.setConnectTimeout(9000); conn.setReadTimeout(20000);
-                conn.setUseCaches(false); conn.setRequestMethod("POST"); conn.setDoOutput(true);
-                conn.setRequestProperty("Authorization","Bearer "+pair.token);
+                conn.setRequestMethod("POST"); conn.setDoOutput(true);
                 conn.setRequestProperty("Content-Type","application/zip");
                 conn.setFixedLengthStreamingMode(archive.length());
                 MessageDigest sha=MessageDigest.getInstance("SHA-256");
@@ -252,7 +260,7 @@ public final class MintSync extends JobService {
     }
     @Override public boolean onStartJob(JobParameters params) {
         String code=prefs(this).getString("pair","");
-        if (code.isEmpty()) return false;
+        if (code.isEmpty() || !prefs(this).getBoolean("legacyUploads",true)) return false;
         clearInterruptedExports(this);
         Run run=new Run(params,code);
         current=run;

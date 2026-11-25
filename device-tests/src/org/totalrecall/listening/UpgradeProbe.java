@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.lang.reflect.Method;
@@ -15,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-/** A fixture created by the installed 0.10.0 app and read after package replacement. */
+/** A fixture created by the installed 0.11.0 app and read after package replacement. */
 public final class UpgradeProbe extends Instrumentation {
     private static final String PREFS = "upgrade_test_fixture";
     private static final String FEEDBACK = "keep";
@@ -55,7 +56,21 @@ public final class UpgradeProbe extends Instrumentation {
                 store.feedback(row.id, FEEDBACK);
                 String digest = digest(row.audio);
                 check(digest.equals(row.sha256), "Installed source WAV digest mismatch");
-                check(fixture.edit().putString("marker", marker).putString("digest", digest)
+                JournalStore.setEnabled(target, true);
+                long session;
+                try (JournalStore journal = new JournalStore(target)) {
+                    Method epochMethod = JournalStore.class.getDeclaredMethod("epoch", Context.class);
+                    Method begin = JournalStore.class.getDeclaredMethod("begin", long.class);
+                    Method append = JournalStore.class.getDeclaredMethod("append", long.class, long.class, String.class, boolean.class);
+                    Method finishSession = JournalStore.class.getDeclaredMethod("finish", long.class, String.class);
+                    epochMethod.setAccessible(true); begin.setAccessible(true);
+                    append.setAccessible(true); finishSession.setAccessible(true);
+                    long epoch = (long)epochMethod.invoke(null, target);
+                    session = (long)begin.invoke(journal, epoch);
+                    check((boolean)append.invoke(journal, session, epoch, "Journal line " + marker, false), "Journal seed failed");
+                    finishSession.invoke(journal, session, "Upgrade fixture finished");
+                }
+                check(fixture.edit().putLong("journal", session).putString("marker", marker).putString("digest", digest)
                         .putString("uid", row.uid).putLong("id", row.id).putLong("bytes", row.audio.length())
                         .commit(), "Could not persist upgrade witness");
                 receipt.putString("detail", "Created a WAV and catalog row with feedback, original transcript, title and correction.");
@@ -70,7 +85,16 @@ public final class UpgradeProbe extends Instrumentation {
                         "Catalog content or feedback changed");
                 check(row.audio.length() == fixture.getLong("bytes", -1) && row.sha256.equals(fixture.getString("digest", ""))
                         && digest(row.audio).equals(row.sha256), "WAV changed during upgrade");
-                receipt.putString("detail", "The prior UID, row ID, original transcript, edits, feedback and "
+                try (JournalStore journal = new JournalStore(target)) {
+                    long session = fixture.getLong("journal", -1);
+                    ByteArrayOutputStream text = new ByteArrayOutputStream();
+                    journal.export(session, text);
+                    check(JournalStore.enabled(target) && text.toString("UTF-8").contains("Journal line " + marker),
+                            "Prior opt-in journal session or setting changed");
+                    journal.delete(session);
+                    JournalStore.setEnabled(target, false);
+                }
+                receipt.putString("detail", "The prior journal session/setting, UID, row ID, original transcript, edits, feedback and "
                         + row.audio.length() + " bytes of WAV audio survived package replacement; SHA-256 verified.");
                 store.delete(row.id);
                 check(fixture.edit().clear().commit(), "Could not clear synthetic test witness");

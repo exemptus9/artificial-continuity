@@ -10,6 +10,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import ipaddress
 import secrets
 import socket
+import signal
+import threading
+import time
+import webbrowser
 import ssl
 from contextlib import closing
 from datetime import datetime, timezone
@@ -26,7 +30,12 @@ import tempfile
 import wave
 import zipfile
 
-ROOT = Path.home() / ".local/share/total-recall-listening"
+# The installed launcher uses isolated Python. Resolve sibling modules by this script's own path.
+MODULES=Path(__file__).resolve().parent
+sys.path.insert(0,str(MODULES))
+import recall_archive
+import recall_web
+ROOT = Path(os.environ.get("TOTAL_RECALL_ARCHIVE_HOME") or Path.home()/".local/share/total-recall-listening").expanduser().resolve()
 DB = ROOT / "clips.sqlite3"
 APP = ROOT / "recall_desk.py"
 SERVER = "totalrecall"
@@ -45,6 +54,8 @@ class Issue(Exception):
 def setup():
     ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     with closing(sqlite3.connect(DB, timeout=15)) as db, db:
+        if not db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
+            db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         db.executescript("""
             CREATE TABLE IF NOT EXISTS clips (
               id TEXT PRIMARY KEY, started INTEGER NOT NULL, duration INTEGER NOT NULL,
@@ -122,7 +133,15 @@ def stream_to_temp(source, entry):
         audio.close()
         raise
 
-def import_zip(path, require_one=False):
+def archive():
+    return recall_archive.Archive(sys.modules[__name__])
+
+def import_zip(path,require_one=False,*,arc=None,locked=False,reserved=0):
+    store=arc or archive()
+    if locked: return _import_zip(path,require_one,store,reserved)
+    with recall_archive.archive_lock(ROOT): return _import_zip(path,require_one,store,reserved)
+
+def _import_zip(path,require_one,arc,reserved):
     setup()
     added=unchanged=revised=0
     stamp=datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -137,6 +156,9 @@ def import_zip(path, require_one=False):
             raise Issue("Select the capture ZIP exported by Total Recall Listening.")
         if require_one and (len(index["clips"])!=1 or len(members)!=2):
             raise Issue("Paired transfer accepts exactly one selected clip per request.")
+        capacity=arc.capacity(db)
+        available=capacity["availableBytes"]+reserved
+        stagedBytes=0
         seen=set()
         db.execute("BEGIN IMMEDIATE")
         for clip in index["clips"]:
@@ -144,7 +166,13 @@ def import_zip(path, require_one=False):
             if uid in seen or clip["audio"] not in members:
                 raise Issue("Missing or duplicate audio record.")
             seen.add(uid)
+            if recall_archive.expiry(clip["startedAtMillis"]+clip["durationMs"])<=recall_archive.now():
+                raise Issue("Capture is past its seven-year retention date")
             entry=members[clip["audio"]]
+            prior=db.execute("SELECT 1 FROM clips WHERE id=?",(uid,)).fetchone()
+            if not prior: stagedBytes+=entry.file_size
+            if stagedBytes>available or shutil.disk_usage(ROOT).free-capacity["floorBytes"]<entry.file_size*(1 if prior else 2):
+                raise recall_archive.Failure(507,"Archive free space or quota is exhausted")
             stream,digest,frames=stream_to_temp(z,entry)
             with stream:
                 if expected!=digest:
@@ -152,10 +180,19 @@ def import_zip(path, require_one=False):
                 # All Android clips are 16kHz; the expected rounding may differ by one millisecond.
                 if abs(clip["durationMs"] - frames*1000/16000) > 2:
                     raise Issue("Clip timeline and WAV duration disagree.")
+                provenance=tuple(clip.get(k) for k in ("parentId","startSample","endSample"))
+                if any(k in clip for k in ("parentId","startSample","endSample")):
+                    parent,first,last=provenance
+                    if not isinstance(parent,str) or not recall_archive.UID.fullmatch(parent) or parent==uid or type(first)!=int or type(last)!=int or first<0 or last-first!=frames:
+                        raise Issue("Excerpt source and sample range disagree with the original WAV.")
                 metadata=json.dumps(clip,ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False)
-                old=db.execute("SELECT sha,started FROM clips WHERE id=?",(uid,)).fetchone()
-                if old and old!=(digest,clip["startedAtMillis"]):
+                old=db.execute("SELECT sha,started,metadata FROM clips WHERE id=?",(uid,)).fetchone()
+                if old and old[:2]!=(digest,clip["startedAtMillis"]):
                     raise Issue("Existing capture ID has different original audio or timestamp. Import rolled back.")
+                if old:
+                    prior_meta=json.loads(old[2])
+                    if tuple(prior_meta.get(k) for k in ("parentId","startSample","endSample"))!=provenance:
+                        raise Issue("The excerpt's original source or sample range has changed.")
                 changed=db.execute("INSERT OR IGNORE INTO observations VALUES(?,?,?)",(uid,metadata,stamp)).rowcount
                 values=(str(clip.get("title") or clip["category"]),clip["transcript"],clip["category"],
                         clip["reason"],metadata,str(clip.get("feedback","")))
@@ -181,7 +218,9 @@ def import_zip(path, require_one=False):
 
 PROJECTION="""id, started, duration, sha, title, category, transcript, reason, feedback,
              coalesce(json_extract(metadata,'$.note'),'') AS note,
-             coalesce(json_extract(metadata,'$.correction'),'') AS correction"""
+             coalesce(json_extract(metadata,'$.correction'),'') AS correction,
+             json_extract(metadata,'$.parentId') AS parentId,json_extract(metadata,'$.startSample') AS startSample,
+             json_extract(metadata,'$.endSample') AS endSample"""
 STOP_WORDS=set("a an the to me my for of was were is are that this what where could can would i did do about have you with and in it at by from please find show tell".split())
 CONCEPTS=(
     ("word words neologism coined portmanteau forge lexicon definition term naming phrase",
@@ -336,7 +375,7 @@ def addresses():
 def lan_address(value):
     try: ip=ipaddress.IPv4Address(value)
     except (ValueError,TypeError): return False
-    return any(ip in ipaddress.ip_network(net) for net in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
+    return any(ip in ipaddress.ip_network(net) for net in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","100.64.0.0/10"))
 
 def credentials():
     openssl=shutil.which("openssl")
@@ -366,8 +405,8 @@ def credentials():
     der=ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii"))
     return cert,key,token,hashlib.sha256(der).hexdigest()
 
-def receive_one(source):
-    obj=import_zip(source,require_one=True)
+def receive_one(source,archive=None,locked=False,reserved=0):
+    obj=import_zip(source,require_one=True,arc=archive,locked=locked,reserved=reserved)
     return {"id":obj["id"],"audioSha256":obj["audioSha256"]}
 
 class TransferHandler(BaseHTTPRequestHandler):
@@ -379,18 +418,52 @@ class TransferHandler(BaseHTTPRequestHandler):
         self.send_response(code);self.send_header("Content-Type","application/json")
         self.send_header("Content-Length",str(len(data)));self.send_header("Connection","close")
         self.end_headers();self.wfile.write(data)
-    def do_POST(self):
-        if self.path!="/v1/import":
-            return self.reply(404,{"ok":False,"error":"Unknown path"})
+    def authorized(self):
         credentials=self.headers.get_all("Authorization") or []
-        if len(credentials)!=1 or not hmac.compare_digest(credentials[0].encode("utf-8"),b"Bearer "+self.server.token.encode("ascii")):
-            return self.reply(401,{"ok":False,"error":"Pairing required"})
-        lengths=self.headers.get_all("Content-Length") or []
-        if self.headers.get("Transfer-Encoding") or len(lengths)!=1 or not re.fullmatch("[0-9]{1,9}",lengths[0]):
-            return self.reply(411,{"ok":False,"error":"Bounded body required"})
-        length=int(lengths[0])
-        if not 1<=length<=16*1024*1024:
-            return self.reply(413,{"ok":False,"error":"Maximum request is 16 MiB"})
+        if len(credentials)==1 and hmac.compare_digest(credentials[0].encode("utf-8"),b"Bearer "+self.server.token.encode("ascii")):
+            return True
+        self.reply(401,{"ok":False,"error":"Pairing required"});return False
+    def length(self,maximum):
+        counts=self.headers.get_all("Content-Length") or []
+        if self.headers.get("Transfer-Encoding") or len(counts)!=1 or not re.fullmatch(r"[0-9]{1,9}",counts[0]):
+            raise recall_archive.Failure(411,"Bounded body required")
+        count=int(counts[0])
+        if not 0<count<=maximum: raise recall_archive.Failure(413,"Request exceeds accepted size")
+        return count
+    def do_GET(self):
+        if not self.authorized(): return
+        if self.path=="/v2/status":return self.reply(200,dict(ok=True,**self.server.archive.status()))
+        self.reply(404,{"ok":False,"error":"Unknown path"})
+    def do_PUT(self): self.upload()
+    def upload(self):
+        if not self.authorized():return
+        try:
+            if self.command=="POST" and self.path=="/v2/uploads":
+                length=self.length(32768)
+                if self.headers.get_content_type()!="application/json": raise recall_archive.Failure(415,"Expected JSON")
+                raw=self.rfile.read(length)
+                if len(raw)!=length:raise recall_archive.Failure(400,"Incomplete body")
+                receipt=self.server.archive.begin(json.loads(raw))
+            else:
+                m=re.fullmatch(r"/v2/uploads/([A-Za-z0-9_-]{1,128})",self.path)
+                if not m or self.command!="PUT": raise recall_archive.Failure(404,"Unknown path")
+                length=self.length(recall_archive.MAX_CHUNK)
+                if self.headers.get_content_type()!="application/octet-stream": raise recall_archive.Failure(415,"Expected binary chunk")
+                offsets=self.headers.get_all("X-Upload-Offset") or []
+                if len(offsets)!=1 or not re.fullmatch(r"[0-9]{1,12}",offsets[0]): raise recall_archive.Failure(400,"Missing chunk offset")
+                data=self.rfile.read(length)
+                if len(data)!=length: raise recall_archive.Failure(400,"Incomplete body")
+                receipt=self.server.archive.put(m[1],int(offsets[0]),data)
+            if receipt["complete"]:self.server.last_import=secrets.token_hex(8)
+            self.reply(200,receipt)
+        except recall_archive.Failure as e:self.reply(e.status,{"ok":False,"error":str(e)})
+        except (TypeError,ValueError,KeyError,zipfile.BadZipFile,wave.Error): self.reply(422,{"ok":False,"error":"Invalid archive data"})
+        except (OSError,sqlite3.Error):self.reply(503,{"ok":False,"error":"Storage unavailable; retry later"})
+    def do_POST(self):
+        if self.path!="/v1/import":return self.upload()
+        if not self.authorized():return
+        try: length=self.length(16*1024*1024)
+        except recall_archive.Failure as e:return self.reply(e.status,{"ok":False,"error":str(e)})
         if self.headers.get_content_type()!="application/zip":
             return self.reply(415,{"ok":False,"error":"Expected capture ZIP"})
         try:
@@ -405,6 +478,8 @@ class TransferHandler(BaseHTTPRequestHandler):
                 result=receive_one(Path(temp.name))
             self.server.last_import=secrets.token_hex(8)
             return self.reply(200,dict(ok=True,sha256=digest.hexdigest(),**result))
+        except recall_archive.Failure as e:
+            return self.reply(e.status,{"ok":False,"error":str(e)})
         except (Issue,KeyError,ValueError,EOFError,TypeError,zipfile.BadZipFile,wave.Error):
             return self.reply(422,{"ok":False,"error":"Archive validation failed"})
         except (sqlite3.Error,OSError):
@@ -423,17 +498,19 @@ class LanServer(HTTPServer):
     def handle_error(self,*args):
         pass
 
-def listener(host,port=8789,*,test_loopback=False):
+def listener(host,port=8789,*,test_loopback=False,advertise=None):
     if not lan_address(host) and not (test_loopback and host=="127.0.0.1"):
         raise Issue("Select an IPv4 address on your private home network.")
-    setup()
+    public=advertise or host
+    if public!=host and not lan_address(public):raise Issue("Choose a private LAN or mesh address to advertise")
+    arc=archive()
     cert,key,token,pin=credentials()
     tls=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version=ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(cert,key)
     server=LanServer((host,port),TransferHandler)
-    server.context=tls;server.token=token
-    spec=dict(url="https://"+host+":"+str(server.server_port),token=token,pin=pin)
+    server.context=tls;server.token=token;server.archive=arc
+    spec=dict(url="https://"+public+":"+str(server.server_port),token=token,pin=pin)
     code="TR1."+base64.urlsafe_b64encode(json.dumps(spec,separators=(",",":")).encode()).decode().rstrip("=")
     return server,code
 
@@ -476,11 +553,19 @@ def modify(key,prior,value,flags):
 
 PREVIOUS_INSTALL={"67734a236ee3b8bb828d3554dc0f3d7a21255590a799116cc12ba629f41087d6"}
 
+def replace_private(path,data):
+    fd,tmp=tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd,"wb") as f:f.write(data);f.flush();os.fsync(f.fileno())
+        os.replace(tmp,path)
+    finally:Path(tmp).unlink(missing_ok=True)
+
 def install_runtime():
     payload=Path(__file__).read_bytes()
     digest=hashlib.sha256(payload).hexdigest()
     receipt=ROOT/"installed-source.sha256"
-    if APP.is_symlink() or receipt.is_symlink():
+    modules_receipt=ROOT/"installed-modules.json"
+    if any(p.is_symlink() for p in (APP,receipt,modules_receipt)):
         raise Issue("The Total Recall install path is a symbolic link.")
     if APP.exists():
         current=hashlib.sha256(APP.read_bytes()).hexdigest()
@@ -488,14 +573,25 @@ def install_runtime():
         if receipt.exists(): known.add(receipt.read_text().strip())
         if current!=digest and current not in known:
             raise Issue("The local Recall connector was edited outside the installer. Preserve that copy before updating it.")
-    if not APP.exists() or APP.read_bytes()!=payload:
-        fd,tmp=tempfile.mkstemp(dir=ROOT,prefix=".recall-desk-")
-        with os.fdopen(fd,"wb") as f:
-            f.write(payload);f.flush();os.fsync(f.fileno())
-        os.replace(tmp,APP)
-    fd,tmp=tempfile.mkstemp(dir=ROOT,prefix=".desk-digest-")
-    with os.fdopen(fd,"w") as f: f.write(digest+"\n")
-    os.replace(tmp,receipt)
+    if MODULES!=ROOT:
+        known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
+        pending={};accepted={}
+        for name in ("recall_archive.py","recall_web.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
+            origin=MODULES/name;dest=ROOT/name
+            if not origin.is_file():continue
+            if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")
+            data=origin.read_bytes();new=hashlib.sha256(data).hexdigest()
+            current=hashlib.sha256(dest.read_bytes()).hexdigest() if dest.exists() else None
+            if current and current!=new and current not in known.get(name,[]):
+                raise Issue("The local connector file "+name+" was edited outside the installer.")
+            accepted[name]=[v for v in (current,new) if v]
+            if current!=new:pending[dest]=data
+        # Keep both revisions recoverable if replacement stops partway.
+        replace_private(modules_receipt,json.dumps(accepted).encode())
+        for dest,data in pending.items():
+            dest.parent.mkdir(mode=0o700,parents=True,exist_ok=True);replace_private(dest,data)
+    if not APP.exists() or APP.read_bytes()!=payload:replace_private(APP,payload)
+    replace_private(receipt,(digest+"\n").encode())
 
 def install():
     setup()
@@ -583,6 +679,38 @@ def login_preference(host=None):
     os.replace(tmp,AUTOSTART)
     return True
 
+def maintenance(arc,stop):
+    # Run on startup and hourly while the owner's desk or headless service is running.
+    while not stop.is_set():
+        try:
+            arc.trim()
+            import archive_backup
+            archive_backup.run_daily(arc.root)
+        except (OSError,ValueError,RuntimeError,sqlite3.Error,ImportError) as e:
+            print("Total Recall maintenance:",str(e),file=sys.stderr)
+        stop.wait(3600)
+
+def host(args):
+    arc=archive()
+    receiver,code=listener(args.bind,args.port,test_loopback=args.bind=="127.0.0.1",advertise=args.advertise)
+    web=recall_web.web_server(arc,MODULES/"web",args.web_port)
+    stop=threading.Event()
+    def quit_handler(*_):stop.set()
+    signal.signal(signal.SIGTERM,quit_handler);signal.signal(signal.SIGINT,quit_handler)
+    for job in (receiver.serve_forever,web.serve_forever,lambda:maintenance(arc,stop)):
+        threading.Thread(target=job,daemon=True).start()
+    details=dict(pairingCode=code,webUrl=recall_web.grant(ROOT,web.server_port),webPort=web.server_port)
+    try:
+        if args.ready_file:
+            path=args.ready_file;fd,tmp=tempfile.mkstemp(dir=path.parent)
+            with os.fdopen(fd,"w") as f:json.dump(details,f);f.flush();os.fsync(f.fileno())
+            os.replace(tmp,path)
+        else: print(json.dumps(details),flush=True)
+        stop.wait()
+    finally:
+        stop.set();receiver.shutdown();web.shutdown();receiver.server_close();web.server_close()
+        if args.ready_file:args.ready_file.unlink(missing_ok=True)
+
 def desktop(receive_at=None):
     try:
         import tkinter as tk
@@ -609,7 +737,61 @@ def desktop(receive_at=None):
     bar=ttk.Frame(pane);bar.grid(row=4,column=0,sticky="ew",pady=8)
     status=tk.StringVar();ttk.Label(pane,textvariable=status).grid(row=5,column=0,sticky="w")
     inbox=queue.Queue()
-    active={"server":None}
+    arc=archive()
+    active={"server":None,"web":None}
+    done=threading.Event()
+    threading.Thread(target=maintenance,args=(arc,done),daemon=True).start()
+    def open_archive():
+        try:
+            if not active["web"]:
+                active["web"]=recall_web.web_server(arc,MODULES/"web",0)
+                threading.Thread(target=active["web"].serve_forever,daemon=True).start()
+            webbrowser.open(recall_web.grant(ROOT,active["web"].server_port))
+            status.set("Private archive opened in your browser.")
+        except (OSError,Issue) as e:messagebox.showerror("Archive",str(e),parent=window)
+    def storage():
+        from tkinter import simpledialog
+        box=tk.Toplevel(window);box.title("Archive storage")
+        label=tk.StringVar()
+        def stats():
+            v=arc.status()
+            label.set(f"{v['usedBytes']/1024**3:.2f} GiB archived · {v['availableBytes']/1024**3:.1f} GiB available"
+                +"\nSeven-year retention from the end of each capture.")
+        stats();ttk.Label(box,textvariable=label).pack(padx=18,pady=12)
+        def quota():
+            value=simpledialog.askinteger("Archive capacity","Limit in GiB (0 uses available disk space):",
+                    initialvalue=arc.status()["quotaBytes"]//(1024**3),minvalue=0,parent=box)
+            if value is not None:arc.limit(value*1024**3);stats()
+        ttk.Button(box,text="Set capacity",command=quota).pack(pady=5)
+        import archive_backup
+        daily=tk.BooleanVar(value=bool(archive_backup.daily_destination(ROOT)))
+        def select_folder():
+            return filedialog.askdirectory(parent=box,title="Choose a backup folder on a second disk")
+        def backup():
+            dest=select_folder()
+            if dest:
+                def run():
+                    receipt=archive_backup.create_backup(ROOT,Path(dest))
+                    return "Backup verified · "+str(receipt["snapshot"])
+                background(run)
+        def schedule():
+            dest=select_folder() if daily.get() else None
+            if daily.get() and not dest:
+                daily.set(False);return
+            try:
+                archive_backup.configure_daily(ROOT,Path(dest) if dest else None)
+                if dest:
+                    def run():
+                        receipt=archive_backup.run_daily(ROOT)
+                        return "Daily backup enabled · "+str(receipt["snapshot"] if receipt else dest)
+                    background(run)
+                else:status.set("Daily backup disabled.")
+            except (OSError,ValueError,RuntimeError) as e:
+                daily.set(bool(archive_backup.daily_destination(ROOT)));messagebox.showerror("Backup",str(e),parent=box)
+        ttk.Button(box,text="Back up to a folder…",command=backup).pack(pady=5)
+        ttk.Checkbutton(box,text="Back up daily to a second drive",variable=daily,command=schedule).pack(pady=5)
+        ttk.Button(box,text="Close",command=box.destroy).pack(pady=8)
+
     def stop_receiver():
         server=active["server"]
         if server:
@@ -642,7 +824,7 @@ def desktop(receive_at=None):
                         if data[row*size+col]&1:
                             x=(col+4)*scale;y=(row+4)*scale
                             canvas.create_rectangle(x,y,x+scale,y+scale,outline="",fill="black")
-                ttk.Label(dlg,text="Scan on the Galaxy, copy the QR text, then paste it in Mint pairing.").pack(padx=12)
+                ttk.Label(dlg,text="On the phone, open Connect to Mint, then scan this code.").pack(padx=12)
             ttk.Button(dlg,text="Copy pairing code",command=lambda:copy_code(server.pair_code)).pack(pady=6)
             auto=tk.BooleanVar(value=login_preference())
             def toggle_login():
@@ -674,7 +856,9 @@ def desktop(receive_at=None):
         window.clipboard_clear();window.clipboard_append(code);window.update_idletasks()
         status.set("Private pairing code copied. Receiver is active.")
     def close():
-        stop_receiver();window.destroy()
+        done.set();stop_receiver()
+        if active["web"]: active["web"].shutdown();active["web"].server_close()
+        window.destroy()
     window.protocol("WM_DELETE_WINDOW",close)
     def refresh(*_):
         selection=tree.selection()
@@ -716,7 +900,7 @@ def desktop(receive_at=None):
             # Refresh when another connection has committed incoming phone captures.
             changed=active["server"].last_import if hasattr(active["server"],"last_import") else None
             if changed and changed != active.get("seen"):
-                active["seen"]=changed;refresh();status.set("Received a selected clip from your phone.")
+                active["seen"]=changed;refresh();status.set("Received an archive item from your phone.")
         window.after(150,pump)
     def choose():
         path=filedialog.askopenfilename(title="Import selected Android captures",filetypes=[("Capture ZIP","*.zip")])
@@ -746,6 +930,10 @@ def desktop(receive_at=None):
                 Path(filename).write_text(evidence_text(uid),encoding="utf-8")
                 status.set("Text handoff saved. Import it through Continuity’s text intake.")
             except OSError as exc: messagebox.showerror("Export",str(exc),parent=window)
+    ttk.Button(bar,text="Private archive",command=open_archive).pack(side="left",padx=4)
+    ttk.Button(bar,text="Open cloud archive",command=lambda:webbrowser.open(
+            "https://total-recall-archive-production.up.railway.app/")).pack(side="left",padx=4)
+    ttk.Button(bar,text="Storage & backup",command=storage).pack(side="left",padx=4)
     ttk.Button(toolbar,text="Import capture ZIP",command=choose).pack(side="left")
     pair_button=ttk.Button(toolbar,text="Pair phone",command=pairing)
     pair_button.pack(side="left",padx=4)
@@ -771,6 +959,16 @@ def main():
     commands=parser.add_subparsers(dest="mode")
     commands.add_parser("desk").add_argument("--receive-at",metavar="PRIVATE_IPV4")
     commands.add_parser("serve")
+    server=commands.add_parser("host",help="Run the private upload receiver and local archive website without a desktop")
+    server.add_argument("--bind",required=True);server.add_argument("--advertise")
+    server.add_argument("--port",type=int,default=8789);server.add_argument("--web-port",type=int,default=8790)
+    server.add_argument("--ready-file",type=Path)
+    opening=commands.add_parser("open");opening.add_argument("--web-port",type=int,default=8790);opening.add_argument("--print",action="store_true")
+    quota=commands.add_parser("quota");quota.add_argument("gib",type=int)
+    backup=commands.add_parser("backup");backup.add_argument("directory",type=Path)
+    restore=commands.add_parser("restore-backup");restore.add_argument("snapshot",type=Path);restore.add_argument("directory",type=Path)
+    commands.add_parser("archive-status")
+    commands.add_parser("prune")
     commands.add_parser("connect")
     commands.add_parser("settings")
     receiver=commands.add_parser("receive")
@@ -782,13 +980,31 @@ def main():
     args=parser.parse_args()
     if args.mode in (None,"desk"): return desktop(getattr(args,"receive_at",None))
     if args.mode=="serve": return serve()
+    if args.mode=="host": return host(args)
+    if args.mode=="open":
+        arc=archive();url=recall_web.grant(ROOT,args.web_port)
+        if args.print:print(url)
+        else:webbrowser.open(url)
+        return
+    if args.mode=="quota":arc=archive();arc.limit(args.gib*1024**3);print(json.dumps(arc.status()));return
+    if args.mode=="archive-status":print(json.dumps(archive().status()));return
+    if args.mode=="prune":print(json.dumps({"expired":archive().trim()}));return
+    if args.mode=="backup":
+        import archive_backup
+        print(json.dumps(archive_backup.create_backup(ROOT,args.directory),default=str));return
+    if args.mode=="restore-backup":
+        import archive_backup
+        print(json.dumps(archive_backup.restore_backup(args.snapshot,args.directory),default=str));return
     if args.mode=="receive":
         receiver,code=listener(args.address)
         print("Private pairing code (keep private):",code,flush=True)
         print("Receiving selected phone captures. Press Ctrl+C to stop.",flush=True)
+        stop=threading.Event()
+        threading.Thread(target=maintenance,args=(receiver.archive,stop),daemon=True).start()
         with receiver:
             try: receiver.serve_forever()
             except KeyboardInterrupt: pass
+            finally:stop.set()
         return
     if args.mode=="play": return play(args.id)
     if args.mode=="settings":
@@ -802,6 +1018,6 @@ def main():
 
 if __name__=="__main__":
     try: main()
-    except (OSError,KeyError,TypeError,ValueError,Issue,EOFError,sqlite3.Error,subprocess.SubprocessError,
+    except (OSError,KeyError,TypeError,ValueError,Issue,recall_archive.Failure,EOFError,sqlite3.Error,subprocess.SubprocessError,
             zipfile.BadZipFile,wave.Error) as error:
         sys.exit("Total Recall: "+str(error))

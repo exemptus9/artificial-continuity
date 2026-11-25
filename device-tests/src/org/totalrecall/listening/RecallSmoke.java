@@ -142,6 +142,8 @@ public final class RecallSmoke extends Instrumentation {
                 }
             }
             require(audio&&index,"Archive contents mismatch");
+            ExcerptProbe.verify(target,store,m);
+            passed("Android excerpt saved exact selected PCM frames and a new UID; its parent bytes and provenance survived clean-vault export/import.");
             require(store.importZip(new ByteArrayInputStream(output.toByteArray())).contains("1 already present"),"Duplicate ZIP failed dedup");
             require(store.search(marker).size()==1,"Duplicate clip after ZIP restore");
             require(target.getSharedPreferences("recall_test_fixture",0).edit().putString("marker",marker)
@@ -495,15 +497,21 @@ public final class RecallSmoke extends Instrumentation {
     private void releaseOther()throws Exception{deviceShell("am force-stop org.totalrecall.contender");}
     private void contention()throws Exception{
         Activity a=launch();
-        try(Store store=new Store(target)){
+        ArchiveStore.reset(target);ArchiveStore.setEnabled(target,true);
+        try(Store store=new Store(target);ArchiveStore archive=new ArchiveStore(target)){
             readWindows();
             int opens=countGaps(store,"Microphone gap began"), ends=countGaps(store,"Microphone gap ended");
             startListening(a);SystemClock.sleep(2300);
             int rows=store.search("").size();
             compete();
+            until(()->!archive.pending(4).isEmpty(),10000,"The displaced microphone did not seal its AAC tail");
+            List<String> archiveGaps=archive.latestGaps(4);
+            require(archiveGaps.size()==1 && archiveGaps.get(0).contains(" — open"),"Archive failed to open a real microphone gap");
+            int sealedAtLoss=archive.segments(8).size();
             target.startService(new Intent(target,RecallService.class).setAction(RecallService.KEEP));
             SystemClock.sleep(3000);
             require(store.search("").size()==rows,"Saved unavailable audio during interruption");
+            require(archive.segments(8).size()==sealedAtLoss,"Archive retained unavailable microphone audio during the gap");
             long releaseTime=System.currentTimeMillis();
             releaseOther();
             until(()->RecallService.isListening() && RecallService.status(target).startsWith("Listening"),
@@ -518,12 +526,15 @@ public final class RecallSmoke extends Instrumentation {
             require(newest.startMs>=releaseTime-650 && newest.kind.contains(SelectiveEngine.MANUAL)
                     && file(newest.audio).length>44,"Post-recovery capture includes audio from before release");
             store.delete(newest.id);
+            require(archive.latestGaps(4).size()==1 && !archive.latestGaps(1).get(0).contains(" — open"),
+                    "The recovered microphone did not close its continuous-archive gap");
+            passed("Opted-in continuous AAC sealed on real foreground microphone displacement, retained no unavailable interval, and closed the corresponding gap when capture resumed.");
             passed("A separate foreground privacy-sensitive Android recorder displaced Recall. Capture resumed without restarting, the catalog recorded one bounded gap, and retained audio began after the other recorder released the microphone.");
             compete();stopListening();releaseOther();
             SystemClock.sleep(6000);
             require(!RecallService.isListening() && liveCleared(),"User pause while displaced was undone on mic release");
             passed("Explicit pause while another app owned the mic prevented automatic resumption and cleared live data.");
-        }finally{releaseOther();stopListening();runOnMainSync(a::finish);waitForIdleSync();}
+        }finally{releaseOther();stopListening();ArchiveStore.setEnabled(target,false);runOnMainSync(a::finish);waitForIdleSync();}
     }
     private Activity launch(){
         Intent intent=new Intent().setClassName(target.getPackageName(),"org.totalrecall.listening.RecallListenActivity")

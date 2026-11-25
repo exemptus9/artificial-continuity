@@ -1,28 +1,49 @@
-# Bring selected moments to Mint
+# Total Recall Desk for Linux Mint
 
-After installing the desktop package, open **Total Recall Desk** from the Mint applications menu.
+Install the Debian package, open **Total Recall Desk**, and choose **Private archive**. The archive opens in your browser on this machine. Imported clips from earlier versions appear automatically. **Open cloud archive** opens the separately hosted owner-authenticated site. Local and hosted archives show the items sent to their respective destinations.
 
-**Pair over Wi-Fi.** On Mint click **Pair phone**, choose the laptop’s private Wi-Fi address and click **Start receiver and copy code**. On your Galaxy open Mint pairing inside Total Recall and scan the QR (or paste its private code). Both devices must be on a network where the phone can reach TCP port 8789 on that laptop. Keep the desk window open while receiving. Android pins the laptop’s TLS certificate and sends each selected capture ZIP with its private pairing credential. The receipt identifies the stored capture and verifies its audio and transfer checksums. To stop, click **Phone connection → Stop receiver**. On the same network subsequent sessions reuse the same pairing credentials. For hands-free startup tick **Open desk and start receiver when I log into Mint**. This opens the Desk and receiver at your next login. Untick it in **Phone connection** to remove startup. The saved address must be assigned to the laptop; pair with its new address after a network change.
+## Connect the phone
 
-**Or use a file.** On the phone, select the moments you want to transfer and export their ZIP. Copy it to Mint with USB or your chosen private file transfer. The ZIP contains playable recordings and transcripts. You control which ZIP leaves the phone.
+1. Connect both devices to your private network. Open **Pair phone** in Desk. Pick the computer's private IPv4 address and choose **Start receiver and copy code**.
+2. Open the phone's Mint connection screen and scan the pairing QR or paste the code. Treat this code as a password. Trust comes from the pinned certificate and secret in the code.
+3. Choose the media you want to transfer on the phone. Selected original WAV clips, optional full-session AAC segments and optional text journals are separate choices. Sending resumes when the host becomes reachable. Each completed upload returns its ID, byte count and SHA-256.
+4. Select **Open desk and start receiver when I log into Mint** if you want automatic receiving. The computer must be awake, reachable and have available storage. The phone and host can also use an owner-managed private VPN, including a 100.64.0.0/10 mesh address.
 
-When using the standalone source, open Mint Terminal in this folder and run:
+In **Private archive**, search for an item, play the original or download it. Browser audio supports seeking. Existing note, correction, original transcript, feedback and excerpt-source fields are preserved. **Import capture ZIP** accepts Android selected-clip exports. **Connect Lexi** adds a read-only selected-clip search tool to the configured OpenClaw agent `lexidaimon`. Start a new chat and ask Lexi to find a saved moment. Full-session journals and continuous recordings stay outside that tool.
 
-```bash
-python3 recall_desk.py
+## Space, retention and backup
+
+**Storage & backup** shows available space and lets you set a quota in GiB. Zero uses the available filesystem with 1 GiB reserved. Incoming items reserve capacity, allowing interrupted transfers to resume without allocating the same bytes twice. Incomplete uploads release their reservations after seven days. When space runs out, the host returns a storage-full status and the sender keeps its pending item. A quota limits incoming transfers and never evicts a recent capture.
+
+An active Desk, headless host or standalone receiver checks expiry on startup and hourly. Data expires seven calendar years after the end of the capture in UTC. A February 29 anniversary becomes February 28 in a non-leap year. If the host has been off, it applies overdue expiry on startup. The disk and its backups contain private recordings. Use a private account and an encrypted disk if others can access the computer.
+
+Choose **Back up to a folder…** for an immediate verified backup or **Back up daily to a second drive** to configure daily copies to an existing folder on a second disk. Keep that disk available during backups. Restoring targets an empty directory. Backups are independent copies. Manage their retention on the backup disk.
+
+## Headless or SSH access
+
+On a Debian-family owner-managed machine, install the same package. Replace the example address with an address on that machine.
+
+```sh
+total-recall-desk host --bind 192.168.1.20 --port 8789 --web-port 8790
 ```
 
-1. Click **Import capture ZIP**. The desktop verifies the audio checksums and commits the whole import together.
-2. Search by a distinctive word, title, or category. Select the result and click **Play original**.
-3. Click **Connect Lexi** once to enable **totalrecall__find_capture** for the configured Lexidaimon agent. In a new Lexi chat say “Use my Total Recall captures to find the word I coined about believing exaggerations literally.” Lexi can retrieve captured text and metadata. A model provider used by Lexi can receive the matching passages when you ask. Original audio stays in the private Mint archive.
-4. **Export text for Continuity** writes the selected timestamp, provenance, checksum and transcript to a text file. Import this file through Continuity’s existing text intake. The private audio-bearing ZIP is your portable audio archive.
+The host prints a private phone pairing code and a one-time browser sign-in link. The phone receiver uses TLS. The browser site binds only to 127.0.0.1. For remote browsing, forward the browser port over SSH and open the freshly printed URL on the computer running your browser.
 
-The GUI reads original WAVs with ALSA or PulseAudio. Optional pairing uses OpenSSL and can display the QR with libqrencode4. Mint needs Python 3.11+ for original-audio storage. The desktop uses Python’s standard Tk bindings; if unavailable, these terminal commands also work:
-
-```bash
-python3 recall_desk.py import ~/Downloads/your-phone-export.zip
-python3 recall_desk.py search "my coined word"
-python3 recall_desk.py connect
+```sh
+ssh -L 8790:127.0.0.1:8790 your-user@your-server
+# At the server shell
+total-recall-desk open --web-port 8790 --print
 ```
 
-Imports land in your user-private `~/.local/share/total-recall-listening/clips.sqlite3`. The database is plaintext within your user account. A repeated import skips existing recordings. Newly observed metadata versions are retained with the original audio.
+The launch link lasts five minutes and can be used once. Its browser session lasts eight hours. Use the same remote and local port in the SSH forward. Keep the web server behind loopback.
+
+```sh
+total-recall-desk archive-status
+total-recall-desk quota 500
+total-recall-desk backup /media/your-user/backup/recall
+total-recall-desk restore-backup /path/to/snapshot /path/to/empty-archive
+```
+
+The default archive lives under `~/.local/share/total-recall-listening`. Set `TOTAL_RECALL_ARCHIVE_HOME` to an absolute directory on your storage disk before starting the app or CLI to change it. Run the receiver under your own user account. It accepts uploads on the chosen private address. Configure the OS firewall only for the private network you intend to use.
+
+Run `python3 -m unittest discover -s mint` from the source tree for the Mint tests.

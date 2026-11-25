@@ -211,7 +211,8 @@ public final class RecallService extends Service {
         lock.setReferenceCounted(false);
         String end="Paused";
         AudioRecord rec=null;
-        try(Store store=new Store(app);JournalStore journal=new JournalStore(app)){
+        try(Store store=new Store(app);JournalStore journal=new JournalStore(app);
+                ArchiveStore archiveStore=new ArchiveStore(app);ArchiveRecorder archive=new ArchiveRecorder(app,archiveStore)){
             try{
                 if(!ListenPolicy.allowed(app))throw new SessionIssue("Total Recall is paused; enable capture before starting.");
                 if(prefs.getBoolean("active",false))store.gap("Prior listening session was interrupted; coverage after its last update is unknown.");
@@ -246,7 +247,7 @@ public final class RecallService extends Service {
                             if(manager.isMicrophoneMute())unavailable="microphone muted or privacy switch active";
                             if(rec==null && unavailable==null){
                                 try{
-                                    rec=openMic(Math.max(min*3,64000));liveRecorder=rec;
+                                    rec=openMic(Math.max(min*3,256000));liveRecorder=rec;
                                     if(!stillArmed())break;
                                 }catch(IllegalStateException e){unavailable="microphone unavailable";}
                             }
@@ -270,6 +271,7 @@ public final class RecallService extends Service {
                             }
                             if(count>0 || unavailable!=null)zeroSince=0;
                             if(unavailable!=null){
+                                archive.interrupted("Microphone unavailable · "+unavailable);
                                 if(continuity.lose(SystemClock.elapsedRealtime())){
                                     String waiting="Waiting for microphone · "+unavailable;
                                     window.end(true,"Microphone gap: "+unavailable);
@@ -296,10 +298,11 @@ public final class RecallService extends Service {
                                 resumeNote="Resumed after a microphone gap of "+lost/1000+" s";
                                 store.gap("Microphone gap ended · resumed after "+lost/1000+" s");
                                 // The current block may predate recovery. Drain older queued audio too.
-                                for(int passes=0;passes<24;passes++)if(rec.read(frame,0,frame.length,AudioRecord.READ_NON_BLOCKING)<=0)break;
+                                for(int passes=0;passes<96;passes++)if(rec.read(frame,0,frame.length,AudioRecord.READ_NON_BLOCKING)<=0)break;
                                 Arrays.fill(frame,(short)0);commands.clear();continue;
                             }
                             retry=500;
+                            archive.accept(frame,count);
                             String next=route(rec);
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
                             else if(!next.equals(route)){store.gap("Input changed from "+route+" to "+next);route=next;progress("Listening · "+route);}
@@ -318,7 +321,7 @@ public final class RecallService extends Service {
                             }
                         }
                     }finally{
-                        try{window.end(false,stopping.get()?"Paused":"Session ended");}
+                        try{archive.boundary("Listening ended");window.end(false,stopping.get()?"Paused":"Session ended");}
                         finally{
                             long lost=continuity.stop(SystemClock.elapsedRealtime());
                             if(lost>=0)store.gap("Microphone gap ended · session stopped after "+lost/1000+" s");

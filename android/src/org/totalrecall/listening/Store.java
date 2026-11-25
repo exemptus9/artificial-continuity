@@ -26,12 +26,12 @@ public final class Store extends SQLiteOpenHelper {
     private final Context app;
 
     public Store(Context context) {
-        super(context.getApplicationContext(),"recall-listening.db",null,2);
+        super(context.getApplicationContext(),"recall-listening.db",null,3);
         app=context.getApplicationContext();
         directory = new File(app.getFilesDir(),"listening-audio");
     }
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE clips(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,start_ms INTEGER NOT NULL,end_ms INTEGER NOT NULL,title TEXT NOT NULL,reason TEXT NOT NULL,transcript TEXT NOT NULL,kind TEXT NOT NULL,feedback TEXT NOT NULL DEFAULT 'none',note TEXT NOT NULL DEFAULT '',correction TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE clips(id INTEGER PRIMARY KEY AUTOINCREMENT,uid TEXT NOT NULL UNIQUE,start_ms INTEGER NOT NULL,end_ms INTEGER NOT NULL,title TEXT NOT NULL,reason TEXT NOT NULL,transcript TEXT NOT NULL,kind TEXT NOT NULL,feedback TEXT NOT NULL DEFAULT 'none',note TEXT NOT NULL DEFAULT '',correction TEXT NOT NULL DEFAULT '',sha256 TEXT NOT NULL,parent_id TEXT NOT NULL DEFAULT '',start_sample INTEGER NOT NULL DEFAULT 0,end_sample INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX clips_start ON clips(start_ms DESC)");
         db.execSQL("CREATE TABLE deletions(uid TEXT PRIMARY KEY)");
         db.execSQL("CREATE TABLE gaps(id INTEGER PRIMARY KEY,start_ms INTEGER NOT NULL,detail TEXT NOT NULL)");
@@ -39,19 +39,26 @@ public final class Store extends SQLiteOpenHelper {
         db.execSQL("INSERT INTO metadata VALUES('device',?)",new Object[]{UUID.randomUUID().toString()});
     }
     @Override public void onUpgrade(SQLiteDatabase db,int before,int after) {
-        if(before==1 && after==2){db.execSQL("CREATE TABLE IF NOT EXISTS deletions(uid TEXT PRIMARY KEY)");return;}
+        if(before>=1&&before<=2&&after==3){
+            if(before==1)db.execSQL("CREATE TABLE IF NOT EXISTS deletions(uid TEXT PRIMARY KEY)");
+            db.execSQL("ALTER TABLE clips ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''");
+            db.execSQL("ALTER TABLE clips ADD COLUMN start_sample INTEGER NOT NULL DEFAULT 0");
+            db.execSQL("ALTER TABLE clips ADD COLUMN end_sample INTEGER NOT NULL DEFAULT 0");return;
+        }
         throw new IllegalStateException("Unsupported listening archive migration");
     }
     public static final class Moment {
         public final long id,startMs,endMs;
-        public final String uid,title,reason,transcript,kind,feedback,note,correction,sha256;
+        public final String uid,title,reason,transcript,kind,feedback,note,correction,sha256,parentId;
+        public final int startSample,endSample;
         public final File audio;
         Moment(Cursor c,File directory) {
             id=c.getLong(c.getColumnIndexOrThrow("id")); startMs=c.getLong(c.getColumnIndexOrThrow("start_ms"));
             endMs=c.getLong(c.getColumnIndexOrThrow("end_ms")); uid=field(c,"uid");title=field(c,"title");
             reason=field(c,"reason");transcript=field(c,"transcript");kind=field(c,"kind");feedback=field(c,"feedback");
             note=field(c,"note");correction=field(c,"correction");sha256=field(c,"sha256");
-            audio=new File(directory,uid+".wav");
+            parentId=field(c,"parent_id");startSample=c.getInt(c.getColumnIndexOrThrow("start_sample"));
+            endSample=c.getInt(c.getColumnIndexOrThrow("end_sample"));audio=new File(directory,uid+".wav");
         }
         private static String field(Cursor c,String k){ return c.getString(c.getColumnIndexOrThrow(k)); }
     }
@@ -175,6 +182,39 @@ public final class Store extends SQLiteOpenHelper {
             while(c.moveToNext())rows.add(new Moment(c,directory));
         }return rows;
     }
+    public Moment get(long id){
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM clips WHERE id=?",new String[]{String.valueOf(id)})){
+            return c.moveToFirst()?new Moment(c,directory):null;
+        }
+    }
+    public long saveExcerpt(long parentRow,int from,int to,String name)throws IOException{
+        if(name==null||name.trim().isEmpty()||name.length()>240)throw new IOException("Choose a name up to 240 characters");
+        long row;
+        synchronized(FILE_LOCK){
+            SQLiteDatabase db=getWritableDatabase();Moment parent=get(parentRow);
+            if(parent==null)throw new IOException("The original clip is unavailable");
+            if(!directory.isDirectory())throw new IOException("Clip directory unavailable");
+            File stage=File.createTempFile("writing-",".tmp",directory);File target=null;
+            boolean committed=false,moved=false;
+            try{
+                String hash=PcmExcerpt.trim(parent.audio,stage,from,to);
+                String uid=UUID.randomUUID().toString()+"-1";target=new File(directory,uid+".wav");
+                if(target.exists())throw new IOException("Couldn’t allocate a new clip identifier");
+                ContentValues cv=new ContentValues();cv.put("uid",uid);cv.put("title",name.trim());
+                cv.put("kind","Excerpt");cv.put("reason","Selected from "+parent.title);cv.put("transcript","");
+                cv.put("parent_id",parent.uid);cv.put("start_sample",from);cv.put("end_sample",to);
+                long start=parent.startMs+(long)from*1000/PcmExcerpt.RATE;
+                cv.put("start_ms",start);cv.put("end_ms",start+(long)(to-from)*1000/PcmExcerpt.RATE);
+                cv.put("sha256",hash);db.beginTransaction();
+                try{
+                    row=db.insertOrThrow("clips",null,cv);if(!stage.renameTo(target))throw new IOException("Couldn’t commit excerpt audio");
+                    moved=true;db.setTransactionSuccessful();
+                }finally{db.endTransaction();}
+                committed=true;
+            }finally{stage.delete();if(moved&&!committed)target.delete();}
+        }
+        scheduleTransfer();return row;
+    }
     public void edit(long id,String title,String note,String correction){
         ContentValues cv=new ContentValues();
         cv.put("title",title==null?"":title);cv.put("note",note==null?"":note);cv.put("correction",correction==null?"":correction);
@@ -258,7 +298,8 @@ public final class Store extends SQLiteOpenHelper {
                                     Moment local=new Moment(c,directory);
                                     if(!local.sha256.equals(item.getString("sha256")) ||local.startMs!=start ||local.endMs!=end ||
                                        !local.transcript.equals(item.getString("transcript")) || !local.kind.equals(item.getString("category")) ||
-                                       !local.reason.equals(item.getString("reason")))throw new IOException("Original conflicts with local clip "+uid);
+                                       !local.reason.equals(item.getString("reason"))||!local.parentId.equals(item.optString("parentId",""))||
+                                       local.startSample!=item.optInt("startSample",0)||local.endSample!=item.optInt("endSample",0))throw new IOException("Original conflicts with local clip "+uid);
                                     MessageDigest verify=digest();
                                     try(InputStream in=new FileInputStream(local.audio)){
                                         byte[] block=new byte[32768];
@@ -271,6 +312,7 @@ public final class Store extends SQLiteOpenHelper {
                             ContentValues cv=new ContentValues();cv.put("uid",uid);cv.put("start_ms",start);cv.put("end_ms",end);
                             for(String key:new String[]{"title","reason","feedback","transcript","sha256","note","correction"})cv.put(key,item.optString(key,""));
                             cv.put("kind",item.getString("category"));
+                            cv.put("parent_id",item.optString("parentId",""));cv.put("start_sample",item.optInt("startSample",0));cv.put("end_sample",item.optInt("endSample",0));
                             File target=new File(directory,uid+".wav");File staged=archive.audio.get(item.getString("audio"));
                             if(!staged.renameTo(target))throw new IOException("Cannot restore clip audio");
                             moved.add(target);db.insertOrThrow("clips",null,cv);
@@ -290,14 +332,19 @@ public final class Store extends SQLiteOpenHelper {
     public void exportZip(OutputStream target,List<Long> selected)throws IOException {
         Set<Long> ids=selected==null?null:new HashSet<>(selected);
         {
-            List<Moment> rows=search("");
+            List<Moment> rows;
+            if(ids!=null&&ids.size()==1){
+                Moment only=get(ids.iterator().next());
+                if(only==null)throw new IOException("Selected clip no longer exists");
+                rows=Collections.singletonList(only);
+            }else rows=search("");
             JSONArray clips=new JSONArray();
             try(ZipOutputStream zip=new ZipOutputStream(new BufferedOutputStream(target))){
                 byte[] buffer=new byte[32768];
                 for(Moment m:rows){
                     if(ids!=null&&!ids.contains(m.id))continue;
                     String path="audio/"+m.uid+".wav";
-                    zip.putNextEntry(new ZipEntry(path));
+                    ZipEntry audioEntry=new ZipEntry(path);audioEntry.setTime(315532800000L);zip.putNextEntry(audioEntry);
                     MessageDigest check=digest();
                     try(InputStream in=new FileInputStream(m.audio)){
                         int n;while((n=in.read(buffer))!=-1){zip.write(buffer,0,n);check.update(buffer,0,n);}
@@ -305,13 +352,16 @@ public final class Store extends SQLiteOpenHelper {
                     zip.closeEntry();
                     if(!m.sha256.equals(hex(check.digest())))throw new IOException("Clip integrity mismatch: "+m.uid);
                     JSONObject row=new JSONObject();
-                    row.put("id",m.uid);row.put("startedAtMillis",m.startMs);row.put("durationMs",m.endMs-m.startMs);
+                    row.put("id",m.uid);
+                    if(!m.parentId.isEmpty()){row.put("parentId",m.parentId);row.put("startSample",m.startSample);row.put("endSample",m.endSample);}
+                    row.put("startedAtMillis",m.startMs);row.put("durationMs",m.endMs-m.startMs);
                     row.put("title",m.title);row.put("transcript",m.transcript);row.put("category",m.kind);
                     row.put("reason",m.reason);row.put("feedback",m.feedback);row.put("note",m.note);
                     row.put("correction",m.correction);row.put("audio",path);row.put("sha256",m.sha256);clips.put(row);
                 }
                 JSONObject index=new JSONObject();index.put("schema","total-recall-listening/v1");index.put("clips",clips);
-                zip.putNextEntry(new ZipEntry("index.json"));zip.write(index.toString().getBytes(StandardCharsets.UTF_8));zip.closeEntry();
+                if(ids!=null&&clips.length()!=ids.size())throw new IOException("A selected clip no longer exists");
+                ZipEntry indexEntry=new ZipEntry("index.json");indexEntry.setTime(315532800000L);zip.putNextEntry(indexEntry);zip.write(index.toString().getBytes(StandardCharsets.UTF_8));zip.closeEntry();
             }catch(JSONException e){throw new IOException("Cannot encode clip index",e);}
         }
     }

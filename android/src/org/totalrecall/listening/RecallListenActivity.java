@@ -11,7 +11,6 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -57,7 +56,7 @@ public final class RecallListenActivity extends Activity {
     private Button journalButton;
     private long journalExportId=-1;
     private boolean meterLive;
-    private final Runnable tick=new Runnable(){public void run(){if(registered&&alive()){paintLive();main.postDelayed(this,200);}}};
+    private final Runnable tick=new Runnable(){public void run(){if(registered&&alive()){paintLive();if(android.os.SystemClock.elapsedRealtime()-archiveRefresh>=30000)readArchiveStatus();main.postDelayed(this,200);}}};
 
     private Button toggle, ask;
     private EditText search;
@@ -66,12 +65,13 @@ public final class RecallListenActivity extends Activity {
     private boolean searchRecording;
     private TextView listHeading;
     private Button daily;
-    private MediaPlayer player;
+    private ClipStudio studio;
+    private TextView archiveStatus;
+    private long archiveRefresh;
     private int generation;
     private long exportId=-1, requestedMoment=-1;
     private boolean registered, voicePermissionRequest, commandPending;
     private boolean exporting, importing;
-    private String playingPath;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -132,6 +132,14 @@ public final class RecallListenActivity extends Activity {
         floating.setOnClickListener(v->{try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.OverlaySettingsActivity"));}
             catch(Exception ex){problem("Couldn’t open floating controls",ex);}});
         split(sessionTools,journalButton,floating);header.addView(sessionTools);
+        LinearLayout archive=row();archive.setBackground(card(PALE,0,12));pad(archive,12,4);
+        LinearLayout archiveCopy=column();archiveCopy.addView(text("Archive & sync",16,TEAL,true));
+        archiveStatus=text("Reading archive status…",13,SECOND,false);archiveCopy.addView(archiveStatus);
+        archive.addView(archiveCopy,new LinearLayout.LayoutParams(0,-2,1));
+        TextView arrow=text("›",25,TEAL,false);arrow.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);archive.addView(arrow);
+        archive.setMinimumHeight(dp(54));archive.setFocusable(true);
+        archive.setOnClickListener(v->{try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.ArchiveSyncActivity"));}
+            catch(Exception e){problem("Couldn’t open archive settings",e);}});header.addView(archive);
         LinearLayout headings=row();listHeading=text("Saved moments",23,INK,true);
         listHeading.setPadding(0,dp(8),0,dp(5));headings.addView(listHeading,new LinearLayout.LayoutParams(0,-2,1));
         daily=link("Review today");daily.setOnClickListener(v->{reviewToday=!reviewToday;search.setText("");refresh();});
@@ -184,7 +192,17 @@ public final class RecallListenActivity extends Activity {
         else registerReceiver(observer,filter);
         registered=true;refresh();main.removeCallbacks(tick);tick.run();
     }
-    @Override protected void onResume(){super.onResume();if(state!=null)refresh();}
+    @Override protected void onResume(){super.onResume();if(state!=null){refresh();readArchiveStatus();}}
+    private void readArchiveStatus(){
+        archiveRefresh=android.os.SystemClock.elapsedRealtime();
+        worker.execute(()->{
+            try(ArchiveStore store=new ArchiveStore(getApplicationContext())){
+                ArchiveStore.Summary stats=store.summary();
+                String description=(ArchiveStore.enabled(this)?"Full audio on":"Full audio off")+" · "+stats.localCount+" local · "+stats.pendingCount+" pending";
+                main.post(()->{if(alive())archiveStatus.setText(description);});
+            }catch(Exception e){main.post(()->{if(alive())archiveStatus.setText("Open archive settings to check status");});}
+        });
+    }
     @Override protected void onStop(){if(registered){unregisterReceiver(observer);registered=false;}
         main.removeCallbacks(tick);stableText.setText("");partialText.setText("");endSpeech();stopPlayer();super.onStop();}
     @Override protected void onDestroy(){main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy();}
@@ -332,7 +350,7 @@ public final class RecallListenActivity extends Activity {
     private void showJournal(){
         boolean enabled=JournalStore.enabled(this);
         LinearLayout sheet=column();pad(sheet,18,12);ScrollView scroll=new ScrollView(this);scroll.addView(sheet);
-        TextView intro=text("Keep the words from a whole listening session as local text. Original audio is still saved only for selected moments.",16,INK,false);
+        TextView intro=text("Keep recognized words from a whole listening session as local text. Audio retention is controlled separately in Archive & sync.",16,INK,false);
         sheet.addView(intro);
         Switch toggleJournal=new Switch(this);toggleJournal.setText("Save full-session text");toggleJournal.setTextColor(INK);toggleJournal.setTextSize(16);
         toggleJournal.setChecked(enabled);toggleJournal.setMinHeight(dp(54));sheet.addView(toggleJournal);
@@ -458,7 +476,7 @@ public final class RecallListenActivity extends Activity {
             .setMessage("Start a session while everyone nearby knows the microphone is active. Speak naturally as you work. The meter shows microphone input, and the live words are an on-device transcription.\n\n"
                 +"Repeated lines, rhymes, words you define and project decisions can trigger a clip. Recall includes the lead-in. Under More → Capture sensitivity, choose More saves for freestyle or Fewer saves for a quieter timeline.\n\n"
                 +"Keep last minute saves on demand. You can also say “Lexi, keep the last minute.” A brief vibration acknowledges a manual catch when available. Rate clips to tune later selections.\n\n"
-                +"Ordinary audio expires from memory. Turn on Text journal if you want to retain the session’s recognized words. If the microphone is interrupted, the waiting state marks a coverage gap until input returns; Pause ends the session.")
+                +"With full audio off, ordinary audio expires from memory. Archive & sync can retain the complete audio, and Text journal can retain the recognized words. An interrupted microphone creates a coverage gap until input returns. Pause ends the session.")
             .setPositiveButton("Got it",null).show();
     }
 
@@ -482,8 +500,9 @@ public final class RecallListenActivity extends Activity {
         labeled(body,"Original transcript",nonempty(m.transcript)?m.transcript:"No transcript is available for this clip.");
         if(nonempty(m.note))labeled(body,"Note",m.note);
         if(nonempty(m.feedback)&&!"none".equals(m.feedback))labeled(body,"Your feedback","keep".equals(m.feedback)?"Worth keeping":"Less like this");
-        Button play=button("Play original audio",true);play.setEnabled(m.audio!=null&&m.audio.isFile());
-        play.setOnClickListener(v->play(m,play));body.addView(play);
+        if(nonempty(m.parentId))labeled(body,"Excerpt source","Parent clip "+m.parentId+"\nSamples "+m.startSample+" through "+(m.endSample-1)+" at 16 kHz");
+        Button play=button("Playback & trim",true);play.setEnabled(m.audio!=null&&m.audio.isFile());
+        play.setOnClickListener(v->{stopPlayer();studio=new ClipStudio(this,m,worker,this::refresh);studio.show();});body.addView(play);
         AlertDialog dlg=new AlertDialog.Builder(this).setTitle(m.title).setView(scroll).setPositiveButton("Close",null).create();
         LinearLayout feedback=row();Button keep=button("Worth keeping",false),skip=button("Less like this",false);split(feedback,keep,skip);body.addView(feedback);
         keep.setOnClickListener(v->{dlg.dismiss();write("Feedback saved",s->s.feedback(m.id,"keep"));});
@@ -518,20 +537,7 @@ public final class RecallListenActivity extends Activity {
         body.addView(name);TextView text=text(value,17,INK,false);text.setTextIsSelectable(true);text.setPadding(0,0,0,dp(8));body.addView(text);
     }
     private void stopPlayer(){
-        if(player!=null){player.release();player=null;}playingPath=null;
-    }
-    private void play(Store.Moment m,Button play){
-        if(RecallService.isListening()){
-            new AlertDialog.Builder(this).setMessage("Pause the microphone before playing this clip aloud.")
-                .setNegativeButton("Cancel",null).setPositiveButton("Pause listening",(d,w)->command(RecallService.PAUSE)).show();return;}
-        if(m.audio.getAbsolutePath().equals(playingPath)){stopPlayer();play.setText("Play original audio");return;}
-        stopPlayer();try{
-            MediaPlayer p=new MediaPlayer();player=p;playingPath=m.audio.getAbsolutePath();p.setDataSource(playingPath);
-            p.setOnPreparedListener(mp->{if(mp==player){mp.start();play.setText("Stop playback");}});
-            p.setOnCompletionListener(mp->{if(mp==player){stopPlayer();play.setText("Play original audio");}});
-            p.setOnErrorListener((mp,what,extra)->{if(mp==player){stopPlayer();play.setText("Play original audio");Toast.makeText(this,"Playback failed",Toast.LENGTH_SHORT).show();}return true;});
-            play.setText("Cancel playback");p.prepareAsync();
-        }catch(Exception e){stopPlayer();play.setText("Play original audio");problem("Couldn’t play audio",e);}
+        if(studio!=null){studio.close();studio=null;}
     }
     private void chooseExport(long id){
         if(importing||exporting){Toast.makeText(this,"A transfer is in progress",Toast.LENGTH_SHORT).show();return;}
@@ -625,21 +631,21 @@ public final class RecallListenActivity extends Activity {
     private String duration(Store.Moment m){long sec=Math.max(1,(m.endMs-m.startMs)/1000);return sec<60?sec+" sec":sec/60+" min "+sec%60+" sec";}
     private static String message(Throwable e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
     private void problem(String what,Throwable e){new AlertDialog.Builder(this).setTitle(what).setMessage(message(e)).setPositiveButton("Close",null).show();}
-    private int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
-    private LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
-    private LinearLayout row(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.HORIZONTAL);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
-    private void pad(View v,int x,int y){v.setPadding(dp(x),dp(y),dp(x),dp(y));}
+    int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+    LinearLayout column(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.VERTICAL);return v;}
+    LinearLayout row(){LinearLayout v=new LinearLayout(this);v.setOrientation(LinearLayout.HORIZONTAL);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
+    void pad(View v,int x,int y){v.setPadding(dp(x),dp(y),dp(x),dp(y));}
     private GradientDrawable card(int fill,int edge,int radius){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(radius));if(edge!=0)d.setStroke(dp(1),edge);return d;}
-    private TextView text(String s,int size,int color,boolean bold){TextView v=new TextView(this);v.setText(s);v.setTextColor(color);v.setTextSize(size);
+    TextView text(String s,int size,int color,boolean bold){TextView v=new TextView(this);v.setText(s);v.setTextColor(color);v.setTextSize(size);
         if(bold)v.setTypeface(Typeface.DEFAULT,Typeface.BOLD);return v;}
-    private Button button(String label,boolean primary){
+    Button button(String label,boolean primary){
         Button b=new Button(this);b.setAllCaps(false);b.setText(label);b.setTextSize(16);b.setTextColor(primary?WHITE:TEAL);
         b.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44888888),
             card(primary?TEAL:PALE,0,11),null));b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));pad(b,9,8);return b;
     }
-    private Button link(String label){Button b=button(label,false);android.util.TypedValue value=new android.util.TypedValue();
+    Button link(String label){Button b=button(label,false);android.util.TypedValue value=new android.util.TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground,value,true);b.setBackgroundResource(value.resourceId);return b;}
-    private void split(LinearLayout line,View left,View right){
+    void split(LinearLayout line,View left,View right){
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.setMargins(0,dp(5),dp(4),dp(3));line.addView(left,lp);
         lp=new LinearLayout.LayoutParams(0,-2,1);lp.setMargins(dp(4),dp(5),0,dp(3));line.addView(right,lp);
     }

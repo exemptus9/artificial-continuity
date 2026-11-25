@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Total Recall Desk
-Comment=Search selected Galaxy moments and connect Lexi
-Exec=/usr/bin/python3 /usr/share/total-recall-listening/recall_desk.py
+Comment=Open your private archive, pair your phone and back up recordings
+Exec=/usr/bin/total-recall-desk
 Icon=audio-input-microphone
 Terminal=false
 Categories=Audio;Utility;

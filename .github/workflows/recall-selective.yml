@@ -26,7 +26,7 @@ jobs:
       - name: Run retained native host suite, Continuity transfer suite and Mint tests
         run: |
           set -euo pipefail
-          python3 -m pip install -r android/requirements-transfer.txt
+          python3 -m pip install -r android/requirements-transfer.txt playwright==1.56.0
           mkdir -p android/build
           curl -fsSL --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json.jar
           echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json.jar' | sha256sum --check
@@ -51,7 +51,7 @@ jobs:
           mkdir -p device-tests/build/receipts
           "$ANDROID_HOME/platform-tools/adb" start-server
           nohup "$ANDROID_HOME/emulator/emulator" -avd recall-synthetic -port 5554 -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -camera-front none > device-tests/build/receipts/emulator.log 2>&1 < /dev/null &
-      - name: Build retained 0.10.0, current app and acceptance tools with the same disposable CI key
+      - name: Build retained 0.11.0, current app and acceptance tools with the same disposable CI key
         run: |
           set -euo pipefail
           export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12"
@@ -61,9 +61,9 @@ jobs:
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass:env RECALL_KEY_PASSWORD -keypass:env RECALL_KEY_PASSWORD -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Recall Device Test'
           bash android/build.sh
           bash device-tests/build.sh
-          prior="$RUNNER_TEMP/recall-0.10.0"
-          git fetch --no-tags --depth 1 origin aa0457e4b6114ec3a35c3169fc03ea15edfb53c7
-          git worktree add --detach "$prior" aa0457e4b6114ec3a35c3169fc03ea15edfb53c7
+          prior="$RUNNER_TEMP/recall-0.11.0"
+          git fetch --no-tags --depth 1 origin 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
+          git worktree add --detach "$prior" 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
           # The old build script independently revalidates the same speech dependencies.
           mkdir -p "$prior/android/build" "$prior/android/assets/offline-speech"
           cp -a android/build/speech "$prior/android/build/"
@@ -78,8 +78,21 @@ jobs:
           timeout 300 bash -c 'until [ "$("$1" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 3; done' _ "$adb"
           "$adb" shell input keyevent 82
           current_apk="$(python3 -c 'import json; print("android/build/TotalRecall-"+json.load(open("android/build/build-receipt.json"))["version"]+".apk")')"
-          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.10.0/android/build/TotalRecall-0.10.0.apk" "$PWD/$current_apk"
+          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.11.0/android/build/TotalRecall-0.11.0.apk" "$PWD/$current_apk"
           timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
+      - name: Exercise codec, pinned transfer and browser against the packaged Mint app
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export RECALL_PACKAGE_OUT="$RUNNER_TEMP/recall-deb"
+          mkdir -p "$RECALL_PACKAGE_OUT"
+          deb="$RECALL_PACKAGE_OUT/total-recall-desk.deb"
+          bash mint/build_deb.sh "$deb"
+          test -s "$deb"
+          dpkg-deb -x "$deb" "$RUNNER_TEMP/recall-installed"
+          host_py=$(find "$RUNNER_TEMP/recall-installed" -name recall_desk.py -print -quit)
+          test -f "$host_py"
+          python3 device-tests/archive-roundtrip.py --desk "$host_py"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

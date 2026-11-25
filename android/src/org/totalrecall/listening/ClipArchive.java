@@ -75,6 +75,12 @@ final class ClipArchive {
                     throw new IOException("Clip ID, path or audio digest mismatch");
                 long dur=number(row,"durationMs"),start=number(row,"startedAtMillis");
                 if(start<0||start>Long.MAX_VALUE-dur||dur!=duration(archive.audio.get(path)))throw new IOException("Clip duration or timestamp mismatch");
+                if(row.has("parentId")||row.has("startSample")||row.has("endSample")){
+                    String parent=text(row,"parentId",80);long from=number(row,"startSample"),to=number(row,"endSample");
+                    long samples=(archive.audio.get(path).length()-44)/2;
+                    if(!parent.matches(ID)||id.equals(parent)||from<0||to<=from||to>Integer.MAX_VALUE||to-from!=samples)
+                        throw new IOException("Invalid excerpt provenance");
+                }
                 for(String key:new String[]{"transcript","title","category","reason","feedback"})text(row,key,1_000_000);
                 for(String key:new String[]{"note","correction"})if(row.has(key))text(row,key,1_000_000);
                 if(!Arrays.asList("none","keep","skip").contains(row.getString("feedback")))throw new IOException("Unsupported feedback value");
