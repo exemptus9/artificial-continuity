@@ -57,16 +57,37 @@ def lookup(arc,kind,uid):
     if not row: raise Failure(404,"Item is no longer in this archive")
     return item(row,True)
 
+# Stable labels written by Android SelectiveEngine and Store. A single clip can have several.
+CLIP_LABELS={
+    "forge word":"coined", "poem line":"verse", "manual keep":"manual",
+    "missed moment":"missed", "project decision":"decision", "connection":"connection", "excerpt":"excerpt"
+}
+
+def category_keys(category):
+    tags={" ".join(part.casefold().split()) for part in (category or "").split("+")}
+    return {CLIP_LABELS.get(tag,"other") for tag in tags if tag} or {"other"}
+
 def overview(arc,start,end,offset):
     if not 0<=start<end or end-start>367*DAY or not -840<=offset<=840: raise Failure(400,"Invalid overview interval")
     first=((start+offset*60000)//DAY)*DAY-offset*60000
     buckets={k:0 for k in range(first,end,DAY)}
     counts={"clip":0,"segment":0,"journal":0};intervals=[];events=[]
+    categories={name:{"key":name,"count":0,"latestClipId":None} for name in (*CLIP_LABELS.values(),"other")}
     with arc.connection() as db:
-        rows=db.execute("""SELECT id,kind,title,startedAtMillis,durationMs FROM ("""+BASE_SQL+""")
-               WHERE startedAtMillis<? AND startedAtMillis+max(1,durationMs)>? ORDER BY startedAtMillis""",(end,start))
+        # Summary uses category, identity and time only. It does not read narration or journal text.
+        rows=db.execute("""
+            SELECT * FROM (
+              SELECT id,'clip' kind,started startedAtMillis,duration durationMs,category FROM clips
+              UNION ALL SELECT id,kind,started,CAST(json_extract(metadata,'$.durationMs') AS INTEGER),''
+                FROM archive_uploads WHERE state='complete' AND kind IN ('segment','journal')
+            ) WHERE startedAtMillis<? AND startedAtMillis+max(1,durationMs)>? ORDER BY startedAtMillis,id
+        """,(end,start))
         for r in rows:
             counts[r["kind"]]+=1
+            if r["kind"]=="clip":
+                for key in category_keys(r["category"]):
+                    categories[key]["count"]+=1
+                    categories[key]["latestClipId"]=r["id"]
             if r["kind"] in ("clip","segment"):
                 a=max(start,r["startedAtMillis"]);b=min(end,r["startedAtMillis"]+r["durationMs"])
                 if intervals and intervals[-1][1]>=a: intervals[-1][1]=max(b,intervals[-1][1])
@@ -77,9 +98,14 @@ def overview(arc,start,end,offset):
         while a<b:
             bucket=((a+offset*60000)//DAY)*DAY-offset*60000
             stop=min(b,bucket+DAY);buckets[bucket]+=stop-a;a=stop
-    return dict(capturedMs=sum(buckets.values()),clipCount=counts["clip"],segmentCount=counts["segment"],
+    def calendar_day(k):
+        return datetime.fromtimestamp((k+offset*60000)/1000,timezone.utc).date().isoformat()
+    peak=max(buckets.values(),default=0)
+    peak_days=[k for k,duration in buckets.items() if peak and duration==peak]
+    busiest=None if not peak_days else dict(date=calendar_day(peak_days[-1]),capturedMs=peak,tiedDays=len(peak_days))
+    return dict(clipPatterns=list(categories.values()),busiestDay=busiest,capturedMs=sum(buckets.values()),clipCount=counts["clip"],segmentCount=counts["segment"],
                 journalCount=counts["journal"],observedMs=None,gapCount=None,events=events,
-                buckets=[dict(startMs=k,capturedMs=v) for k,v in buckets.items()])
+                buckets=[dict(startMs=k,date=calendar_day(k),capturedMs=v) for k,v in buckets.items()])
 
 def grant(root,port):
     folder=root/"web-login";folder.mkdir(mode=0o700,parents=True,exist_ok=True)

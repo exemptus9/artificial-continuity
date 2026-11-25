@@ -76,6 +76,31 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(desk.detail(src["id"])["parentId"],"parent-clip")
         item=web.lookup(self.arc,"clip","child-clip")
         self.assertEqual((item["parentId"],item["endSample"]-item["startSample"]),("parent-clip",1600))
+    def test_creative_patterns_use_saved_labels_and_union_of_audio(self):
+        first=(store.now()//store.DAY-3)*store.DAY
+        def add_clip(db,uid,tag,at,duration):
+            # Deliberately misleading synthetic content must have no effect on category counts.
+            db.execute("INSERT INTO clips VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (uid,at,duration,0,"0"*64,b"", "Poem line","Forge word",tag,"Manual keep","{}","none"))
+        with self.arc.connection() as db:
+            add_clip(db,"a","Forge word + Poem line",first+1000,4000)
+            add_clip(db,"b","  forge WORD + Forge word + Manual keep  ",first+2000,4000)
+            add_clip(db,"c","Missed moment + Project decision + Connection",first+3000,1000)
+            add_clip(db,"d","Excerpt + Future label",first+3500,20)
+            add_clip(db,"outside","Forge word",first-3000,1000)
+            add_clip(db,"day-two","",first+store.DAY+1000,7000)
+        o=web.overview(self.arc,first,first+store.DAY*2,0)
+        grouped={g["key"]:(g["count"],g["latestClipId"]) for g in o["clipPatterns"]}
+        self.assertEqual(grouped,{"coined":(2,"b"),"verse":(1,"a"),"manual":(1,"b"),"missed":(1,"c"),
+                    "decision":(1,"c"),"connection":(1,"c"),"excerpt":(1,"d"),"other":(2,"day-two")})
+        self.assertEqual((o["clipCount"],o["capturedMs"]),(5,12000))
+        self.assertEqual(o["busiestDay"],dict(date=o["buckets"][1]["date"],capturedMs=7000,tiedDays=1))
+        with self.arc.connection() as db:db.execute("UPDATE clips SET duration=5000 WHERE id='day-two'")
+        tied=web.overview(self.arc,first,first+2*store.DAY,0)
+        self.assertEqual(tied["busiestDay"],dict(date=tied["buckets"][1]["date"],capturedMs=5000,tiedDays=2))
+        empty=web.overview(self.arc,first-2*store.DAY,first-store.DAY,0)
+        self.assertIsNone(empty["busiestDay"])
+        self.assertFalse(any(g["count"] for g in empty["clipPatterns"]))
     def test_raw_adts_silence_validated_with_decoded_duration(self):
         path=self.root/"vbr.aac"
         subprocess.run(["ffmpeg","-v","error","-f","lavfi","-i","sine=frequency=440:duration=2",

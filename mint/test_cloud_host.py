@@ -186,6 +186,14 @@ class HostedArchiveTests(unittest.TestCase):
         self.server.aggregate_start,self.server.aggregate_count=now,180
         self.assertEqual(self.request("POST","/login",urlencode({"key":self.owner_key}),self.origin)[0],429)
 
+    def test_private_browser_form_with_redacted_origin(self):
+        body=urlencode({"key":self.owner_key})
+        headers={"Content-Type":"application/x-www-form-urlencoded","Origin":"null",
+                 "Sec-Fetch-Mode":"navigate","Sec-Fetch-Site":"same-origin"}
+        self.assertEqual(self.request("POST","/login",body,headers)[0],303)
+        headers["Sec-Fetch-Site"]="cross-site"
+        self.assertEqual(self.request("POST","/login",body,headers)[0],403)
+
     def test_storage_preflight_and_owner_round_trip(self):
         path = "/api/storage-check"
         self.assertEqual(self.request("POST",path,b"",self.origin)[0],401)
@@ -195,7 +203,7 @@ class HostedArchiveTests(unittest.TestCase):
         self.assertEqual(self.request("POST",path,b"",{**owner,"Origin":"https://elsewhere.invalid"})[0],403)
         status,_,body=self.request("POST",path,b"",{**owner,**self.origin})
         self.assertEqual((status,json.loads(body)),(200,{"verified":True}))
-        self.assertEqual([op for op,key in self.bucket.checks],["put","get","delete"])
+        self.assertEqual([op for op,key in self.bucket.checks],["put","get","get","delete"])
         self.assertEqual(len({key for op,key in self.bucket.checks}),1)
         self.assertEqual(self.bucket.objects,{})
         status,_,body=self.request("GET","/v2/status",headers=self.bearer)

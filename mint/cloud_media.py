@@ -135,10 +135,10 @@ class CloudMedia:
 
     def _clean_scratch(self):
         for directory in self.work.iterdir():
-            if (directory.is_symlink() or not directory.is_dir() or
-                not re.fullmatch(r"(wav|catalog)-[a-zA-Z0-9_-]+",directory.name) or
-                time.time()-directory.stat().st_mtime<86400): continue
             try:
+                if (directory.is_symlink() or not directory.is_dir() or
+                    not re.fullmatch(r"(wav|catalog)-[a-zA-Z0-9_-]+",directory.name) or
+                    time.time()-directory.stat().st_mtime<86400): continue
                 with (directory/"active").open("a") as marker:
                     fcntl.flock(marker,fcntl.LOCK_EX|fcntl.LOCK_NB)
                     shutil.rmtree(directory)
@@ -152,6 +152,25 @@ class CloudMedia:
             return func(Bucket=self.bucket, **kwargs)
         except Exception as exc:
             raise Failure(503, "Private object storage is unavailable. Retry the transfer.") from exc
+
+    def verify_storage(self):
+        """Use the production write, checksum, and range paths without cataloging a user item."""
+        payload=os.urandom(64)
+        sha=hashlib.sha256(payload).hexdigest()
+        key=ROOT+"diagnostics/"+uuid.uuid4().hex
+        mime="application/octet-stream"
+        with tempfile.NamedTemporaryFile(dir=self.archive.root) as source:
+            source.write(payload)
+            source.flush()
+            try:
+                self._upload(Path(source.name),key,sha,len(payload),mime,{"sha256":sha,"archive":self.instance})
+                head=self._head(key)
+                self._verify_remote(key,head,len(payload),sha,mime)
+                response=self._call(self.s3.get_object,Key=key,IfMatch=head["ETag"],Range="bytes=7-23")
+                with closing(response["Body"]) as stream:
+                    if stream.read()!=payload[7:24]:raise Failure(503,"Stored range failed verification")
+            finally:
+                self._call(self.s3.delete_object,Key=key)
 
     def _head(self, key):
         try:
@@ -236,12 +255,12 @@ class CloudMedia:
         if row["expires"]<=now(): raise Failure(410,"Capture expired while being verified")
         db.execute(f"UPDATE {table} SET verified=1,etag=? WHERE id=?",(_etag(head),uid))
 
-    def _reopen(self,upload_id):
+    def _reopen(self,upload_id,touched):
         # An explicit 404 for the previously verified object can be repaired by allowing
         # the same phone manifest to resume from byte zero. Never ACK a nonexistent copy.
         with archive_lock(self.archive.root),self.db() as db:
-            row=db.execute("SELECT file,state FROM archive_uploads WHERE id=?",(upload_id,)).fetchone()
-            if row and row["state"]=="complete":
+            row=db.execute("SELECT file,state,touched FROM archive_uploads WHERE id=?",(upload_id,)).fetchone()
+            if row and row["state"]=="complete" and row["touched"]==touched:
                 with (self.archive.root/row["file"]).open("wb") as f: f.flush();os.fsync(f.fileno())
                 sync_dir(self.archive.files)
                 db.execute("UPDATE archive_uploads SET offset=0,state='pending',touched=? WHERE id=?",(now(),upload_id))
@@ -269,7 +288,7 @@ class CloudMedia:
                     db.commit()
                     if local.exists(): local.unlink();sync_dir(self.archive.files)
         except MissingOriginal:
-            self._reopen(uid)
+            self._reopen(uid,row["touched"])
             raise
 
     def ensure_wav(self, uid):

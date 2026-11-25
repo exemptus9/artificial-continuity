@@ -1,7 +1,6 @@
 """Owner-only public HTTPS origin. Railway terminates TLS; LAN serving remains separate."""
 import base64
 from collections import OrderedDict
-from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -59,18 +58,6 @@ class HostedArchive(recall_archive.Archive):
             db.execute("CREATE TABLE IF NOT EXISTS cloud_transfer_month (month TEXT,kind TEXT,bytes INTEGER NOT NULL,PRIMARY KEY(month,kind))")
         self.media_store=media_factory(self)
 
-    def check_storage(self):
-        # The owner can verify a provider round trip without adding a test recording to the catalog.
-        store=self.media_store
-        payload=secrets.token_bytes(64)
-        key="total-recall/v1/diagnostics/"+secrets.token_hex(24)
-        store.s3.put_object(Bucket=store.bucket,Key=key,Body=payload)
-        try:
-            with closing(store.s3.get_object(Bucket=store.bucket,Key=key)["Body"]) as check:
-                if check.read(65)!=payload:raise OSError("Storage round trip failed")
-        finally:
-            store.s3.delete_object(Bucket=store.bucket,Key=key)
-
     def reserve_transfer(self,kind,n):
         month=datetime.now(timezone.utc).strftime("%Y-%m")
         with self.connection() as db:
@@ -119,7 +106,7 @@ class HostedHandler(recall_web.OwnerHandler):
     def end_headers(self):
         for key,value in (
             ("Cache-Control","private, no-store"),("Strict-Transport-Security","max-age=31536000"),
-            ("Referrer-Policy","no-referrer"),("X-Content-Type-Options","nosniff"),
+            ("Referrer-Policy","same-origin"),("X-Content-Type-Options","nosniff"),
             ("X-Frame-Options","DENY"),("X-Robots-Tag","noindex, nofollow"),
             ("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")):
             self.send_header(key,value)
@@ -165,11 +152,16 @@ class HostedHandler(recall_web.OwnerHandler):
         if not self.valid_host(self.headers.get("Host","")):return self.json(403,{"error":"Unrecognized origin"})
         if self.path=="/v2/uploads":return self.upload()
         origin=self.headers.get("Origin")
-        if origin and origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use the archive sign-in page."})
+        # Some browsers redact Origin on a form when the owner page suppresses referrers.
+        local_form=(origin=="null" and self.path in ("/login","/logout")
+                    and self.headers.get("Sec-Fetch-Site")=="same-origin"
+                    and self.headers.get("Sec-Fetch-Mode")=="navigate")
+        if origin and origin!="https://"+self.server.public_host and not local_form:
+            return self.json(403,{"error":"Use the archive sign-in page."})
         if self.path=="/api/storage-check":
             if not self.auth():return self.json(401,{"error":"Sign in to your archive."})
             if origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use your archive origin."})
-            try: self.server.archive.check_storage()
+            try: self.server.archive.media_store.verify_storage()
             except Exception:return self.json(503,{"error":"Bucket round trip failed."})
             return self.json(200,{"verified":True})
         if self.path=="/logout":

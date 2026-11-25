@@ -127,7 +127,15 @@ def main():
             page.get_by_role('button',name='Close item').click()
             if not external:
                 page.get_by_label('Item type',exact=True).select_option('all');page.get_by_role('searchbox').fill('returning');expect(page.get_by_text('A new word for returning',exact=True)).to_be_visible();expect(page.get_by_text('A line for the morning',exact=True)).to_have_count(0)
-                page.get_by_role('searchbox').fill('unmatched-zebra');expect(page.get_by_text('No matches.')).to_be_visible();page.get_by_role('searchbox').fill('');expect(page.get_by_text('Morning journal',exact=True)).to_be_visible();page.get_by_text('Morning journal',exact=True).click();expect(page.get_by_text('An anonymous test transcript.')).to_be_visible();page.keyboard.press('Escape');nav('Activity');expect(page.get_by_text('Unavailable',exact=True)).to_have_count(2);nav('Overview');page.set_viewport_size({'width':390,'height':844});capture('archive-mobile');assert page.evaluate('document.documentElement.scrollWidth<=innerWidth');nav('Archive');capture('archive-mobile-timeline');assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                page.get_by_role('searchbox').fill('unmatched-zebra');expect(page.get_by_text('No matches.')).to_be_visible();page.get_by_role('searchbox').fill('');expect(page.get_by_text('Morning journal',exact=True)).to_be_visible();page.get_by_text('Morning journal',exact=True).click();expect(page.get_by_text('An anonymous test transcript.')).to_be_visible();page.keyboard.press('Escape');nav('Activity');expect(page.get_by_text('Unavailable',exact=True)).to_have_count(2)
+                expect(page.get_by_role('heading',name='Saved clip patterns')).to_be_visible()
+                verse=page.get_by_role('button',name='Review latest · Poetry and freestyle candidates')
+                expect(verse.locator('..').get_by_text('2',exact=True)).to_be_visible()
+                expect(page.get_by_role('heading',name='Busiest recorded day')).to_be_visible();capture('archive-patterns')
+                verse.click();expect(page.get_by_role('heading',name='A line for the morning')).to_be_visible()
+                page.get_by_role('button',name='Close item').click()
+                nav('Overview');page.set_viewport_size({'width':390,'height':844});capture('archive-mobile');assert page.evaluate('document.documentElement.scrollWidth<=innerWidth');nav('Archive');capture('archive-mobile-timeline');assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                nav('Activity');expect(page.get_by_role('button',name='Review latest · Coined-word candidates')).to_be_visible();capture('archive-mobile-patterns');assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert not errors,errors
             print('PASS · Private dashboard, archive row, original playback, speed, download SHA-256 and non-destructive WAV excerpt.');
             if not external:print('PASS · Empty state, search, zero matches, journal, activity, period changes and mobile overflow.')

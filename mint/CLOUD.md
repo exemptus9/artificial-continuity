@@ -2,7 +2,7 @@
 
 Open the archive website, enter the **Owner key** from your private access file, and choose **Open private archive**. The owner key controls browser access. **Pair phone → Reveal pairing code** displays a separate upload credential. Copy it on the phone or scan the QR on a different screen. Keep both credentials private. [Archive website](https://total-recall-archive-production.up.railway.app)
 
-On Android, open **Archive & sync → Connect website or Mint**, paste the pairing code, then tap **Pair archive → Connect website**. In **Transfer choices**, select the media to send. **Preview transfer → Queue this batch** sends one approved batch. **Set up automatic transfers → Enable automatic transfers** permits recurring batches with the limits shown. The website remains available while the Mint laptop is asleep. [Complete phone instructions](../android/SELECTIVE_LISTENING.md)
+On Android, open **Archive & sync → Connect website or Mint**, paste the pairing code, then tap **Pair archive → Connect website**. For full sessions, choose **Set up continuous backup**, review the destination and limits, choose whether to free acknowledged phone copies, and confirm **Enable continuous backup**. For a manual catch-up, **Preview all pending → Queue this backlog** approves the displayed items once, up to 1 GiB and 4,096 items. Under **Transfer choices**, you can change the content, network and regular batch limits. The website remains available while the Mint laptop is asleep. [Complete phone instructions](../android/SELECTIVE_LISTENING.md)
 
 ## Capacity and cost
 

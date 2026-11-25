@@ -60,10 +60,12 @@ function storage(info){const box=e('div','panel storage');add(box,add(e('div','s
   $('location-label').textContent=hosted?'Hosted archive':'This computer';
   if(hosted&&Number.isFinite(info.transferCapBytes)&&Number.isFinite(info.remainingArchiveBytes)){
     box.append(e('p','',`${bytes(info.remainingArchiveBytes)} remaining in the archive.`));
-    const details=e('details'),summary=e('summary','','Monthly transfer limits');
+    const details=e('details'),summary=e('summary','','Monthly transfers and storage cost');
     const gigabytes=n=>`${number(Math.round(n/1e7)/100)} GB`;
     add(details,summary,e('p','',`Uploaded ${gigabytes(info.monthUploadBytes)} of ${gigabytes(info.transferCapBytes)}. Played or downloaded ${gigabytes(info.monthPlaybackBytes)} of ${gigabytes(info.transferCapBytes)}. Both reset on the first of the month, UTC.`),
       e('p','','These limits cover media transfers. Your phone queues remaining uploads until capacity is available.'));
+    const storageCost=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(info.usedBytes/1e9*0.015);
+    details.append(e('p','',`About ${storageCost}/month for this much archived media at $0.015/GB. Website hosting, catalog copies and service traffic are billed separately.`));
     box.append(details);
   }else if(Number.isFinite(info.availableBytes))box.append(e('p','',`${bytes(info.availableBytes)} available for new items.`));
   if(info.retentionYears)box.append(e('p','',`${info.retentionYears}-year retention from the recording date.`));
@@ -84,10 +86,40 @@ async function dashboard(ver){const [overview,items,info]=await Promise.all([get
   add(right,heading('Workspace'),storage(info),heading('Recent activity',link('View activity','#activity')),eventPanel((overview.events||[]).slice(0,2)));
   $('view').replaceChildren(hero(overview),add(e('div','section-grid'),left,right));}
 function metric(label,value){return add(e('div'),e('p','',label),e('strong','',value));}
+const patternNames={coined:'Coined-word candidates',verse:'Poetry and freestyle candidates',manual:'Manual keeps',
+  missed:'Missed moments',decision:'Project decisions',connection:'Connections',excerpt:'Excerpts',other:'Other labels'};
+function clipPatterns(summary){
+  const panel=e('div','panel pattern-panel');
+  if(!summary.clipCount)return add(panel,empty('No selected clips in this period.','Counts appear when a saved clip reaches the archive.'));
+  const list=e('ul','pattern-list');
+  for(const group of summary.clipPatterns||[]){
+    if(!group.count&&!['coined','verse','manual'].includes(group.key))continue;
+    const label=patternNames[group.key]||'Other labels',row=e('li');
+    const numbers=add(e('div'),e('strong','',number(group.count)),e('span','',label));
+    row.append(numbers);
+    if(group.latestClipId){
+      const review=button('Review latest',()=>openItem({id:group.latestClipId,kind:'clip'}),'text-link');
+      review.setAttribute('aria-label',`Review latest · ${label}`);row.append(review);
+    }
+    list.append(row);
+  }
+  return add(panel,list,e('p','section-note','Creative labels are suggestions for review. A clip can carry more than one label.'));
+}
+function busiest(summary){
+  const box=e('div','panel peak-day'),peak=summary.busiestDay;
+  if(!peak)return add(box,empty('No archived audio in this period.','A day total appears once audio arrives.'));
+  const stamp=new Date(peak.date+'T12:00:00Z');
+  const label=dateFmt(stamp,{weekday:'long',month:'short',day:'numeric',timeZone:'UTC'});
+  add(box,e('b','',label),e('strong','',duration(peak.capturedMs)),e('span','','of archived audio, with overlaps counted once.'));
+  if(peak.tiedDays>1)box.append(e('p','section-note',`${plural(peak.tiedDays,'day')} tied. The most recent is shown.`));
+  return box;
+}
 async function activity(ver){const o=await get('/api/overview',range());if(ver!==state.version)return;
   const report=add(e('div','report'),metric('Archived audio',duration(o.capturedMs)),metric('Observed listening',o.observedMs==null?'Unavailable':duration(o.observedMs)),metric('Reported gaps',o.gapCount==null?'Unavailable':number(o.gapCount)));
   const note=e('p','section-note','Listening time and gap counts require session reports from the recorder. Empty time on the chart carries no microphone status.');
-  $('view').replaceChildren(report,heading('Latest archive receipts'),eventPanel(o.events),note);}
+  const patterns=add(e('div','section-grid'),add(e('section'),heading('Saved clip patterns'),clipPatterns(o)),
+    add(e('section'),heading('Busiest recorded day'),busiest(o)));
+  $('view').replaceChildren(report,patterns,heading('Latest archive receipts'),eventPanel(o.events),note);}
 function makeArchive(){const form=e('form','archive-tools');form.setAttribute('role','search');const q=e('input');q.id='search';q.type='search';q.placeholder='Search your archive';q.autocomplete='off';q.value=state.query;q.setAttribute('aria-label','Search your archive');const kinds=e('select');kinds.id='kind';kinds.setAttribute('aria-label','Item type');for(const [v,label] of [['all','All items'],['clip','Selected clips'],['segment','Audio segments'],['journal','Journal entries']]){const o=e('option','',label);o.value=v;kinds.append(o);}kinds.value=state.kind;
   form.addEventListener('submit',ev=>{ev.preventDefault();clearTimeout(searchTimer);search();});q.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(search,170);});kinds.addEventListener('change',()=>{clearTimeout(searchTimer);search();});
   function search(){state.query=q.value.trim();state.kind=kinds.value;state.offset=0;refresh();}
