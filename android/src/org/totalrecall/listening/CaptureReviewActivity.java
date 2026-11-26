@@ -25,7 +25,7 @@ public final class CaptureReviewActivity extends Activity {
     private String lastEvidence=null, catalogKey=null;
     private final Runnable pulse=new Runnable(){public void run(){
         if(!visible)return;
-        if(saved){if(!reading && (nextRead==0||RecallService.isListening()) && SystemClock.elapsedRealtime()>=nextRead)readCatalog();}
+        if(saved){if(!reading && SystemClock.elapsedRealtime()>=nextRead)readCatalog();}
         else paintLive();
         main.postDelayed(this,saved?1000:220);
     }};
@@ -39,7 +39,11 @@ public final class CaptureReviewActivity extends Activity {
         });
         TextView title=text(page,"Live & saved",28,true);if(Build.VERSION.SDK_INT>=28)title.setAccessibilityHeading(true);
         nav=row(page);liveTab=action(nav,"Live now",()->tab(false));savedTab=action(nav,"Saved on phone",()->tab(true));
+        LinearLayout quick=row(page);
+        action(quick,"Full journal",()->startActivity(new Intent(this,FullJournalActivity.class)));
+        action(quick,"Voice commands",this::guide);
         body=column();page.addView(body);tab(saved);
+        if(getIntent().getBooleanExtra("commands",false)&&state==null)guide();
     }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("saved",saved);}
     @Override protected void onStart(){super.onStart();RecallOverlay.reviewVisible(this,true);}
@@ -89,9 +93,18 @@ public final class CaptureReviewActivity extends Activity {
             action(body,"Open recorder controls",()->recorder(null));paintLive();
         }
     }
+    private void guide(){
+        Switch sounds=new Switch(this);sounds.setText("Wake and save sounds");
+        sounds.setChecked(getSharedPreferences("recall-speech",0).getBoolean("chime",true));
+        sounds.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("chime",on).apply());
+        LinearLayout contents=column();contents.setPadding(dp(20),dp(12),dp(20),dp(12));contents.addView(sounds);
+        text(contents,SelectiveEngine.guide(),16,false);
+        ScrollView scroll=new ScrollView(this);scroll.addView(contents);
+        new android.app.AlertDialog.Builder(this).setTitle("Voice commands").setView(scroll).setPositiveButton("Close",null).show();
+    }
     private void paintLive(){
         LiveCapture.Snapshot s=LiveCapture.snapshot();
-        put(status,s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"%":s.state);
+        put(status,(s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"%":s.state)+" · "+s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved"+(s.event.isEmpty()?"":"\n"+s.event));
         put(voiceState,!s.active?"Labels start fresh each session.":s.waiting?"Waiting for microphone access.":!s.groupsReady?"Voice grouping is off or preparing.":s.names.isEmpty()?"Listening for a clear voice. Short or mixed phrases may stay uncertain.":String.join("  •  ",s.names.values()));
         StringBuilder lines=new StringBuilder();
         long wall=System.currentTimeMillis(),clock=TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
@@ -114,7 +127,7 @@ public final class CaptureReviewActivity extends Activity {
                 Situation tentative=new Situation(this);tentative.add(s.partial,"");
                 if(!tentative.cue().isEmpty())result+="\n\nTentative · "+tentative.cue()+" · “"+s.partial+"”";
             }
-            put(context,result);
+            String scene=s.scene(0);put(context,scene.isEmpty()?result:scene+"\n\n"+result);
         }catch(java.io.IOException e){put(context,"Could not load the situation cues.");}
     }
     private void readCatalog(){

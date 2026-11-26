@@ -30,6 +30,17 @@ public final class RecallService extends Service {
     private volatile boolean capturing;
     private volatile boolean destroyed;
     private Thread worker;
+    private android.media.ToneGenerator chime;
+    private void sound(boolean wake){
+        if(!getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("chime",true))return;
+        noticeHandler.postDelayed(()->{
+            if(destroyed)return;
+            try{
+                if(chime==null)chime=new android.media.ToneGenerator(AudioManager.STREAM_MUSIC,65);
+                chime.startTone(wake?android.media.ToneGenerator.TONE_PROP_ACK:android.media.ToneGenerator.TONE_PROP_BEEP,wake?190:85);
+            }catch(RuntimeException ignored){}
+        },wake?0:220);
+    }
     private int lastStart;
     private long startedElapsed;
     private volatile String inputRoute="";
@@ -100,6 +111,7 @@ public final class RecallService extends Service {
         if(headline==null||headline.isEmpty())headline="Preparing microphone";
         StringBuilder details=new StringBuilder(headline);
         if(snapshot.active)details.append("\n").append(elapsed(snapshot.sessionSeconds)).append(" elapsed · ").append(snapshot.savedCount).append(" clips saved");
+        if(snapshot.active)details.append(" · ").append(snapshot.words).append(" words · ").append(snapshot.flags).append(" flags");
         if(receiving)details.append(" · Mic ").append(Math.round(snapshot.level*100)).append('%');
         if(snapshot.waiting && !snapshot.state.isEmpty())details.append("\n").append(snapshot.state);
         if(!snapshot.lastSave.isEmpty())details.append("\nLatest clip · ").append(snapshot.lastSave);
@@ -244,8 +256,8 @@ public final class RecallService extends Service {
                 LiveCapture.words(partial,false);
                 if(command==null && partial!=null)engine.text(partial,false);
             }
-            if(command!=null)engine.text(command,true);
-            else if(utterance!=null)engine.text(utterance,true);
+            if(utterance!=null)engine.text(utterance,true);
+            if(command!=null && !command.equals(utterance) && !stopping.get())engine.text(command,true);
             if(!stopping.get())engine.pcm(data,count);
         }
         void end(boolean gap,String reason){
@@ -261,7 +273,7 @@ public final class RecallService extends Service {
                         journal.append(session,epoch,finalWords,false,speech.lastVoice());
                         if(gap && !stopping.get())engine.text(finalWords,true);
                     }else if(partial!=null){journal.append(session,epoch,partial,true);}
-                    if(gap && !stopping.get())engine.finish();
+                    if((gap && !stopping.get()) || (userPaused && engine.passageOpen()))engine.finish();
                 }
             }finally{
                 engine.pause();engine=null;speech.resetStream();
@@ -286,15 +298,19 @@ public final class RecallService extends Service {
                 final long[] lastSaved={-1L};
                 SelectiveEngine.Listener listener=new SelectiveEngine.Listener(){
                     @Override public void onClip(SelectiveEngine.Clip clip){
-                        if(!stillArmed())return;
+                        if(!ListenPolicy.allowed(RecallService.this) || (stopping.get() && !userPaused))return;
+                        LiveCapture.feedback("Writing clip to phone…");
                         try{lastSaved[0]=store.save(clip);LiveCapture.saved(clip.category,clip.reason);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
                         if(clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
+                            sound(false);
                             try {Vibrator h=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(h!=null&&h.hasVibrator())h.vibrate(45);}
                             catch(SecurityException ignored){}
                         }
                         try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
                     }
+                    @Override public void onVoice(String message,boolean wake){LiveCapture.feedback(message);if(wake)sound(true);}
+                    @Override public void onFlag(String category){LiveCapture.flag(category);}
                     @Override public void onPauseRequested(){userPaused=true;stopping.set(true);}
                 };
                 try(OfflineSpeech speech=new OfflineSpeech(app)){
@@ -449,7 +465,7 @@ public final class RecallService extends Service {
         }return "input route unreported";
     }
     @Override public void onDestroy(){
-        noticeHandler.removeCallbacks(refreshNotice);destroyed=true;stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);
+        noticeHandler.removeCallbacks(refreshNotice);destroyed=true;if(chime!=null){chime.release();chime=null;}stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);
         AudioRecord rec=liveRecorder;
         if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
         super.onDestroy();

@@ -151,6 +151,18 @@ public class SelectiveEngineTest {
         f=new Fixture(); f.engine.setExamples(Arrays.asList(new SelectiveEngine.Example(
             "Lexi you missed one please keep the last minute",SelectiveEngine.MISSED,true)));
         f.say("I really missed the moment last minute"); f.sound(4,0); check(f.clips.isEmpty());
+        f=new Fixture();f.say("Hey Recall");f.say("please save that for me");check(f.clips.size()==1);
+        f.say("please do not save that");check(f.clips.size()==1);
+        f=new Fixture();f.say("total recall start a passage");f.say("when the windows turned to mirrors");
+        f.sound(9,0);check(f.engine.isSelecting());f.sound(25,1600);f.say("finish passage");
+        check(!f.engine.isSelecting() && f.clips.size()==2);
+        long total=0;for(SelectiveEngine.Clip c:f.clips)total+=c.audio.length;check(total==37L*SelectiveEngine.RATE);
+        f=new Fixture();f.say("hey recall");f.sound(9,0);f.say("pause recording");check(f.pauses==0);
+        retain(SelectiveEngine.POETRY,"that summer i went back to the farm","i could smell the earth through the window");
+        f=new Fixture();f.say("silver dawn walked through my door hey recall save that");
+        check(f.clips.size()==1 && f.clips.get(0).transcript.contains("silver dawn"));
+        ignore("we went shopping by the road","i had a sandwich for lunch");
+        System.out.println("Natural save requests, wake expiry, poetry and prose cues, and uninterrupted passage capture verified.");
         System.out.println("Selective engine passed: ephemeral ring, four cues, feedback, lookbacks, overlap, command dedup, pause, finalization, clip bound.");
     }
 }

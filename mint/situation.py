@@ -182,7 +182,7 @@ def analyze_audio(arc, data):
     finally: SLOT.release()
 
 
-def scan(stream,decoder,offset,focused=False):
+def scan(stream,decoder,offset,focused=False,on_phrase=None):
     focus=VoiceFocus() if focused else None
     speech_quiet=0
     samples=active=quiet=longest=peak=phrase_start=0
@@ -193,6 +193,7 @@ def scan(stream,decoder,offset,focused=False):
         hyp=decoder.hyp()
         if hyp and hyp.hypstr.strip():
             t=offset+phrase_start/16000
+            if on_phrase:on_phrase(t,hyp.hypstr.strip())
             passages.append((hyp.hypstr.strip(),stamp(t)+"–"+stamp(offset+samples/16000),t))
     while block:=stream.read(3200):
         if samples>=600*16000:

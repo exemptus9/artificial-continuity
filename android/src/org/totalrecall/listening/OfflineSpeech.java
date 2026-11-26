@@ -28,10 +28,6 @@ public final class OfflineSpeech implements AutoCloseable {
     private Recognizer recognizer;
     private Recognizer commandRecognizer;
     private String pendingCommand;
-    private static final String KEEP = "lexi keep the last minute";
-    private static final String PAUSE = "lexi pause recall";
-    private static final String MISSED = "lexi you missed one";
-
     public OfflineSpeech(Context context) throws IOException {
         this(context,true);
     }
@@ -51,7 +47,12 @@ public final class OfflineSpeech implements AutoCloseable {
             }
             if(!commands)return;
             org.json.JSONArray grammar = new org.json.JSONArray();
-            grammar.put(KEEP).put(PAUSE).put(MISSED).put("[unk]");
+            for(String wake:SelectiveEngine.WAKES){
+                grammar.put(wake);
+                for(String[] group:SelectiveEngine.COMMANDS)for(int i=1;i<group.length;i++)grammar.put(wake+" "+group[i]);
+            }
+            for(String[] group:SelectiveEngine.COMMANDS)for(int i=1;i<group.length;i++)grammar.put(group[i]);
+            grammar.put("[unk]");
             commandRecognizer = new Recognizer(model, 16000f, grammar.toString());
         } catch (IOException | RuntimeException | LinkageError e) {
             close();
@@ -64,14 +65,15 @@ public final class OfflineSpeech implements AutoCloseable {
         return accept(pcm,count,false);
     }
     String accept(short[] pcm,int count,boolean liftQuiet) {
-        if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(pcm, count)) {
+        if(!liftQuiet)quietSpeech.reset();
+        short[] input=liftQuiet?quietSpeech.apply(pcm,count):pcm;
+        if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(input, count)) {
             String heard = text(commandRecognizer.getResult(), "text");
-            if (KEEP.equals(heard) || PAUSE.equals(heard) || MISSED.equals(heard)) {
+            if (heard!=null && SelectiveEngine.grammarMatch(heard)) {
                 pendingCommand = heard;
             }
         }
-        if(!liftQuiet)quietSpeech.reset();
-        return recognizer.acceptWaveForm(liftQuiet?quietSpeech.apply(pcm,count):pcm, count) ? finalized(recognizer.getResult()) : null;
+        return recognizer.acceptWaveForm(input, count) ? finalized(recognizer.getResult()) : null;
     }
 
     /** An exact full-utterance command from a restricted decoder that also models unknown words. */

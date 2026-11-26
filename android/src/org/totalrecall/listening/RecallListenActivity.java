@@ -131,7 +131,7 @@ public final class RecallListenActivity extends Activity {
         Button reviewCapture=button("Live words & capture archive",true);
         reviewCapture.setOnClickListener(v->startActivity(new Intent(this,CaptureReviewActivity.class)));header.addView(reviewCapture);
         LinearLayout sessionTools=row();journalButton=link("Text journal");
-        journalButton.setOnClickListener(v->showJournal());Button floating=link("Floating controls");
+        journalButton.setOnClickListener(v->startActivity(new Intent(this,FullJournalActivity.class)));Button floating=link("Floating controls");
         floating.setOnClickListener(v->{try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.OverlaySettingsActivity"));}
             catch(Exception ex){problem("Couldn’t open floating controls",ex);}});
         split(sessionTools,journalButton,floating);header.addView(sessionTools);
@@ -235,7 +235,7 @@ public final class RecallListenActivity extends Activity {
         toggle.setEnabled(!commandPending&&!searchRecording);
         View keep=manualActions.findViewWithTag("live-keep");keep.setVisibility(active?View.VISIBLE:View.GONE);
         micLabel.setText(active?"MIC ON":"MIC OFF");meterLive=active;
-        journalButton.setText(JournalStore.enabled(this)?"Text journal · on":"Text journal · off");
+        journalButton.setText(JournalStore.enabled(this)?"Full journal · on":"Full journal · off");
         paintLive();
         listHeading.setText(reviewToday?"Today’s catches":"Saved moments");
         daily.setText(reviewToday?"Show all":"Review today");
@@ -497,7 +497,7 @@ public final class RecallListenActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Selective listening")
             .setMessage("Start a session while everyone nearby knows the microphone is active. Speak naturally as you work. The meter shows microphone input, and the live words are an on-device transcription.\n\n"
                 +"Repeated lines, rhymes, words you define and project decisions can trigger a clip. Recall includes the lead-in. Under More → Capture sensitivity, choose More saves for freestyle or Fewer saves for a quieter timeline.\n\n"
-                +"Keep last minute saves on demand. You can also say “Lexi, keep the last minute.” A brief vibration acknowledges a manual catch when available. Rate clips to tune later selections.\n\n"
+                +"Say “Hey Recall, save that” to keep the preceding minute, or “Hey Recall, start a passage” before improvising. Find all commands under Live & saved → Voice commands. Rate clips to tune later selections.\n\n"
                 +"With full audio off, ordinary audio expires from memory. Archive & sync can retain the complete audio, and Text journal can retain the recognized words. An interrupted microphone creates a coverage gap until input returns. Pause releases the microphone. Resume starts a new audio segment and marks the break.")
             .setPositiveButton("Got it",null).show();
     }

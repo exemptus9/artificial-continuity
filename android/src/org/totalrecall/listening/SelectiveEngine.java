@@ -41,6 +41,38 @@ public final class SelectiveEngine {
     public interface Listener {
         void onClip(Clip clip);
         void onPauseRequested();
+        default void onVoice(String message,boolean wake) {}
+        default void onFlag(String reason) {}
+    }
+
+    static final String[] WAKES={"hey recall","total recall","lexi","hey lexi"};
+    static final String[][] COMMANDS={
+        {"Save recent audio","save that","save this","keep that","remember that","save the last minute","keep the last minute","save this idea","save that line","save that poem"},
+        {"Recover a missed moment","you missed one","you missed that"},
+        {"Start a passage","start a passage","start a poem","start a story","start a draft"},
+        {"Finish and save the passage","finish passage","finish the poem","finish the story","finish the draft"},
+        {"Pause the microphone","pause recall","pause recording","stop listening","stop recording"}
+    };
+    static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
+    private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
+    static int actionFor(String words){
+        String command=words.replaceFirst("^(?:(?:could|can|would) you |i want (?:you )?to )?(?:please )?","").replaceFirst(" (?:please|for me)$","");
+        for(int i=0;i<COMMANDS.length;i++)
+            for(int j=1;j<COMMANDS[i].length;j++)if(command.equals(COMMANDS[i][j]))return i;
+        if(command.matches("(?:keep|save) (?:the |that )?last (?:minute|moment)"))return 0;
+        if(command.matches("(?:stop|pause) (?:total recall|recall|recording|listening)"))return 4;
+        return -1;
+    }
+    static boolean grammarMatch(String words){
+        if(words==null||words.contains("[unk]"))return false;
+        java.util.regex.Matcher m=WAKE.matcher(words);
+        String rest=m.find()?words.substring(m.end()):words;
+        return rest.isEmpty()||actionFor(rest)>=0;
+    }
+    static String guide(){
+        StringBuilder guide=new StringBuilder("Say Hey Recall, Total Recall, or Lexi. A two-note chime acknowledges the wake word. Speak the command immediately or within eight seconds.\n");
+        for(String[] row:COMMANDS)guide.append("\n").append(row[0]).append(" · ").append(String.join(", ",Arrays.copyOfRange(row,1,row.length)));
+        return guide.append("\n\nSave and missed-moment commands also work alone. Resume from the panel or notification while the microphone is off.").toString();
     }
 
     public static final class Clip {
@@ -196,6 +228,12 @@ public final class SelectiveEngine {
             lines.add(candidate);
             newer=past.at;
         }
+        if(lines.size()>=2){
+            Line prior=lines.get(1);
+            if(now.words.length>=5 && prior.words.length>=5 && similarLength(now.rhythm,prior.rhythm)
+                && rhymes(now.end,prior.end) && (alliterates(now)||alliterates(prior)))
+                return new Hit(POETRY,"Two similarly paced lines rhyme and one also clusters initial sounds.",5);
+        }
         if(lines.size()<3)return null;
         Line prev=lines.get(1), oldest=lines.get(2);
         if(!similarLength(now.rhythm,prev.rhythm)||!similarLength(prev.rhythm,oldest.rhythm))return null;
@@ -204,6 +242,8 @@ public final class SelectiveEngine {
         if(lines.size()==4 && rhymes(now.end,oldest.end) && rhymes(prev.end,lines.get(3).end)
                 && similarLength(oldest.rhythm,lines.get(3).rhythm))
             return new Hit(POETRY,"Four similarly paced phrases form an alternating end-rhyme pattern.",5);
+        if(repeatedOpening(now,prev) && repeatedOpening(prev,oldest) && now.words.length>=5)
+            return new Hit(POETRY,"Three similarly paced lines repeat an opening with different endings.",5);
         int soundPatterns=(alliterates(now)?1:0)+(alliterates(prev)?1:0)+(alliterates(oldest)?1:0);
         if(soundPatterns>=2 && (rhymes(now.end,prev.end)||rhymes(now.end,oldest.end)
                 || repeatedOpening(now,prev) || repeatedOpening(prev,oldest) || soundPatterns==3))
@@ -333,7 +373,9 @@ public final class SelectiveEngine {
     private final List<String> keptWords = new ArrayList<>();
     private long at, lastLoud, triggerAt, start, previousEnd;
     private long lastVoiceCommand = -10L * RATE;
-    private boolean active, stopped, heldVoiceCommand;
+    private boolean active, stopped, heldVoiceCommand,passage,wakeAnnounced;
+    private int lastAction=-1;
+    private long awakeUntil=-1;
     private String interim = "";
     private long interimAt = -1, scoredPartialAt = -3L * RATE;
     private int lastPartialLength;
@@ -382,12 +424,13 @@ public final class SelectiveEngine {
             at += n;
             offset += n;
             if (energy > (long) n * 270 * 270) lastLoud = at;
-            if (active && (length == MAX_CLIP ||
-                (at - triggerAt >= MIN_TAIL && at - lastLoud >= END_SILENCE))) {
+            if (active && (length == MAX_CLIP || (passage && length>=RATE*30) || (!passage &&
+                (at - triggerAt >= MIN_TAIL && at - lastLoud >= END_SILENCE)))) {
                 boolean continueVerse = length == MAX_CLIP && tags.contains(POETRY)
                     && at - triggerAt <= 30L * RATE && at - lastLoud < END_SILENCE;
                 commit();
-                if (continueVerse && !stopped) {
+                if(passage && !stopped){select(POETRY,"Ongoing requested passage.",0);keptWords.clear();}
+                else if (continueVerse && !stopped) {
                     select(POETRY, "Continuation of the selected passage after the clip length limit.", 0);
                     keptWords.clear(); // the next final utterance is indexed in the new chunk
                 }
@@ -408,23 +451,55 @@ public final class SelectiveEngine {
             if (isFinal) clearInterim();
             return;
         }
-        boolean pause = n.matches("(?:hey )?(?:lexi|lexie|lexy|alexi|lexy daimon) (?:pause|stop) (?:total recall|recall|recording|listening)");
-        boolean keep = n.matches("(?:(?:hey )?(?:lexi|lexie|lexy|alexi) )?(?:keep|save) (?:the |that )?last (?:minute|moment)");
-        boolean missed = n.matches("(?:(?:hey )?(?:lexi|lexie|lexy|alexi) )?you missed (?:one|that)");
-        if (pause) {
-            pause();
-            listener.onPauseRequested();
-            return;
-        }
-        if (keep || missed) {
-            clearInterim();
-            if (!heldVoiceCommand && at - lastVoiceCommand >= RATE * 2) {
-                if (keep) keep(); else missed();
-                lastVoiceCommand = at;
+        if(isFinal){
+            java.util.regex.Matcher tail=TRAILING_REQUEST.matcher(n);
+            if(tail.find() && actionFor(tail.group(2))>=0){
+                String leading=n.substring(0,tail.start());
+                text(leading,true);
+                n=n.substring(tail.start()+1);
             }
-            heldVoiceCommand = !isFinal;
+        }
+        java.util.regex.Matcher prefix=WAKE.matcher(n);
+        boolean addressed=prefix.find();
+        String request=addressed?n.substring(prefix.end()):n;
+        int action=actionFor(request);
+        if(addressed && !wakeAnnounced && !(action>=0 && action==lastAction && at-lastVoiceCommand<RATE*2)){
+            listener.onVoice("Wake heard · ready for a command",true);
+            awakeUntil=at+RATE*8;wakeAnnounced=true;
+        }
+        if(addressed && request.isEmpty()){
+            if(isFinal)wakeAnnounced=false;
             return;
         }
+        if(action>=0 && (addressed || at<=awakeUntil || action<=1 || (action==3 && passage))){
+            // Wait for an endpoint on short conversational phrases so "save that for later"
+            // cannot become a save while its sentence is still being decoded.
+            if(!isFinal && (!addressed || (action!=4 && !request.endsWith("last minute"))))return;
+            if(action!=lastAction || at-lastVoiceCommand>=RATE*2){
+                lastAction=action;lastVoiceCommand=at;
+                clearInterim();
+                if(action==0||action==1){
+                    listener.onVoice(at==0?"No audio buffered yet":"Command heard · saving recent audio",false);
+                    if(action==0)keep();else missed();
+                }else if(action==2){
+                    if(!passage){passage=true;select(POETRY,"You started a passage by voice.",RATE*4);}
+                    listener.onVoice("Capturing passage · say finish passage to save",false);
+                }else if(action==3){
+                    if(passage){passage=false;commit();listener.onVoice("Passage ended",false);}
+                    else listener.onVoice("No passage is open",false);
+                }else{
+                    if(passage){passage=false;commit();}
+                    listener.onVoice("Pause command heard",false);pause();listener.onPauseRequested();
+                }
+            }
+            if(isFinal){wakeAnnounced=false;awakeUntil=-1;}
+            heldVoiceCommand=!isFinal;return;
+        }
+        if(isFinal && (addressed || at<=awakeUntil)){
+            listener.onVoice("Command unclear · try save that or start a passage",false);
+            awakeUntil=-1;
+        }
+        if(isFinal)wakeAnnounced=false;
         // A fast uninterrupted passage may not endpoint for many seconds. Score a growing
         // hypothesis sparingly, and require two independent signals (or a clear coining cue).
         if (!isFinal) {
@@ -455,16 +530,19 @@ public final class SelectiveEngine {
         if (hit != null) select(hit.category, hit.reason, hit.category.equals(POETRY) ? RATE * 45 : CONTEXT);
     }
 
+    boolean passageOpen(){return passage;}
     public synchronized void keep() {
         if (stopped || at == 0) return;
         select(MANUAL, "You asked to keep the preceding minute.", RATE * 60);
         commit();
+        if(passage)select(POETRY,"Ongoing requested passage.",0);
     }
 
     public synchronized void missed() {
         if (stopped || at == 0) return;
         select(MISSED, "You marked a missed moment; the preceding buffer was retained.", WINDOW);
         commit();
+        if(passage)select(POETRY,"Ongoing requested passage.",0);
     }
 
     /** Stop normally, preserving a selected clip. Never materialize the ordinary ring buffer. */
@@ -527,6 +605,7 @@ public final class SelectiveEngine {
             start -= extra;
             length += extra;
         }
+        if(!tags.contains(category) && !manual)listener.onFlag(category);
         tags.add(category);
         reasons.add(reason);
         triggerAt = at;
@@ -589,6 +668,11 @@ public final class SelectiveEngine {
                 "build", "app", "chapter", "draft", "prototype", "feature", "instructions");
         boolean edit = s.matches("(?:let's |please |we should |i'll )?(?:put|move|change|rename|keep|remove|replace|add) .+");
         List<Hit> options = new ArrayList<>();
+        if(has(s,"once upon a time","here is a story","here is a poem","the opening line","a line for my poem","here is the first line","the story begins","let me tell you a story","a line just came to me","here is a stanza"))
+            options.add(new Hit(POETRY,"A spoken introduction to a poem, story or draft.",7));
+        if(!earlier.isEmpty() && has(earlier,"by the time","that winter","that summer","years later","as a child","when i was little","i still remember")
+                && has(s,"i could hear","i could smell","i could feel","it sounded like","it smelled like","the sound of","the smell of"))
+            options.add(new Hit(POETRY,"A scene-setting memory is followed by a sensory detail.",5));
         Hit invented = coinage(s, earlier);
         if (invented != null) options.add(invented);
         Hit verse = verse(current);

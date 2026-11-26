@@ -60,7 +60,7 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
     if (start is None)!=(end is None) or start is not None and not 0<=start<end<=253402300799999:
         raise Failure(400,"Invalid date filter")
     where=[];args=[]
-    laptop="(a.kind='segment' AND a.id GLOB 'laptop-[0-9]*' OR a.kind='clip' AND a.id GLOB 'desk-keep-[0-9]*')"
+    laptop="(a.kind IN ('segment','journal') AND a.id GLOB 'laptop-*' OR a.kind='clip' AND a.id GLOB 'desk-keep-[0-9]*')"
     if device not in ("all","laptop","other"):raise Failure(400,"Invalid device filter")
     if device!="all":where.append(laptop if device=="laptop" else "NOT "+laptop)
     if kind!="all": where.append("a.kind=?");args.append(kind)
@@ -106,6 +106,20 @@ def recordings_at(arc,instant):
                      started+cast(json_extract(metadata,'$.durationMs') AS INTEGER)>?)
             ORDER BY CASE kind WHEN 'segment' THEN 0 ELSE 1 END,started DESC,id LIMIT 13""",(instant,)*4).fetchall()
         return {"items":[dict(row) for row in rows[:12]],"more":len(rows)>12}
+
+def overlaps(arc,kind,uid):
+    if kind not in ("segment","clip") or not UID.fullmatch(uid):raise Failure(400,"Invalid recording")
+    def laptop(id):return bool(re.match(r"^(?:laptop-|desk-keep-)\d",id))
+    with arc.connection() as db:
+        sql="SELECT id,kind,startedAtMillis,durationMs,bytes FROM ("+BASE_SQL+")"
+        focus=db.execute(sql+" WHERE id=? AND kind=?",(uid,kind)).fetchone()
+        if focus is None:raise Failure(404,"Recording no longer in archive")
+        start=focus["startedAtMillis"];end=start+focus["durationMs"]
+        other="(id GLOB 'laptop-[0-9]*' OR id GLOB 'desk-keep-[0-9]*')"
+        rows=db.execute(sql+" WHERE kind IN ('clip','segment') AND "+("NOT " if laptop(uid) else "")+other+
+            " AND startedAtMillis<? AND startedAtMillis+durationMs>? ORDER BY MIN(startedAtMillis+durationMs,?)-MAX(startedAtMillis,?) DESC,id LIMIT 24",(end,start,end,start))
+        return {"items":[dict(dict(r),device="Mint laptop" if laptop(r["id"]) else "Phone or other input",
+            overlapMs=min(end,r["startedAtMillis"]+r["durationMs"])-max(start,r["startedAtMillis"])) for r in rows]}
 
 def lookup(arc,kind,uid):
     if kind not in ("clip","segment","journal") or not UID.fullmatch(uid): raise Failure(404,"Missing item")
@@ -296,6 +310,7 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 start=param("from",None);end=param("to",None)
                 return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
                     int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all")))
+            if path=="/api/overlaps":return self.json(200,overlaps(arc,param("kind",""),param("id","")))
             if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0"))))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))
             route=re.fullmatch(r"/api/(items|media)/(segment|journal|clip)/([A-Za-z0-9_-]{1,128})",path)

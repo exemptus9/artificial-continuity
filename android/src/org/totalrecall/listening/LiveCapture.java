@@ -16,7 +16,11 @@ public final class LiveCapture {
     private static long partialAt=-WINDOW,lastLevel=-1000;
     private static float level;
     private static long finalSequence, sessionStart;
-    private static int savedCount;
+    private static int savedCount, flags;
+    private static long wordCount,eventAt;
+    private static String event="";
+    static synchronized void feedback(String message){event=bounded(message,160);eventAt=now();}
+    static synchronized void flag(String category){flags++;feedback("Flagged · "+category);}
     private static long journalId=-1,voiceSession,aliasVersion;
     private static boolean groupsReady;
     private static final java.util.Map<Integer,String> names=new java.util.TreeMap<>();
@@ -42,16 +46,29 @@ public final class LiveCapture {
         String attributed(int i){String source=who(i);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
         public final float level;
         public final long finalSequence, sessionSeconds;
-        public final int savedCount;
+        public final int savedCount,flags; public final long words; public final String event;
         public final boolean receiving;
         public final boolean active,waiting;
         Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
             partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);recognizedAt=Collections.unmodifiableList(times);level=meter;active=on;waiting=wait;
             voices=Collections.unmodifiableList(ids);names=new java.util.TreeMap<>(LiveCapture.names);
             voiceSession=LiveCapture.voiceSession;journalId=LiveCapture.journalId;aliasVersion=LiveCapture.aliasVersion;groupsReady=LiveCapture.groupsReady;
-            finalSequence=LiveCapture.finalSequence; savedCount=LiveCapture.savedCount;
+            finalSequence=LiveCapture.finalSequence; savedCount=LiveCapture.savedCount;flags=LiveCapture.flags;words=wordCount;event=t-eventAt<=8000?LiveCapture.event:"";
             sessionSeconds=on?Math.max(0,t-sessionStart)/1000:0;
             receiving=on&&!wait&&t-lastLevel<750;
+        }
+        String scene(long after){
+            int first=(int)Math.max(0,finals.size()-Math.max(0,finalSequence-after));
+            int prior=0,switches=0;boolean me=false,media=false;
+            for(int i=first;i<voices.size();i++){
+                int v=voices.get(i);if(v<=0)continue;
+                if(prior!=0 && prior!=v)switches++;prior=v;
+                String label=who(i);me|=label.endsWith(" · Me");media|=label.endsWith(" · Media");
+            }
+            if(media && me)return "Your voice and a source you marked as media were both heard.";
+            if(media)return "A voice you marked as media was heard.";
+            if(switches>=2)return "Possible exchange · distinct voice groups took turns.";
+            return "";
         }
         /** Only show lines completed after the overlay became visible. */
         String overlayWords(long after){
@@ -77,13 +94,13 @@ public final class LiveCapture {
         ArrayList<Integer> ids=new ArrayList<>();for(Line line:recent){lines.add(line.words);times.add(line.at);ids.add(line.voice); }
         return new Snapshot(partial,lastSave,reason,state,lines,times,ids,level,active,waiting,t);
     }
-    static synchronized void start(){clear();savedCount=0;sessionStart=now();active=true;waiting=false;state="Preparing microphone";}
+    static synchronized void start(){clear();savedCount=0;flags=0;wordCount=0;sessionStart=now();active=true;waiting=false;state="Preparing microphone";}
     static synchronized void state(String label){state=bounded(label,200);}
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){voiceSession(-1,false);recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
-    static synchronized void saved(String what,String why){if(active){savedCount++;lastSave=bounded(what,120);reason=bounded(why,250);}}
+    private static void clear(){voiceSession(-1,false);event="";recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    static synchronized void saved(String what,String why){if(active){savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
         wordsAt(text,complete,t,0);
@@ -98,7 +115,7 @@ public final class LiveCapture {
         if(!value.isEmpty()){
             if(recent.size()==LIMIT)recent.removeFirst();
             if(voice>0)names.putIfAbsent(voice,defaultVoice(voice));
-            finalSequence++;recent.addLast(new Line(t,value,voice));
+            wordCount+=value.split("\\s+").length;finalSequence++;recent.addLast(new Line(t,value,voice));
         }
     }
     static synchronized void samples(short[] pcm,int count){meterAt(pcm,count,now());}

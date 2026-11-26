@@ -285,7 +285,7 @@ async function archive(ver){if(!$('results'))makeArchive();const response=await 
   const count=response.total?`${state.offset+1}–${Math.min(state.offset+response.items.length,response.total)} of ${plural(response.total,'item')}`:'0 items';const pager=add(e('div','pager'),e('span','',count),response.total>limit?add(e('div'),prev,next):null);
   $('results').replaceChildren(...nodes,pager);}
 async function refresh(){const ver=++state.version;notice();$('view').setAttribute('aria-busy','true');try{if(state.view==='overview')await dashboard(ver);else if(state.view==='activity')await activity(ver);else if(state.view==='review')await reviewPage(ver);else await archive(ver);}catch(err){if(ver===state.version){notice(err.message);if(state.view==='archive'&&$('results'))$('results').replaceChildren();else $('view').replaceChildren();}}finally{if(ver===state.version)$('view').setAttribute('aria-busy','false');}}
-function route(){let r=location.hash.slice(1);if(r==='content')return;if(!Object.hasOwn(viewInfo,r))r='overview';state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
+function route(){let r=location.hash.slice(1);if(r==='content')return;if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
   for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===r)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
   $('view').replaceChildren(e('p','empty','Loading…'));refresh();}
 function contentBlock(title,text,css=''){return add(e('section','detail-block'),e('h3','',title),e('p',css,text));}
@@ -341,6 +341,87 @@ function player(item,at){const audio=e('audio');audio.controls=true;audio.preloa
   const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();if(ctx)ctx.close().catch(()=>{});audio.removeAttribute('src');audio.load();};
   return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),focus,download),help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
 // The journal export uses the phone's local date plus its UTC offset at recognition.
+// Compare matching waveforms in two separated windows. Repetitive or weak matches keep
+// their independent channels and clock alignment rather than being summed as speech.
+function matchMics(a,b,rate){
+  const n=Math.min(a.length,b.length),span=Math.round(.30*rate),margin=Math.round(.30*rate);
+  if(n<rate*2)return null;
+  function measure(center){
+    let strongest=-1,begin=center;
+    for(let start=center;start+span+margin<n&&start<center+rate*.35;start+=Math.round(rate*.04)){
+      let e=0;for(let j=0;j<span;j+=13){const k=start+j;e+=(a[k]-a[k-1])**2;}
+      if(e>strongest){strongest=e;begin=start;}
+    }
+    if(strongest<1e-5)return null;
+    function score(lag,stride){
+      let ab=0,aa=0,bb=0;
+      for(let j=0;j<span;j+=stride){const k=begin+j,l=k+lag,x=a[k]-a[k-1],y=b[l]-b[l-1];aa+=x*x;bb+=y*y;ab+=x*y;}
+      return ab/Math.sqrt(aa*bb||1);
+    }
+    let peaks=[],best=0,lag=0;
+    for(let d=-margin;d<=margin;d++){const r=score(d,53);peaks.push(r);if(Math.abs(r)>Math.abs(best)){best=r;lag=d;}}
+    let other=0;for(let i=0;i<peaks.length;i++)if(Math.abs(i-margin-lag)>rate*.01)other=Math.max(other,Math.abs(peaks[i]));
+    const fine=score(lag,5);return Math.abs(fine)>.48&&Math.abs(best)>other+.06?{lag,sign:Math.sign(fine)}:null;
+  }
+  const first=measure(Math.max(margin+1,Math.floor(n*.17))),last=measure(Math.min(n-margin-span-1,Math.floor(n*.66)));
+  if(!first||!last||first.sign!==last.sign||Math.abs(first.lag-last.lag)>rate*.0015)return null;
+  return {lag:Math.round((first.lag+last.lag)/2),sign:first.sign};
+}
+function micWave(a,b,match,mode){
+  const lag=match?.lag||0,begin=Math.max(0,-lag),end=Math.min(a.length,b.length-lag);
+  const channels=mode==='stereo'?2:1,pcm=new ArrayBuffer((end-begin)*channels*2),out=new DataView(pcm);
+  let offset=0;function sample(x){out.setInt16(offset,Math.round(Math.max(-1,Math.min(1,x))*32767),true);offset+=2;}
+  for(let i=begin;i<end;i++){
+    const left=a[i],right=b[i+lag];
+    if(mode==='stereo'){sample(left);sample(right);}
+    else sample(mode==='first'?left:mode==='second'?right:(left+right*match.sign)/2);
+  }
+  return new Blob([audioHeader(1,channels,16000,16,pcm.byteLength),pcm],{type:'audio/wav'});
+}
+function micComparison(full,primary){
+  const box=e('details','detail-block'),summary=e('summary','','Compare microphones'),options=e('div'),status=e('p','section-note');
+  const controller=new AbortController(),signal=controller.signal,previous=modalCleanup;
+  let preview=null,objectUrl=null,base=null,second=null,match=null;
+  function release(){if(preview){preview.pause();preview.removeAttribute('src');preview.load();}if(objectUrl){URL.revokeObjectURL(objectUrl);objectUrl=null;}}
+  modalCleanup=()=>{controller.abort();release();if(previous)previous();};
+  box.append(summary,status,options);
+  box.ontoggle=async()=>{
+    if(!box.open||box.dataset.loaded)return;box.dataset.loaded='1';status.textContent='Looking for another microphone during this recording…';
+    try{
+      const source=await get('/api/overlaps',{kind:full.kind,id:full.id});if(signal.aborted)return;
+      status.textContent=source.items.length?'Choose an overlap to compare up to 20 seconds near the playhead.':'No recording from the other device overlaps this one in this archive.';
+      for(const peer of source.items){
+        const label=peer.device+' · '+dateTime(peer.startedAtMillis)+' · '+duration(peer.overlapMs);
+        const select=button(label,async()=>{
+          options.querySelectorAll('button').forEach(x=>x.disabled=true);release();status.textContent='Reading both recordings and checking their waveforms…';
+          try{
+            const start=Math.max(full.startedAtMillis,peer.startedAtMillis),end=Math.min(full.startedAtMillis+full.durationMs,peer.startedAtMillis+peer.durationMs);
+            const at=Math.max(start,Math.min(full.startedAtMillis+(primary?.currentTime||0)*1000,end-20000)),seconds=Math.min(20,(end-at)/1000);
+            async function track(item){
+              const t=(at-item.startedAtMillis)/1000,blob=await excerptBlob(item,t,t+seconds,signal);
+              const ctx=new OfflineAudioContext(1,Math.max(1,Math.round(seconds*16000)),16000);
+              const decoded=await ctx.decodeAudioData(await blob.arrayBuffer());
+              const src=ctx.createBufferSource();src.buffer=decoded;src.connect(ctx.destination);src.start();
+              return (await ctx.startRendering()).getChannelData(0);
+            }
+            [base,second]=await Promise.all([track(full),track(peer)]);if(signal.aborted)return;
+            match=matchMics(base,second,16000);
+            status.textContent=match?'Matching sound in two windows · relative offset '+Math.round(match.lag/16)+' ms.':'Clock-aligned only · a common sound could not be verified.';
+            options.replaceChildren();const mode=e('select');mode.setAttribute('aria-label','Microphone playback');
+            for(const [key,name] of [['stereo','Both mics · left and right'],['first','This recording only'],['second','Other microphone only'],...(match?[['blend','Blend aligned microphones']]:[])]){
+              const o=e('option','',name);o.value=key;mode.append(o);}
+            preview=e('audio');preview.controls=true;preview.setAttribute('aria-label','Microphone comparison');
+            preview.onplay=()=>primary?.pause();
+            const download=e('a','btn','Download comparison WAV');
+            function render(){release();objectUrl=URL.createObjectURL(micWave(base,second,match,mode.value));preview.src=objectUrl;download.href=objectUrl;download.download='TotalRecall-'+mode.value+'-'+Math.round(at)+'.wav';}
+            mode.onchange=render;render();options.append(mode,preview,download,button('Choose another overlap',()=>{release();options.replaceChildren();delete box.dataset.loaded;box.ontoggle();}));
+          }catch(err){if(!signal.aborted){status.textContent=err.message;options.querySelectorAll('button').forEach(x=>x.disabled=false);}}
+        });options.append(select);
+      }
+    }catch(err){if(!signal.aborted){status.textContent=err.message;delete box.dataset.loaded;}}
+  };return box;
+}
+
 function journalLines(text) {
   const result=[],pattern=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$/;
   for(const line of text.split('\n')){
@@ -475,6 +556,7 @@ async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalClean
     const d=e('h2','',full.review?.name||full.title||full.category||kindName(full.kind));d.id='detail-title';const meta=add(e('div','detail-meta'),e('span','',dateTime(full.startedAtMillis)),e('span','','·'),e('span','',full.kind==='journal'?bytes(full.bytes):duration(full.durationMs)));
     const nodes=[d,meta];if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
     const playerNode=nodes.find(node=>node?.classList?.contains('player'));
+    if(playerNode)nodes.push(micComparison(full,playerNode.querySelector("audio")));
     const story=storyPanel(full);nodes.push(story.box,situationPanel(full,playerNode?.querySelector('audio'),story));
     if(full.correction)nodes.push(contentBlock('Your correction',full.correction));if(full.note)nodes.push(contentBlock('Your note',full.note));
     if(full.kind==='clip')nodes.push(writingNote(full));

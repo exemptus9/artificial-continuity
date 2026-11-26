@@ -183,13 +183,13 @@ public final class RecallOverlay {
             if(missed!=null)missed.setEnabled(ready);
             int level=Math.round(s.level*100);
             meter.setProgress(s.waiting?0:level);
-            String headline=s.waiting?"Waiting for microphone":ready?"Listening":s.state;
+            String headline=s.waiting?"Waiting for microphone":!s.event.isEmpty()?s.event:s.state.startsWith("Keeping")?"Capturing clip":ready?"Listening":s.state;
             if(s.savedCount>requestedAtCount)requestUntil=0;
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
             showText(status,headline+"  ·  "+elapsed);
             String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
-            String contextKey=s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
+            String contextKey=s.aliasVersion+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
             if(detail!=null && !contextKey.equals(lastContextLine)){
                 lastContextLine=contextKey;liveCue="";
                 if(!s.waiting && s.finalSequence>=firstVisibleFinal)try{
@@ -197,6 +197,8 @@ public final class RecallOverlay {
                     int count=(int)Math.min(s.finals.size(),s.finalSequence-firstVisibleFinal);
                     for(int i=s.finals.size()-count;i<s.finals.size();i++)context.add(s.finals.get(i),"");
                     liveCue=context.interpretation();
+                    String scene=s.scene(firstVisibleFinal);
+                    if(!scene.isEmpty())liveCue=liveCue.isEmpty()?scene:liveCue+" "+scene;
                     if(liveCue.isEmpty() && !s.partial.isEmpty()){
                         Situation tentative=new Situation(app);tentative.add(s.partial,"");
                         if(!tentative.cue().isEmpty())liveCue="Tentative · "+tentative.cue();
@@ -204,9 +206,10 @@ public final class RecallOverlay {
                 }catch(java.io.IOException ignored){}
             }
             if(detail!=null){
-                String state=s.waiting?s.state:ready?"Mic level "+level+"%  ·  "+s.savedCount+" saved this session":s.state;
-                if(!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
-                if(!liveCue.isEmpty())state+="\n"+liveCue;
+                String state=s.waiting?s.state:s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
+                if(expanded)state+=" · Journal "+(JournalStore.enabled(app)?"on":"off");
+                if(expanded&&!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
+                state+="\nSituation · "+(liveCue.isEmpty()?"Waiting for context":liveCue);
                 showText(detail,state);
             }
             if(caption!=null){
@@ -239,6 +242,10 @@ public final class RecallOverlay {
             root.setBackground(bg);root.setPadding(dp(6),dp(4),dp(6),dp(4));root.setElevation(dp(6));root.setFilterTouchesWhenObscured(true);
             status=label(resumePanel()?"Paused · microphone off":preview?"Preview · microphone off":"Opening microphone",13);
             status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+            root.removeView(status);
+            LinearLayout header=row(root);header.addView(status,new LinearLayout.LayoutParams(0,-2,1));
+            TextView size=control(header,expanded?"↙":"↗",expanded?"Shrink panel":"Expand panel",v->resize());
+            size.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));size.setTextSize(23);
             if(!preview){
                 meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);
                 meter.setMax(100);meter.setContentDescription("Live microphone level");
@@ -258,10 +265,11 @@ public final class RecallOverlay {
             }
             LinearLayout nav=row(root);
             control(nav,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
-            control(nav,expanded?"Shrink panel":"Expand panel",expanded?"Shrink to essential controls":"Expand for feedback and more actions",v->resize());
+            control(nav,"Full journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
+            if(!preview)detail=label("",12);
             if(expanded){
                 if(!preview){
-                    detail=label("",13);
+                    control(row(root),"Voice commands","Show wake words and available commands",v->newGuide());
                     LinearLayout tools=row(root);
                     missed=control(tools,"Mark missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Marking missed moment…"));
                     words=control(tools,showWords?"Hide captions":"Show captions",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));
@@ -283,6 +291,10 @@ public final class RecallOverlay {
         void resize(){
             expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
             rebuild();
+        }
+        void newGuide(){
+            Intent i=new Intent(app,CaptureReviewActivity.class).putExtra("commands",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            try{app.startActivity(i);}catch(RuntimeException e){Toast.makeText(app,"Could not open voice commands",Toast.LENGTH_SHORT).show();}
         }
         void openApp(boolean start){openScreen(RecallListenActivity.class,start);}
         void openScreen(Class<?> destination,boolean start){

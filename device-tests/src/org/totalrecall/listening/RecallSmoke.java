@@ -316,16 +316,16 @@ public final class RecallSmoke extends Instrumentation {
                 SpeechChecks off=feedWindow(window,tick,fixture,true);
                 require(off.partial && off.finalized && off.level,"Production PCM pipeline did not display a partial, a final and audio level");
                 require(journals.sessions().size()==initialSessions,"Disabled journal retained everyday speech");
-                click(waitText(a,"Text journal · off",10000));
-                tapNode("Save full-session text");tapNode("Close");
+                click(waitText(a,"Full journal · off",10000));
+                tapNode("Save all recognized speech on this phone");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
                 require(JournalStore.enabled(target),"Journal switch failed to opt in");
                 feedWindow(window,tick,fixture,true);
                 List<JournalStore.Session> sessions=journals.sessions();
                 require(sessions.size()==initialSessions+1,"Missing or duplicate journal session");
                 session=sessions.get(0).id;
                 require(sessions.get(0).count==1,"Expected one final utterance in opted-in journal");
-                click(waitText(a,"Text journal · on",10000));
-                tapNode("Save full-session text");tapNode("Close");
+                click(waitText(a,"Full journal · on",10000));
+                tapNode("Save all recognized speech on this phone");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
                 require(!JournalStore.enabled(target),"Journal switch failed to opt out");
                 feedWindow(window,tick,fixture,false);
                 require(journals.sessions().size()==initialSessions+1 && journals.sessions().get(0).count==1,
@@ -437,7 +437,7 @@ public final class RecallSmoke extends Instrumentation {
         require(n.performAction(AccessibilityNodeInfo.ACTION_CLICK),"Control rejected click: "+label);
     }
     private void overlay()throws Exception{
-        String app=target.getPackageName(), handle="Expand for feedback and more actions";
+        String app=target.getPackageName(), handle="Expand panel";
         Activity a=launch();
         try{
             readWindows();
@@ -458,7 +458,7 @@ public final class RecallSmoke extends Instrumentation {
                 Rect after=new Rect();n.getBoundsInScreen(after);
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
-            tapNode(handle);waitNode("Pause recording and release the microphone");waitNode("Shrink to essential controls");
+            tapNode(handle);waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
             tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");
             tapNode("Show live captions as speech is recognized");waitNode("Hide live captions; transcription continues");
             deviceShell("input keyevent KEYCODE_HOME");tapNode("Open the main listening screen");
@@ -473,7 +473,7 @@ public final class RecallSmoke extends Instrumentation {
                 return !attached[0];
             },10000,"Overlay window remained attached after the display locked");
             deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
-            waitNode("Shrink to essential controls");tapNode("Shrink to essential controls");waitNode(handle);tapNode(handle);tapNode("Dismiss the overlay and keep the current microphone state");
+            waitNode("Shrink panel");tapNode("Shrink panel");waitNode(handle);tapNode(handle);tapNode("Dismiss the overlay and keep the current microphone state");
             until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
             require(RecallService.isListening(),"Hiding the overlay stopped listening");
             passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, locking hid the window, and Hide left the microphone running.");

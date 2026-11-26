@@ -14,8 +14,8 @@ MODEL_DIR = Path("/usr/share/pocketsphinx/model/en-us")
 
 class WordFeed:
     """Nonblocking audio tap. A closed or slow overlay never delays capture."""
-    def __init__(self, root):
-        self.path = root / "live-words.fifo"
+    def __init__(self, root, name="live-words.fifo"):
+        self.path = root / name
         self.fd = None
         self.retry = 0
 
@@ -44,8 +44,9 @@ class WordFeed:
 
 
 class LiveWords:
-    def __init__(self, root):
-        self.path = root / "live-words.fifo"
+    def __init__(self, root, name="live-words.fifo", on_final=None):
+        self.on_final=on_final
+        self.path = root / name
         self.line = "Starting offline recognition…"
         self.done = threading.Event()
         self.path.unlink(missing_ok=True)
@@ -58,6 +59,7 @@ class LiveWords:
         self.done.set()
         self.path.unlink(missing_ok=True)
         self.line = ""
+        self.thread.join(timeout=2)
 
     def packets(self):
         buf = bytearray()
@@ -114,6 +116,7 @@ class LiveWords:
                     if hyp and hyp.hypstr.strip():
                         self.line = " ".join(hyp.hypstr.split()[-22:])
                         last_text = now
+                        if end and self.on_final and not self.done.is_set():self.on_final(hyp.hypstr.strip())
                     elif now - last_text > 5:
                         self.line = "Listening for words…"
                     last_result = now
