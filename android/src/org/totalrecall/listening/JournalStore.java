@@ -110,7 +110,7 @@ public final class JournalStore extends SQLiteOpenHelper {
     }
     void finish(long id,String why){if(id<0)return;synchronized(GUARD){
         getWritableDatabase().update("sessions",ending(why,System.currentTimeMillis()),"id=? AND end=0",new String[]{String.valueOf(id)});
-    }}
+    } ArchiveSync.schedule(app);}
     public static final class Session{
         public final long id,startMs,endMs;public final int count;public final String endReason;
         Session(Cursor c){id=c.getLong(0);startMs=c.getLong(1);endMs=c.getLong(2);count=c.getInt(3);endReason=c.getString(4);}

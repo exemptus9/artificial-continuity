@@ -580,7 +580,7 @@ def install_runtime():
     if MODULES!=ROOT:
         known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
         pending={};accepted={}
-        for name in ("recall_archive.py","recall_web.py","recall_review.py","laptop_capture.py","live_words.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
+        for name in ("recall_archive.py","recall_web.py","situation.py","recall_review.py","laptop_capture.py","live_words.py","archive_backup.py","web/situation-rules.tsv","web/index.html","web/app.css","web/app.js"):
             origin=MODULES/name;dest=ROOT/name
             if not origin.is_file():continue
             if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")
@@ -888,7 +888,10 @@ def desktop(receive_at=None):
         preview.configure(state="normal");preview.delete("1.0","end")
         if selected():
             clip=detail(selected())
-            preview.insert("1.0",(clip["correction"]+"\n\nOriginal transcript: " if clip["correction"] else "")+
+            import situation
+            excerpts=situation.context_for(dict(clip,kind="clip"))
+            summary="\n".join(part["source"]+" · "+cue["label"]+" · “"+cue["quote"]+"”" for part in excerpts for cue in part["items"])
+            preview.insert("1.0",(summary+"\n\n" if summary else "")+(clip["correction"]+"\n\nOriginal transcript: " if clip["correction"] else "")+
                     clip["transcript"]+"\n\n"+clip["reason"]+("\n\n"+clip["note"] if clip["note"] else ""))
         else:
             preview.insert("1.0","Choose Import capture ZIP to bring selected moments from your phone.")

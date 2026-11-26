@@ -384,10 +384,53 @@ function writingNote(full){
   });
   return add(box,copy,status);
 }
+function evidenceRows(items,audio){
+  const group=e('div','situation-evidence');
+  for(const cue of items){
+    const row=e('div','detail-block'),name=e('strong','',cue.label);
+    row.append(name);
+    if(audio && Number.isFinite(cue.seconds)){
+      row.append(button('Play at '+cue.stamp,()=>{audio.currentTime=cue.seconds;audio.play().catch(()=>notice('Use the player to start playback.'));},'text-link'));
+    }else if(cue.stamp)row.append(e('span','row-sub','  '+cue.stamp));
+    row.append(e('p','','“'+cue.quote+'”'));group.append(row);
+  }
+  return group;
+}
+function situationPanel(full,audio){
+  const groups=full.situation||[];
+  if(!groups.length&&!audio)return null;
+  const box=e('section','detail-block');
+  box.append(e('h3','','Situation'));
+  for(const group of groups){
+    const cues=group.items.filter(cue=>cue.label!=='Source excerpt');
+    if(cues.length)box.append(e('p','row-sub',group.source),evidenceRows(cues,audio));
+    else box.append(e('p','section-note',group.source+' · no explicit situation cue found.'));
+  }
+  if(!audio)return box;
+  const report=e('div'),status=e('p','section-note');status.setAttribute('role','status');
+  let offset=0;
+  const review=button('Analyze original recording',async()=>{
+    review.disabled=true;status.textContent='Reading audio levels and transcribing English on this archive…';
+    try{
+      const r=await ownerAction('/api/analyze-recording',{kind:full.kind,id:full.id,offset});
+      if(!box.isConnected)return;
+      report.append(e('strong','',duration(r.start*1000)+' – '+duration((r.start+r.seconds)*1000)),
+        e('p','',r.abovePercent+'% of audio above −50 dBFS · longest quiet stretch '+r.quietSeconds+' s · peak '+(r.peakDbfs==null?'silence':r.peakDbfs+' dBFS')),
+        r.cues.length?evidenceRows(r.cues,audio):e('p','section-note','No words recognized in this range.'));
+      status.textContent='Speech and playback times are approximate. Background noise counts toward the sound level.';
+      if(r.next==null)review.hidden=true;
+      else{offset=r.next;review.textContent='Analyze next 10 minutes';}
+    }catch(err){status.textContent=err.message;}
+    finally{review.disabled=false;}
+  });
+  return add(box,review,status,report);
+}
 async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalCleanup=null;}const serial=++state.detailVersion;const dialog=$('detail');$('detail-kind').textContent=kindName(item.kind);$('detail-body').replaceChildren(e('p','empty','Loading item…'));if(!dialog.open)dialog.showModal();
   try{const full=await get(`/api/items/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`);if(serial!==state.detailVersion||!dialog.open)return;
     const d=e('h2','',full.review?.name||full.title||full.category||kindName(full.kind));d.id='detail-title';const meta=add(e('div','detail-meta'),e('span','',dateTime(full.startedAtMillis)),e('span','','·'),e('span','',full.kind==='journal'?bytes(full.bytes):duration(full.durationMs)));
     const nodes=[d,meta];if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
+    const playerNode=nodes.find(node=>node?.classList?.contains('player'));
+    nodes.push(situationPanel(full,playerNode?.querySelector('audio')));
     if(full.correction)nodes.push(contentBlock('Your correction',full.correction));if(full.note)nodes.push(contentBlock('Your note',full.note));
     if(full.kind==='clip')nodes.push(writingNote(full));
     if(full.review)nodes.push(filedWork(full));
@@ -413,3 +456,14 @@ async function openPairing(){
   $('detail-body').replaceChildren(title,help,reveal,message);if(!dialog.open)dialog.showModal();
 }
 window.addEventListener('pagehide',()=>{if($('detail').open)$('detail').close();$('detail-body').replaceChildren();});
+
+// Refresh light, read-only views while they're visible. Leave review edits, playback,
+// text selection and focused result rows in place.
+function updateVisible(){
+  if(document.hidden || $('detail').open || $('view').getAttribute('aria-busy')==='true' ||
+     state.view==='review' || document.getSelection()?.toString() ||
+     $('view').contains(document.activeElement))return;
+  refresh();
+}
+window.setInterval(updateVisible,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateVisible();});

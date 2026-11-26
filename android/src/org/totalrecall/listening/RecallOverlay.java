@@ -78,7 +78,7 @@ public final class RecallOverlay {
         boolean expanded,registered,visible,wasWaiting;
         long firstVisibleFinal,requestUntil;
         int requestedAtCount;
-        String requestLabel="";
+        String requestLabel="",lastContextLine="",liveCue="";
         int screenWidth;
         long expires;
         final BroadcastReceiver screen=new BroadcastReceiver() {
@@ -124,7 +124,7 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
-            root=null;caption=null;status=null;detail=null;meter=null;keep=null;missed=null;words=null;visible=false;
+            lastContextLine="";liveCue="";root=null;caption=null;status=null;detail=null;meter=null;keep=null;missed=null;words=null;visible=false;
         }
         int dp(int value){return (int)(value*app.getResources().getDisplayMetrics().density+0.5f);}
         int[] limits() {
@@ -167,13 +167,21 @@ public final class RecallOverlay {
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
             showText(status,headline+"  ·  "+elapsed);
+            String visibleWords=caption==null||s.waiting?"":s.overlayWords(firstVisibleFinal);
+            if(!visibleWords.equals(lastContextLine)){
+                lastContextLine=visibleWords;liveCue="";
+                if(!visibleWords.isEmpty())try{
+                    Situation context=new Situation(app);context.add(visibleWords,"");liveCue=context.cue();
+                }catch(java.io.IOException ignored){}
+            }
             if(detail!=null){
                 String state=s.waiting?s.state:ready?"Mic level "+level+"%  ·  "+s.savedCount+" saved this session":s.state;
                 if(!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
+                if(!liveCue.isEmpty())state+="\nWords suggest · "+liveCue;
                 showText(detail,state);
             }
             if(caption!=null){
-                String line=s.overlayWords(firstVisibleFinal);
+                String line=visibleWords;
                 showText(caption,s.waiting?"Words paused while the mic is busy":line.isEmpty()?"Waiting for words…":line);
             }
         }

@@ -20,12 +20,12 @@ public final class ArchiveSyncActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LinearLayout page;
     private int screen,revision,offset;
-    private boolean busy;
+    private boolean busy,advanced;
     private String exportId;
     private MediaPlayer player;
     private TextView transferStatus;
     private final SharedPreferences.OnSharedPreferenceChangeListener change=(p,k)->{
-        if("status".equals(k))runOnUiThread(()->{if(transferStatus!=null)transferStatus.setText(status());});
+        if("status".equals(k)||"lastReceiptAt".equals(k))runOnUiThread(()->{if(transferStatus!=null)transferStatus.setText(status());});
     };
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
@@ -35,7 +35,7 @@ public final class ArchiveSyncActivity extends Activity {
             v.setPadding(bar.left,bar.top,bar.right,bar.bottom);return i;
         });
     }
-    @Override protected void onResume(){super.onResume();ArchiveSync.prefs(this).registerOnSharedPreferenceChangeListener(change);render();}
+    @Override protected void onResume(){super.onResume();ArchiveSync.prefs(this).registerOnSharedPreferenceChangeListener(change);ArchiveSync.schedule(this);render();}
     @Override protected void onPause(){revision++;ArchiveSync.prefs(this).unregisterOnSharedPreferenceChangeListener(change);releasePlayer();super.onPause();}
     @Override protected void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putInt("screen",screen);b.putInt("offset",offset);b.putString("exportId",exportId);}
     @Override protected void onDestroy(){io.shutdown();super.onDestroy();}
@@ -54,7 +54,7 @@ public final class ArchiveSyncActivity extends Activity {
     }
     private void fail(Exception e){Toast.makeText(this,e.getMessage()==null?"Could not complete request.":e.getMessage(),Toast.LENGTH_LONG).show();}
     private void say(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
-    private String status(){return ArchiveSync.prefs(this).getString("status","No transfer queued");}
+    private String status(){return ArchiveSync.backupStatus(this)+"\n"+ArchiveSync.prefs(this).getString("status","No transfer queued");}
     private static String num(long n){return java.text.NumberFormat.getIntegerInstance().format(n);}
     private static String size(long n){
         if(n<1024)return n+" B";if(n<1048576)return String.format(Locale.getDefault(),"%.1f KiB",n/1024d);
@@ -83,13 +83,22 @@ public final class ArchiveSyncActivity extends Activity {
                 runOnUiThread(()->{if(tag==revision)usage.setText(message);});
             }catch(Exception e){runOnUiThread(()->{if(tag==revision)fail(e);});}
         });
-        button("Open archive website",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(ArchiveDestination.WEBSITE))));
-        button("Full audio & phone storage",()->go(1));button("Browse phone audio",()->{offset=0;go(3);});
-        button(host.isEmpty()?"Connect website or Mint":"Change archive · "+host,()->startActivity(new Intent(this,MintLinkActivity.class).putExtra("archiveOnly",true).putExtra("fromArchive",true)));
-        if(!host.isEmpty())button("Set up continuous backup",this::guided);
-        if(!host.isEmpty())button("Disconnect archive",()->new AlertDialog.Builder(this).setTitle("Disconnect archive?").setMessage("Queued transfers will stop. Existing archive copies remain accessible on the server.").setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(d,w)->{ArchiveSync.disconnect(this);render();}).show());
-        button("Transfer choices",()->go(2));
         transferStatus=label(status(),16);
+        button("Browse recordings & analysis",()->{offset=0;go(3);});
+        if(host.isEmpty())button("Connect website or Mint",()->startActivity(new Intent(this,MintLinkActivity.class).putExtra("archiveOnly",true).putExtra("fromArchive",true)));
+        else {
+            if(!ArchiveSync.auto(this))button("Set up automatic backup",()->review(true,false));
+            button("Open archive website",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(ArchiveDestination.WEBSITE))));
+            button("Set up continuous backup",this::guided);
+        }
+        button("Transfer choices",()->go(2));
+        button(advanced?"Hide more options":"More backup options",()->{advanced=!advanced;render();});
+        if(!advanced){button("Done",this::finish);return;}
+        button("Full audio & phone storage",()->go(1));
+        if(!host.isEmpty()){
+            button("Change archive · "+host,()->startActivity(new Intent(this,MintLinkActivity.class).putExtra("archiveOnly",true).putExtra("fromArchive",true)));
+            button("Disconnect archive",()->new AlertDialog.Builder(this).setTitle("Disconnect archive?").setMessage("Queued transfers will stop. Existing archive copies remain accessible on the server.").setNegativeButton("Cancel",null).setPositiveButton("Disconnect",(d,w)->{ArchiveSync.disconnect(this);render();}).show());
+        }
         if(MintSync.prefs(this).getBoolean("legacyUploads",true)&&!MintSync.prefs(this).getString("pair","").isEmpty()){
             label("Earlier saved-clip sync is active separately from these limits.",15);
             button("Move saved clips to these controls",()->new AlertDialog.Builder(this).setTitle("Use archive transfer controls?")
@@ -137,7 +146,10 @@ public final class ArchiveSyncActivity extends Activity {
             new String[]{"64","256","512","1,024","4,096"},i->{
                 ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("maxItems",new int[]{64,256,512,1024,4096}[i]).commit();
             }));
-        label("Automatic transfers run at most once per hour after a completed batch. Android may defer them. Preview all pending can approve one larger batch independently.",15);
+        button("Automatic batch spacing · "+ArchiveSync.minutes(this)+" min",()->pick("Minimum time between automatic batches",new String[]{"5 minutes","15 minutes","60 minutes"},i->{
+            ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("minutes",new int[]{5,15,60}[i]).remove("next").commit();
+        }));
+        label("Each batch uses the limits above. Shorter intervals can send more data per hour. Android may defer background work.",15);
     }
     private void pick(String title,String[] values,java.util.function.IntConsumer chosen){
         new AlertDialog.Builder(this).setTitle(title).setItems(values,(d,i)->{chosen.accept(i);render();}).setNegativeButton("Cancel",null).show();
@@ -180,8 +192,8 @@ public final class ArchiveSyncActivity extends Activity {
         try{destination=ArchiveSync.binding(this);policy=ArchiveSync.settings(this);}catch(Exception e){fail(e);return;}
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(20),dp(8),dp(20),0);
         TextView info=new TextView(this);info.setTextColor(INK);info.setText("Destination · "+host()+"\n\nRecord full microphone sessions as "+ArchiveStore.bitrate(this)/1000+
-            " kbps AAC while listening, including people nearby. Keep selected moments as usual. Automatically transfer new and pending full audio.\n\nHourly limits · "+limits()+
-            "\nPhone budget · "+ArchiveStore.budgetMiB(this)+" MiB · keep "+ArchiveStore.reserveMiB(this)+" MiB free"+
+            " kbps AAC while listening, including people nearby. Keep selected moments as usual. Automatically transfer new and pending full audio.\n\nPer batch · "+limits()+
+            "\nMinimum interval · "+ArchiveSync.minutes(this)+" minutes\nPhone budget · "+ArchiveStore.budgetMiB(this)+" MiB · keep "+ArchiveStore.reserveMiB(this)+" MiB free"+
             "\nSelected-clip transfers · "+(ArchiveSync.selected(this,"clip")?"on":"off")+
             "\nClosed text-journal transfers · "+(ArchiveSync.selected(this,"journal")?"on":"off")+
             "\n\nPending transfer approvals are replaced by these choices. Capture starts when you tap Start listening, or immediately during an active session.");
@@ -215,7 +227,7 @@ public final class ArchiveSyncActivity extends Activity {
                     (plan.oversized==0?"":"\n"+plan.oversized+" items exceed the batch or server item limit.")+"\n\n"+(backlog?"One-time backlog limit · 1 GiB / 4,096 items. Wi-Fi and charging choices still apply.\nRegular limits · ":"")+limits()+
                     (gate.isEmpty()?"":"\n"+gate)+"\nPhone free "+size(getFilesDir().getUsableSpace())+" · keep "+ArchiveStore.reserveMiB(this)+" MiB free\n"+remote+
                     (backlog&&!enough?"\nLarge-batch confirmation requires enough available server space for the exact reviewed bytes.":"")+
-                    (automatic?"\n\nFuture eligible items of these types can transfer once per hour under these limits.":"\n\nOnly these reviewed revisions can transfer.");
+                    (automatic?"\n\nFuture eligible items can transfer at most once every "+ArchiveSync.minutes(this)+" minutes under these per-batch limits.":"\n\nOnly these reviewed revisions can transfer.");
                 runOnUiThread(()->{
                     if(tag!=revision||isFinishing()||isDestroyed())return;
                     busy=false;transferStatus.setText(status());
@@ -240,7 +252,7 @@ public final class ArchiveSyncActivity extends Activity {
                 List<ArchiveStore.Segment> items=db.segments(26,offset);List<String> gaps=db.latestGaps(5);
                 runOnUiThread(()->{
                     if(tag!=revision)return;
-                    note.setText(items.isEmpty()?"No full-audio segments in this page.":"Select a segment for playback or export.");
+                    note.setText(items.isEmpty()?"No full-audio segments in this page.":"Select a recording to play, analyze or export.");
                     for(int i=0;i<Math.min(25,items.size());i++){ArchiveStore.Segment s=items.get(i);
                         button(date(s.startMs)+" · "+Math.round(s.durationMs/1000d)+" s · "+size(s.bytes)+"\n"+s.status,()->detail(s));}
                     if(offset>0)button("Previous 25",()->{offset=Math.max(0,offset-25);render();});
@@ -255,6 +267,11 @@ public final class ArchiveSyncActivity extends Activity {
             .setMessage(s.bitrate/1000+" kbps AAC · "+exact(s.bytes)+"\nRetain through "+date(s.retainUntilMs)+"\n"+s.status)
             .setNegativeButton("Close",null);
         if(s.local){
+            LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.VERTICAL);
+            TextView facts=new TextView(this);facts.setPadding(dp(20),dp(10),dp(20),dp(8));facts.setText(s.bitrate/1000+" kbps AAC · "+exact(s.bytes)+"\nRetain through "+date(s.retainUntilMs)+"\n"+s.status);actions.addView(facts);
+            Button analyze=new Button(this);analyze.setAllCaps(false);analyze.setText("Analyze recording");actions.addView(analyze);
+            dialog.setMessage(null).setView(actions);
+            analyze.setOnClickListener(v->AudioSituation.show(this,ex->{try(ArchiveStore db=new ArchiveStore(this);FileInputStream in=db.openForPlayback(s.id)){ex.setDataSource(in.getFD());}}));
             dialog.setPositiveButton("Play",(d,w)->play(s.id));
             dialog.setNeutralButton("Export AAC",(d,w)->{
                 exportId=s.id;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/aac")

@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import secrets
 import recall_review
+import situation
 import sqlite3
 import threading
 import time
@@ -114,6 +115,7 @@ def lookup(arc,kind,uid):
     result=item(row,True)
     with arc.connection() as db:
         result["review"]=recall_review.review(db,kind,uid);result["filingOptions"]=recall_review.options(db)
+    result["situation"]=situation.context_for(result)
     return result
 
 # Stable labels written by Android SelectiveEngine and Store. A single clip can have several.
@@ -252,7 +254,7 @@ class OwnerHandler(BaseHTTPRequestHandler):
             if self.headers.get_content_type()!="application/json":raise Failure(415,"Expected JSON")
             sizes=self.headers.get_all("Content-Length") or []
             if len(sizes)!=1 or not re.fullmatch(r"[0-9]{1,6}",sizes[0]) or int(sizes[0])>200000 or self.headers.get("Transfer-Encoding"):raise Failure(413,"Invalid request size")
-            op={"/api/review/file":recall_review.classify,"/api/review/options":recall_review.save_options,"/api/archive/delete":recall_review.delete}.get(self.path)
+            op={"/api/analyze-recording":situation.analyze_audio,"/api/review/file":recall_review.classify,"/api/review/options":recall_review.save_options,"/api/archive/delete":recall_review.delete}.get(self.path)
             if not op:raise Failure(404,"Unknown action")
             data=json.loads(self.rfile.read(int(sizes[0])))
             if not isinstance(data,dict):raise Failure(400,"Expected an object")

@@ -69,3 +69,5 @@ The default archive lives under `~/.local/share/total-recall-listening`. Set `TO
 Run `python3 -m unittest discover -s mint` from the source tree for the Mint tests.
 
 Drag anywhere on the microphone panel, including a button, to move it. A stationary click activates the button. **Open app** raises the desktop archive. **Expand / Shrink** changes the panel size. **Live words** shows provisional English recognition from the same audio stream without using a second microphone or storing captions. The clock measures the current uninterrupted input stream. The Keep button shows the amount of recent audio available. If the recorder was already running during the package update, sign out and back in to load the new worker.
+
+Open an archive item for a situation review based on its recognized speech, corrected text, writing or journal. **Analyze original recording** reads the selected audio, shows measured levels and offers timestamped speech cues that jump to playback. Refreshing the visible archive leaves playback and active forms alone.

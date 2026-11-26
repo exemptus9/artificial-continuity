@@ -27,10 +27,14 @@ public final class OfflineSpeech implements AutoCloseable {
     private static final String MISSED = "lexi you missed one";
 
     public OfflineSpeech(Context context) throws IOException {
+        this(context,true);
+    }
+    OfflineSpeech(Context context,boolean commands) throws IOException {
         File dir = unpack(context.getApplicationContext());
         try {
             model = new Model(dir.getAbsolutePath());
             recognizer = new Recognizer(model, 16000f);
+            if(!commands)return;
             org.json.JSONArray grammar = new org.json.JSONArray();
             grammar.put(KEEP).put(PAUSE).put(MISSED).put("[unk]");
             commandRecognizer = new Recognizer(model, 16000f, grammar.toString());
@@ -42,7 +46,7 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Returns the finalized utterance on an endpoint and null on other frames. */
     public String accept(short[] pcm, int count) {
-        if (commandRecognizer.acceptWaveForm(pcm, count)) {
+        if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(pcm, count)) {
             String heard = text(commandRecognizer.getResult(), "text");
             if (KEEP.equals(heard) || PAUSE.equals(heard) || MISSED.equals(heard)) {
                 pendingCommand = heard;

@@ -10,6 +10,8 @@ platform="$ANDROID_SDK_ROOT/platforms/android-36/android.jar"
 version=$(python3 -c 'from xml.etree import ElementTree as E; print(E.parse("AndroidManifest.xml").getroot().get("{http://schemas.android.com/apk/res/android}versionName"))')
 commit=$(git rev-parse HEAD 2>/dev/null || echo source-export)
 output="build/TotalRecall-$version.apk"
+mkdir -p assets/listening
+cp ../mint/web/situation-rules.tsv assets/listening/situation-rules.tsv
 python3 prepare-speech.py
 python3 tests/prepare-prosody.py
 rm -rf build/classes build/dex build/generated

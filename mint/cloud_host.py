@@ -205,7 +205,7 @@ class HostedHandler(recall_web.OwnerHandler):
                     and self.headers.get("Sec-Fetch-Mode")=="navigate")
         if origin and origin!="https://"+self.server.public_host and not local_form:
             return self.json(403,{"error":"Use the archive sign-in page."})
-        if self.path in ("/api/review/file","/api/review/options","/api/archive/delete"):return super().do_POST()
+        if self.path in ("/api/review/file","/api/review/options","/api/archive/delete","/api/analyze-recording"):return super().do_POST()
         if self.path=="/api/storage-check":
             if not self.auth():return self.json(401,{"error":"Sign in to your archive."})
             if origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use your archive origin."})

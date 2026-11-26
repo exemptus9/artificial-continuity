@@ -18,3 +18,5 @@ device-tests/build/
 *.apk
 *.deb
 
+
+/android/assets/listening/situation-rules.tsv

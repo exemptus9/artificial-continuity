@@ -25,8 +25,8 @@ import javax.net.ssl.HttpsURLConnection;
 
 /** Bounded, resumable transfers to the owner's pinned archive. Approvals name exact content hashes. */
 public final class ArchiveSync extends JobService {
-    static final long MIB=1048576L, INTERVAL=3600000L;
-    static final int JOB=0x54524132, BACKLOG_ITEMS=4096;
+    static final long MIB=1048576L;
+    static final int WATCH=0x54524133, JOB=0x54524132, BACKLOG_ITEMS=4096;
     static final long BACKLOG_BYTES=1024*MIB;
     private static final ReentrantLock WORK=new ReentrantLock();
     private static volatile Transfer running;
@@ -40,6 +40,7 @@ public final class ArchiveSync extends JobService {
         migrateLimits(c);stop(c);SharedPreferences.Editor edit=prefs(c).edit().putString("destination",code).putString("destinationIdentity",destination.identity);
         if(!destination.identity.equals(previous)){
             try(ArchiveStore store=new ArchiveStore(c)){store.requeueLocal();}
+            edit.remove("lastReceiptAt").remove("lastReceiptKind").remove("next");
             for(String key:prefs(c).getAll().keySet())if(key.startsWith("ack:"))edit.remove(key);
         }
         if(!edit.putString("status","Paired. Preview a batch to send content.").commit())throw new IOException("Could not save archive destination");
@@ -77,6 +78,23 @@ public final class ArchiveSync extends JobService {
         migrateLimits(c);return Math.min(BACKLOG_ITEMS,Math.max(1,prefs(c).getInt("maxItems",256)));
     }
     static boolean selected(Context c,String kind){return prefs(c).getBoolean(kind,"clip".equals(kind));}
+    static int minutes(Context c){int n=prefs(c).getInt("minutes",60);return n==5||n==15?n:60;}
+    public static String backupStatus(Context c){
+        if(pair(c).isEmpty())return "Phone only · archive unpaired";
+        boolean automatic=auto(c),manual=prefs(c).contains("manual");
+        String state=automatic?"Auto backup · "+minutes(c)+" min":manual?"Confirmed batch queued":"Manual backup";
+        if(automatic||manual){
+            String gate=constraints(c);
+            if(!gate.isEmpty())state+=" · "+gate;
+            else if(running!=null)state+=" · transferring";
+            else if(automatic&&!manual){
+                long remaining=prefs(c).getLong("next",0)-System.currentTimeMillis();
+                if(remaining>0)state+=" · next batch eligible in "+((remaining+59999)/60000)+" min";
+            }
+        }
+        long receipt=prefs(c).getLong("lastReceiptAt",0);
+        return state+(receipt>0?"\nLast verified "+prefs(c).getString("lastReceiptKind","item")+" · "+java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT,java.text.DateFormat.SHORT).format(new Date(receipt)):"\nNo receipt recorded by this version for this destination");
+    }
     static boolean auto(Context c){return prefs(c).getBoolean("auto",false);}
     static boolean wifi(Context c){return prefs(c).getBoolean("wifi",true);}
     static boolean charging(Context c){return prefs(c).getBoolean("charging",true);}
@@ -91,7 +109,7 @@ public final class ArchiveSync extends JobService {
         return "";
     }
     static String settings(Context c){
-        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c)+"|"+maxItems(c);
+        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c)+"|"+maxItems(c)+(minutes(c)==60?"":"|spacing="+minutes(c));
     }
     public static final class Plan {
         public long totalCount,oversized;
@@ -217,16 +235,24 @@ public final class ArchiveSync extends JobService {
     }
     private static void cancel(Context c){
         Transfer t=running;if(t!=null)t.abort();
-        JobScheduler scheduler=c.getSystemService(JobScheduler.class);if(scheduler!=null)scheduler.cancel(JOB);
+        JobScheduler scheduler=c.getSystemService(JobScheduler.class);if(scheduler!=null){scheduler.cancel(JOB);scheduler.cancel(WATCH);}
     }
     public static synchronized void schedule(Context c){
         boolean manual=prefs(c).contains("manual");
         if((!manual&&!auto(c))||pair(c).isEmpty()||!ListenPolicy.allowed(c))return;
         JobScheduler scheduler=c.getSystemService(JobScheduler.class);
-        if(scheduler==null||scheduler.getPendingJob(JOB)!=null)return;
-        long delay=manual?0:Math.max(0,Math.min(INTERVAL,prefs(c).getLong("next",0)-System.currentTimeMillis()));
+        if(scheduler==null)return;
+        if(auto(c)&&scheduler.getPendingJob(WATCH)==null)try{
+            scheduler.schedule(new JobInfo.Builder(WATCH,new ComponentName(c,ArchiveSync.class))
+                .setPersisted(true).setPeriodic(15*60000L).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setRequiresCharging(charging(c)).build());
+        }catch(RuntimeException ignored){/* A capture or app resume can still queue the primary job. */}
+        if(scheduler.getPendingJob(JOB)!=null)return;
+        long delay=manual?0:Math.max(0,Math.min(minutes(c)*60000L,prefs(c).getLong("next",0)-System.currentTimeMillis()));
         JobInfo.Builder job=new JobInfo.Builder(JOB,new ComponentName(c,ArchiveSync.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setPersisted(true).setRequiresCharging(charging(c)).setBackoffCriteria(60000,JobInfo.BACKOFF_POLICY_EXPONENTIAL);
+        if(wifi(c)&&android.os.Build.VERSION.SDK_INT>=28)job.setRequiredNetwork(new android.net.NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI).addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build());
         if(delay>0)job.setMinimumLatency(delay);
         try{if(scheduler.schedule(job.build())!=JobScheduler.RESULT_SUCCESS)prefs(c).edit().putString("status","Scheduling deferred by Android").apply();}
         catch(RuntimeException e){prefs(c).edit().putString("status","Scheduling deferred by Android").apply();}
@@ -295,6 +321,8 @@ public final class ArchiveSync extends JobService {
                     String key=obj.optString("original","").isEmpty()?id:"clip-"+obj.getString("original");
                     if(!prefs(c).edit().putString("ack:"+key,obj.optString("revision",sha)).commit())throw new IOException("Unable to save transfer receipt");
                 }
+                prefs(c).edit().putLong("lastReceiptAt",System.currentTimeMillis())
+                    .putString("lastReceiptKind",obj.getString("kind")).apply();
             }
         }
         long validate(JSONObject ack,String id,String sha,long size)throws Exception{
@@ -332,6 +360,7 @@ public final class ArchiveSync extends JobService {
                 try(InputStream in=new FileInputStream(tmp)){send(obj,in);}
             }finally{tmp.delete();}
         }
+        boolean idle;
         void run()throws Exception{
             if(!WORK.tryLock())throw new IOException("Another transfer is running");
             try{
@@ -375,8 +404,10 @@ public final class ArchiveSync extends JobService {
                         synchronized(ArchiveSync.class){check();q.done(ref,row.position);}
                     }
                     synchronized(ArchiveSync.class){
-                        check();SharedPreferences.Editor edit=p.edit().putString("status","Batch complete · "+java.text.DateFormat.getDateTimeInstance().format(new Date()));
-                        if(manual!=null)edit.remove("manual").remove("manualBacklog");else edit.remove("automaticPlan").putLong("next",System.currentTimeMillis()+INTERVAL);
+                        check();idle=manual==null && summary.count==0;
+                        SharedPreferences.Editor edit=p.edit().putString("status",idle?"No eligible items in this check":
+                            "Batch checked · "+java.text.DateFormat.getDateTimeInstance().format(new Date()));
+                        if(manual!=null)edit.remove("manual").remove("manualBacklog");else edit.remove("automaticPlan").putLong("next",idle?0:System.currentTimeMillis()+minutes(c)*60000L);
                         if(!edit.commit())throw new IOException("Unable to save transfer completion");
                     }
                 }
@@ -384,6 +415,7 @@ public final class ArchiveSync extends JobService {
         }
     }
     @Override public boolean onStartJob(JobParameters job){
+        if(job.getJobId()==WATCH){schedule(this);return false;}
         final Transfer t;
         try{t=new Transfer(this);}catch(Exception e){return false;}
         jobRun=t;
@@ -393,9 +425,9 @@ public final class ArchiveSync extends JobService {
             final boolean later=retry;
             new Handler(Looper.getMainLooper()).post(()->{
                 if(jobRun!=t)return;jobRun=null;jobFinished(job,later);
-                if(!later && auto(this))new Handler(Looper.getMainLooper()).postDelayed(()->schedule(this),1000);
+                if(!later && !t.idle && auto(this))new Handler(Looper.getMainLooper()).postDelayed(()->schedule(this),1000);
             });
         },"archive-transfer").start();return true;
     }
-    @Override public boolean onStopJob(JobParameters job){Transfer t=jobRun;jobRun=null;if(t!=null)t.abort();return auto(this)||prefs(this).contains("manual");}
+    @Override public boolean onStopJob(JobParameters job){if(job.getJobId()==WATCH)return false;Transfer t=jobRun;jobRun=null;if(t!=null)t.abort();return auto(this)||prefs(this).contains("manual");}
 }

@@ -844,6 +844,7 @@ public class MainActivity extends Activity {
             MUTED)
         .setTextIsSelectable(true);
     label(body, e.getString("text"), 19, FG).setTextIsSelectable(true);
+    if(!e.optString("text").isEmpty())label(body,"Situation from capture text\n"+org.totalrecall.listening.Situation.read(this,e.optString("text"),false),15,MUTED).setTextIsSelectable(true);
     if (!e.getString("source_type").startsWith("auto."))
       button(body, "Review source & add a next step", () -> openMemory("timeline", id));
     label(
@@ -871,6 +872,22 @@ public class MainActivity extends Activity {
               + attachment.getString("sha256"),
           13,
           ACCENT);
+      if (attachment.getString("mime").split(";")[0].equalsIgnoreCase("text/plain")){
+        byte[] bytes=Base64.getDecoder().decode(s.getJSONObject("blobs").getString(attachment.getString("sha256")));
+        int count=Math.min(65536,bytes.length);
+        String supplied=new String(bytes,0,count,java.nio.charset.StandardCharsets.UTF_8);
+        label(body,"Situation from attached text"+(count<bytes.length?" · first 64 KiB":"")+"\n"+
+            org.totalrecall.listening.Situation.read(this,supplied,false),15,MUTED).setTextIsSelectable(true);
+      }
+      if (attachment.getString("mime").matches("(audio|video)/.*"))
+        button(body,"Analyze recorded audio",()->org.totalrecall.listening.AudioSituation.show(this,ex->{
+            byte[] data=Base64.getDecoder().decode(s.getJSONObject("blobs").getString(attachment.getString("sha256")));
+            ex.setDataSource(new android.media.MediaDataSource(){
+                public long getSize(){return data.length;}
+                public int readAt(long pos,byte[] out,int off,int len){if(pos<0||pos>=data.length)return -1;int n=(int)Math.min(len,data.length-pos);System.arraycopy(data,(int)pos,out,off,n);return n;}
+                public void close(){}
+            });
+        }));
       if (attachment.getString("mime").startsWith("audio/"))
         button(body, "Play preserved audio", () -> play(s, attachment));
       if (attachment.getString("mime").startsWith("image/")) {
@@ -887,7 +904,17 @@ public class MainActivity extends Activity {
                 ? null
                 : android.graphics.BitmapFactory.decodeByteArray(data, 0, data.length, o);
         if (bitmap != null) {
-          ImageView img = new ImageView(this);
+          long brightness=0;int examined=0;
+        for(int y=0;y<bitmap.getHeight();y+=Math.max(1,bitmap.getHeight()/64))
+          for(int x=0;x<bitmap.getWidth();x+=Math.max(1,bitmap.getWidth()/64)){
+            int pixel=bitmap.getPixel(x,y);
+            if(android.graphics.Color.alpha(pixel)<128)continue;
+            int light=(54*android.graphics.Color.red(pixel)+183*android.graphics.Color.green(pixel)+19*android.graphics.Color.blue(pixel))/256;
+            brightness+=light;examined++;
+          }
+        String orientation=o.outWidth==o.outHeight?"Square":o.outWidth>o.outHeight?"Landscape":"Portrait";
+        label(body,orientation+" · "+o.outWidth+" × "+o.outHeight+(examined==0?"":" · sampled brightness "+Math.round(brightness*100d/(255*examined))+"%"),14,MUTED);
+        ImageView img = new ImageView(this);
           img.setImageBitmap(bitmap);
           img.setAdjustViewBounds(true);
           body.addView(img, new LinearLayout.LayoutParams(-1, dp(220)));

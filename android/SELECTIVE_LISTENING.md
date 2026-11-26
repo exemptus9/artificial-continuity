@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.13.0
+# Live listening on Galaxy · 0.14.0
 
-Install `TotalRecall-0.13.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.14.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -53,3 +53,9 @@ In **More → Capture sensitivity**, choose how readily Recall saves a candidate
 ## Earlier Mint clip connections
 
 An existing **More → Connect to Mint** pairing can continue sending selected clips independently. To use the batch limits above for those clips, open **Archive & sync → Move saved clips to these controls**. On Mint, **Connect Lexi** enables read-only selected-clip retrieval for your configured OpenClaw agent. Its model provider can receive passages retrieved for a question. [Mint guide](../mint/README.md)
+
+## Review a situation
+
+Open a saved moment to see cues supported by its words. Edited transcripts and personal notes have separate labels. Tap **Analyze original recording** to scan the audio locally. For a complete session, open **Archive & sync → Browse recordings & analysis**, choose a recording, and tap **Analyze recording**. Quiet time includes all sound below the indicated threshold. English speech recognition is approximate.
+
+Automatic backup follows the paired destination, selected content, network, power and per-batch limits. **Transfer choices → Automatic batch spacing** offers 5, 15 or 60 minutes. Re-enable automatic backup after changing a choice. The archive shows its most recent verified receipt.

@@ -209,6 +209,7 @@ public final class MemoryActivity extends Activity {
     button(body,"Back to timeline",()->{recordId="";section="timeline";render();});
     LinearLayout original=card();text(original,when(e.getLong("event_ms")),14,ACCENT);
     text(original,e.optString("text").isEmpty()?"No text transcript. Open archive tools to inspect the attachment.":e.getString("text"),20,FG).setTextIsSelectable(true);
+    if(!e.optString("text").isEmpty())text(original,"Situation from capture text\n"+org.totalrecall.listening.Situation.read(this,e.optString("text"),false),15,MUTED).setTextIsSelectable(true);
     text(original,"Original preserved · "+captureLabel(e),13,MUTED);
     JSONObject meta=e.getJSONObject("metadata");
     String transcript=meta.optString("transcription");

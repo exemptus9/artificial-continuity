@@ -1,0 +1,7 @@
+Question	(?:^|[.!?] +)(?:how (?:can|could|do|does|should|are|would)|what (?:if|is|are|was|would|should|do)|why (?:is|are|did|would)|when (?:can|is|are|will)|where (?:is|are|did)|can (?:i|we|you)|could (?:we|you))\b|\?$
+Possible decision	\b(?:i decided|we decided|we agreed|i chose|we chose|the decision is|let(?:'s| us) (?:go with|use|keep))\b
+Possible next step	\b(?:i(?:'ll| will| need to| plan to| have to)|we(?:'ll| will| need to| plan to)|remind me to|follow up (?:on|with)|next step|to[- ]do)\b
+Possible obstacle	\b(?:blocked by|waiting (?:on|for)|the problem is|the issue is|could(?:n't| not)|can(?:not|'t) (?:open|finish|find|start|access))\b
+Creative idea	\b(?:what if|idea for|line for|a poem about|wordplay|coined (?:a|the)|working title|possible title)\b
+Time reference	\b(?:tomorrow|tonight|next (?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at (?:[0-1]?\d(?::[0-5]\d)? ?(?:am|pm)|noon|midnight))\b
+Needs checking	\b(?:i(?:'m| am) not sure|we(?:'re| are) not sure|need to (?:verify|confirm|check)|might have|as far as i (?:know|remember))\b
