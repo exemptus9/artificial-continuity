@@ -403,12 +403,13 @@ public final class RecallListenActivity extends Activity {
     }
     private void openJournal(JournalStore.Session session){
         worker.execute(()->{try(JournalStore store=new JournalStore(getApplicationContext())){
-            String transcript=store.text(session.id);String situation=Situation.read(this,transcript,true);
+            String transcript=store.text(session.id);String situation=Situation.read(this,transcript,true);String story=Situation.read(this,transcript,true,true);
             main.post(()->{if(!alive())return;ScrollView scroll=new ScrollView(this);LinearLayout column=column();
                 pad(column,18,8);scroll.addView(column);
                 if(nonempty(session.endReason)){
                     TextView coverage=text(session.endReason,14,SECOND,true);coverage.setPadding(0,0,0,dp(12));column.addView(coverage);
                 }
+                column.addView(StoryNotes.button(this,StoryNotes.Kind.JOURNAL,String.valueOf(session.id),story));
                 labeled(column,"Situation from journal entries",situation);
                 TextView body=text(nonempty(transcript)?transcript:"No recognized speech yet.",17,INK,false);
                 body.setTextIsSelectable(true);body.setLineSpacing(dp(4),1f);column.addView(body);
@@ -497,9 +498,10 @@ public final class RecallListenActivity extends Activity {
         stopPlayer();ScrollView scroll=new ScrollView(this);LinearLayout body=column();pad(body,18,14);scroll.addView(body);
         body.addView(text(momentDate(m.startMs)+"   ·   "+duration(m),15,SECOND,false));
         String evidence=nonempty(m.correction)?m.correction:m.transcript;
+        body.addView(StoryNotes.button(this,StoryNotes.Kind.CLIP,String.valueOf(m.id),nonempty(evidence)?Situation.read(this,evidence,false,true):""));
         if(nonempty(evidence))labeled(body,nonempty(m.correction)?"Situation from your correction":"Situation from recognized words",Situation.read(this,evidence,false));
         if(nonempty(m.note))labeled(body,"Situation from your note",Situation.read(this,m.note,false));
-        if(m.audio!=null&&m.audio.isFile()){Button analyze=link("Analyze original recording");analyze.setOnClickListener(v->AudioSituation.show(this,ex->ex.setDataSource(m.audio.getAbsolutePath())));body.addView(analyze);}
+        if(m.audio!=null&&m.audio.isFile()){Button analyze=link("Analyze original recording");analyze.setOnClickListener(v->AudioSituation.show(this,StoryNotes.Kind.CLIP,String.valueOf(m.id),ex->ex.setDataSource(m.audio.getAbsolutePath())));body.addView(analyze);}
         labeled(body,"Why it was kept",m.reason);
         if(nonempty(m.correction))labeled(body,"Edited transcript",m.correction);
         labeled(body,"Original transcript",nonempty(m.transcript)?m.transcript:"No transcript is available for this clip.");

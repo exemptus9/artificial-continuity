@@ -1,4 +1,5 @@
 """Opt-in Mint microphone recorder, local segment spool and floating controls."""
+from array import array
 import base64
 from contextlib import closing
 import fcntl
@@ -29,7 +30,7 @@ import recall_archive as storage
 HOST="total-recall-archive-production.up.railway.app"
 RATE=16000
 BYTES_PER_SECOND=2*RATE
-BASE={"source":"pulse","quality":32,"seconds":60,"keep":30}
+BASE={"source":"pulse","quality":32,"seconds":60,"keep":30,"prune":False,"network":"Any network"}
 def folder(arc):
     path=arc.root/"laptop-recorder"
     path.mkdir(mode=0o700,exist_ok=True)
@@ -45,7 +46,7 @@ def read(path,default):
 def config(path):
     raw=read(path/"settings.json",{})
     return {k:raw[k] if raw.get(k) in choices else BASE[k] for k,choices in {
-        "source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60)}.items()}
+        "source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60),"prune":(True,False),"network":("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour")}.items()}
 def credentials(code):
     if not code.startswith("TR1.") or len(code)>1024:raise ValueError("Paste the pairing code from the hosted archive.")
     try:obj=json.loads(base64.urlsafe_b64decode(code[4:]+"==="))
@@ -69,6 +70,34 @@ def stage_record(arc,uid,path,meta):
             if not block:raise ValueError("Incomplete staging file")
             receipt=arc.put(uid,receipt["offset"],block)
     if receipt["sha256"]!=meta["sha256"]:raise ValueError("Original checksum mismatch")
+def on_wifi():
+    try:
+        route=subprocess.check_output(["ip","-j","route","get", "1.1.1.1"],timeout=3)
+        device=json.loads(route)[0]["dev"]
+        return (Path("/sys/class/net")/device/"wireless").is_dir()
+    except (OSError,KeyError,ValueError,IndexError,subprocess.SubprocessError):
+        return False
+
+def wait_for_wifi(root,uid):
+    policy=config(root)["network"]
+    if policy=="Any network" or on_wifi():return False
+    if policy=="Wi-Fi only":return True
+    ticket=read(root/"wifi-wait.json",{})
+    if "since" not in ticket:
+        ticket={"since":time.time()};write(root/"wifi-wait.json",ticket)
+    return time.time()-ticket["since"]<3600
+
+def limit_notice(root,kind,text):
+    path=root/(kind+"-limit.json")
+    if not text:
+        path.unlink(missing_ok=True);return
+    previous=read(path,{})
+    if previous.get("text")==text and time.time()-previous["at"]<3600:return
+    write(path,{"text":text,"at":time.time()})
+    if shutil.which("notify-send"):
+        try:subprocess.run(["notify-send","-u","critical","Total Recall needs attention",text],timeout=3,check=False,stderr=subprocess.DEVNULL)
+        except (OSError,subprocess.SubprocessError):pass
+
 def push(arc,root,done):
     ledger=root/"sent.sqlite3"
     with closing(sqlite3.connect(ledger)) as db:
@@ -77,13 +106,17 @@ def push(arc,root,done):
         while not done.is_set():
             token=read(root/"pair.json","")
             if not token:
+                limit_notice(root,"upload","")
                 done.wait(2);continue
             row=db.execute("""SELECT a.id,a.metadata,a.file FROM arc.archive_uploads a LEFT JOIN sent s ON s.id=a.id
                 WHERE s.id IS NULL AND a.state='complete' AND (a.kind='segment' AND a.id GLOB 'laptop-*' OR a.kind='clip' AND a.id GLOB 'desk-keep-*') ORDER BY a.started LIMIT 1""").fetchone()
             if not row:
+                (root/"wifi-wait.json").unlink(missing_ok=True);limit_notice(root,"upload","")
                 if read(root/"sync.json","")!="Caught up":write(root/"sync.json","Caught up")
                 done.wait(5);continue
             uid,meta,path=row;manifest=json.loads(meta)
+            if wait_for_wifi(root,uid):
+                write(root/"sync.json","Waiting for preferred Wi-Fi");done.wait(20);continue
             try:
                 remote_id=uid
                 if manifest["kind"]=="clip":
@@ -100,7 +133,7 @@ def push(arc,root,done):
                 with src:
                     receipt=http(token,"POST","/v2/uploads",json.dumps(manifest).encode(),{"Content-Type":"application/json"})
                     while not receipt["complete"]:
-                        if read(root/"pair.json","")!=token or done.is_set():break
+                        if read(root/"pair.json","")!=token or done.is_set() or wait_for_wifi(root,uid):break
                         offset=receipt["offset"]
                         if type(offset)!=int or not 0<=offset<manifest["bytes"]:raise OSError("Invalid upload offset")
                         src.seek(offset);block=src.read(storage.MAX_CHUNK)
@@ -110,17 +143,29 @@ def push(arc,root,done):
                         receipt=reply
                 if receipt["complete"] and (receipt["id"],receipt["bytes"],receipt["sha256"])==(remote_id,manifest["bytes"],manifest["sha256"]):
                     db.execute("INSERT OR IGNORE INTO sent VALUES(?)",(uid,));db.commit()
-                    write(root/"sync.json","Last upload verified")
+                    limit_notice(root,"upload","");write(root/"sync.json","Last upload verified")
                 elif receipt["complete"]:raise OSError("Receipt mismatch")
             except (OSError,ValueError,KeyError,http.client.HTTPException) as e:
                 if "HTTP 410" in str(e):
                     db.execute("INSERT OR IGNORE INTO sent VALUES(?)",(uid,));db.commit()
                 else:
+                    if any(code in str(e) for code in ("HTTP 429","HTTP 507")):
+                        limit_notice(root,"upload","Hosted upload limit reached. Open the archive to check storage and the monthly allowance.")
                     write(root/"sync.json","Upload waiting · "+str(e)[:90]);done.wait(20)
 def finish(arc,path,cfg):
     size=path.stat().st_size//2*2
     if not size:path.unlink();return
     start=int(path.stem.split("-")[1]);ms=round(size*1000/BYTES_PER_SECOND)
+    if path.name.startswith("quietcheck-") and ms>=2000:
+        with path.open("rb") as src:
+            silent=all(all(-4<=v<=4 for v in array("h",chunk)) for chunk in iter(lambda:src.read(65536),b""))
+        if silent:
+            with closing(sqlite3.connect(path.parent/"quiet.sqlite3")) as db,db:
+                db.execute("CREATE TABLE IF NOT EXISTS omitted(id TEXT PRIMARY KEY,start INTEGER,duration INTEGER)")
+                db.execute("INSERT OR IGNORE INTO omitted VALUES(?,?,?)",(path.stem,start,ms))
+            path.unlink()
+            write(path.parent/"last-omission.json",{"at":start,"duration":ms})
+            return
     mark=path.name.startswith("mark-")
     uid=("desk-keep-" if mark else "laptop-")+path.stem.split("-",1)[1]
     with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
@@ -188,7 +233,8 @@ def capture(arc,root,cfg,input_args):
                 if segment is None:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
                     start=now-round(len(block)*1000/BYTES_PER_SECOND)
-                    segment=(root/f"segment-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
+                    prefix="quietcheck" if cfg.get("prune") else "segment"
+                    segment=(root/f"{prefix}-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
                 feed.send(stream_pos,block)
                 stream_pos+=len(block)
                 segment.write(block);seg_bytes+=len(block);ring.extend(block)
@@ -223,14 +269,17 @@ def worker(arc):
         try:
             while True:
                 if not (root/"enabled").exists():
+                    limit_notice(root,"capture","")
                     if read(root/"status.json",{}).get("state")!="Stopped":write(root/"status.json",dict(state="Stopped",level=0,at=storage.now()))
                     time.sleep(1);continue
                 cfg=config(root);source=cfg["source"]
                 write(root/"status.json",dict(state="Opening microphone",at=storage.now(),level=0))
                 try:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
+                    limit_notice(root,"capture","")
                     capture(arc,root,cfg,["-f",source,"-i","default"])
                 except (OSError,subprocess.SubprocessError) as e:
+                    if "Storage low" in str(e):limit_notice(root,"capture","Recording paused at the storage limit. Review free space in the archive.")
                     write(root/"status.json",dict(state=str(e)[:90],level=0,at=storage.now()));time.sleep(2)
         finally:
             done.set();writer.join();write(root/"status.json",dict(state="Stopped",level=0,at=storage.now()))
@@ -301,6 +350,10 @@ def panel(arc):
             ttk.Label(p,text=label).pack(anchor="w");v=tk.StringVar(value=str(c[name]));vars[name]=v
             ttk.Combobox(p,textvariable=v,values=opts,state="readonly").pack(fill="x")
         ttk.Label(p,text="Pulse uses Mint’s selected microphone. Keep moment saves the available audio before your click. Closing the panel leaves capture running. Stop recording releases the microphone.",wraplength=360).pack(anchor="w",pady=4)
+        network=tk.StringVar(value=c["network"]);ttk.Label(p,text="Hosted backup network").pack(anchor="w")
+        ttk.Combobox(p,textvariable=network,values=("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour"),state="readonly").pack(fill="x")
+        prune=tk.BooleanVar(value=c["prune"])
+        ttk.Checkbutton(p,text="Skip near-silent blocks in new recordings",variable=prune).pack(anchor="w")
         at_login=tk.BooleanVar(value=login.exists())
         for text,var in (("Keep panel above other windows",top),("Compact panel",compact),("Start recording and show panel when I log in",at_login)):
             ttk.Checkbutton(p,text=text,variable=var).pack(anchor="w")
@@ -311,6 +364,7 @@ def panel(arc):
         def save():
             try:
                 new={key:(v.get() if key=="source" else int(v.get())) for key,v in vars.items()}
+                new["prune"]=prune.get();new["network"]=network.get()
                 if share.get():
                     if entry.get().strip():write(root/"pair.json",credentials(entry.get().strip()))
                     elif not paired:raise ValueError("Enter the hosted pairing code.")
@@ -377,7 +431,11 @@ def panel(arc):
         if last.get("kind")=="clip":saved+=" · bookmark"
         sync=read(root/"sync.json","Waiting for transfer") if (root/"pair.json").exists() else "Saved on this laptop"
         segment=(f"Segment {s.get('seconds',0)} / {config(root)['seconds']} s  ·  " if ready else "")
+        omit=read(root/"last-omission.json",{})
+        if omit.get("at",0)>last.get("at",0):saved="Quiet block skipped · "+str(round(omit["duration"]/1000))+" s"
         info.set(segment+saved+"\n"+read(root/"save-error.json",sync))
+        alerts=[read(root/(kind+"-limit.json"),{}).get("text","") for kind in ("capture","upload")]
+        if any(alerts):info.set("\n".join(filter(None,alerts)))
         if repeat:timer=window.after(550,tick)
     layout()
     # First bindtag sees pointer events before Tk button bindings. Once dragging

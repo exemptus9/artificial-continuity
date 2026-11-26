@@ -45,6 +45,18 @@ public final class Situation {
         int start=Math.max(0,at-55),end=Math.min(line.length(),start+190);
         return (stamp.isEmpty()?"":stamp+"  ")+(start>0?"…":"")+"“"+line.substring(start,end)+(end<line.length()?"…":"")+"”";
     }
+    public String draft(){
+        if(first.isEmpty())return "";
+        if(evidence.isEmpty())return "One passage reads "+first+".";
+        java.util.LinkedHashSet<String> seen=new java.util.LinkedHashSet<>();
+        ArrayList<String> lines=new ArrayList<>();
+        for(Map.Entry<String,String> e:evidence.entrySet()){
+            if(!seen.add(e.getValue()))continue;
+            lines.add(e.getKey()+" in the source words — "+e.getValue()+".");
+            if(lines.size()==4)break;
+        }
+        return String.join(" ",lines);
+    }
     public String result(){
         if(passages==0)return "No words available to interpret.";
         if(evidence.isEmpty())return "Source excerpt  "+first+"\nNo explicit situation cue matched.";
@@ -53,6 +65,9 @@ public final class Situation {
         return String.join("\n\n",lines);
     }
     public static String read(Context c,String text,boolean journal){
+        return read(c,text,journal,false);
+    }
+    static String read(Context c,String text,boolean journal,boolean story){
         try{
             Situation result=new Situation(c);
             if(journal){
@@ -62,7 +77,7 @@ public final class Situation {
                     if(m.matches()&&!m.group(2).startsWith("[capture status]"))result.add(m.group(2),m.group(1));
                 }
             }else result.add(text,"");
-            return result.result();
+            return story?result.draft():result.result();
         }catch(IOException e){return "Situation cues could not be loaded.";}
     }
 }

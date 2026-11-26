@@ -321,8 +321,25 @@ function player(item,at){const audio=e('audio');audio.controls=true;audio.preloa
     audio.currentTime=Math.max(0,Math.min((at-item.startedAtMillis)/1000-3,audio.duration||0));
   },{once:true});audio.setAttribute('aria-label','Original recording');const rates=e('select');rates.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=e('option','',`${n}×`);o.value=n;o.selected=n===1;rates.append(o);}rates.onchange=()=>audio.playbackRate=Number(rates.value);
   const download=e('a','text-link','Download original');download.prepend(icon('download'));download.href=mediaPath(item)+'?download=1';download.download='';const help=e('p','status');help.hidden=true;audio.onerror=()=>{if(audio.getAttribute('src')){help.textContent='This browser could not play the file. Download the original to open it in another player.';help.hidden=false;}};
-  const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();audio.removeAttribute('src');audio.load();};
-  return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),download),help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
+  let ctx,source,filter,gain,compressor,focused=false;
+  const focus=button('Voice focus',async()=>{
+    try{
+      if(!ctx){
+        ctx=new AudioContext();
+        filter=ctx.createBiquadFilter();filter.type='highpass';filter.frequency.value=90;
+        gain=ctx.createGain();gain.gain.value=3;
+        compressor=ctx.createDynamicsCompressor();compressor.threshold.value=-12;compressor.ratio.value=8;
+        filter.connect(gain).connect(compressor).connect(ctx.destination);
+        source=ctx.createMediaElementSource(audio);source.connect(ctx.destination);
+      }
+      await ctx.resume();source.disconnect();focused=!focused;
+      source.connect(focused?filter:ctx.destination);
+      focus.textContent=focused?'Voice focus on':'Voice focus';focus.setAttribute('aria-pressed',String(focused));
+    }catch(err){help.textContent='Voice focus is unavailable in this browser.';help.hidden=false;}
+  });
+  focus.setAttribute('aria-pressed','false');
+  const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();if(ctx)ctx.close().catch(()=>{});audio.removeAttribute('src');audio.load();};
+  return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),focus,download),help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
 // The journal export uses the phone's local date plus its UTC offset at recognition.
 function journalLines(text) {
   const result=[],pattern=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$/;
@@ -396,7 +413,31 @@ function evidenceRows(items,audio){
   }
   return group;
 }
-function situationPanel(full,audio){
+function storyPanel(full){
+  const box=e('section','detail-block'),body=e('textarea'),status=e('p','status');
+  const story=full.story||{body:'',revision:0,draft:''};
+  let draft=story.draft;
+  body.rows=4;body.maxLength=12000;body.value=story.body||draft;body.placeholder='Add what was happening and why it mattered.';
+  status.setAttribute('role','status');
+  status.textContent=story.body?'Your saved account':draft?'Suggested from source words · edit before saving':'Add your own context, or analyze the recording for a suggested account.';
+  const suggestion=e('p','section-note');suggestion.hidden=true;
+  const view=button('Show suggested account',()=>{suggestion.hidden=!suggestion.hidden;suggestion.textContent=suggestion.hidden?'':draft;view.textContent=suggestion.hidden?'Show suggested account':'Hide suggested account';});
+  view.hidden=!draft;
+  const save=button('Save story',async()=>{
+    save.disabled=true;
+    try{const r=await ownerAction('/api/review/file',{kind:full.kind,id:full.id,action:'story',body:body.value,revision:story.revision});
+      story.revision=r.revision;story.body=r.body;status.textContent=r.body?'Story saved and searchable.':'Saved story cleared.';}
+    catch(err){status.textContent=err.message;}finally{save.disabled=false;}
+  });
+  add(box,e('h3','','Recording story'),add(e('label'),'Your account',body),add(e('div','actions'),save,view),suggestion,status);
+  return {box,update(text){
+    if(!text)return;
+    const clean=!story.body && (!body.value || body.value===draft);
+    draft=text;if(!suggestion.hidden)suggestion.textContent=draft;view.hidden=false;
+    if(clean){body.value=draft;status.textContent='Suggested from recognized words · edit before saving';}
+  }};
+}
+function situationPanel(full,audio,story){
   const groups=full.situation||[];
   if(!groups.length&&!audio)return null;
   const box=e('section','detail-block');
@@ -408,29 +449,33 @@ function situationPanel(full,audio){
   }
   if(!audio)return box;
   const report=e('div'),status=e('p','section-note');status.setAttribute('role','status');
+  const focused=e('input');focused.type='checkbox';
+  const mode=add(e('label'),focused,' Try voice-focused transcription for quiet speech');
   let offset=0;
+  focused.onchange=()=>{offset=0;review.hidden=false;review.textContent='Analyze original recording';};
   const review=button('Analyze original recording',async()=>{
-    review.disabled=true;status.textContent='Reading audio levels and transcribing English on this archive…';
+    review.disabled=true;focused.disabled=true;status.textContent='Reading audio levels and transcribing English on this archive…';
     try{
-      const r=await ownerAction('/api/analyze-recording',{kind:full.kind,id:full.id,offset});
+      const r=await ownerAction('/api/analyze-recording',{kind:full.kind,id:full.id,offset,voiceFocus:focused.checked});
       if(!box.isConnected)return;
-      report.append(e('strong','',duration(r.start*1000)+' – '+duration((r.start+r.seconds)*1000)),
+      story.update(r.storyDraft);
+      report.append(e('strong','',(focused.checked?'Voice focus · ':'Original · ')+duration(r.start*1000)+' – '+duration((r.start+r.seconds)*1000)),
         e('p','',r.abovePercent+'% of audio above −50 dBFS · longest quiet stretch '+r.quietSeconds+' s · peak '+(r.peakDbfs==null?'silence':r.peakDbfs+' dBFS')),
         r.cues.length?evidenceRows(r.cues,audio):e('p','section-note','No words recognized in this range.'));
       status.textContent='Speech and playback times are approximate. Background noise counts toward the sound level.';
       if(r.next==null)review.hidden=true;
       else{offset=r.next;review.textContent='Analyze next 10 minutes';}
     }catch(err){status.textContent=err.message;}
-    finally{review.disabled=false;}
+    finally{review.disabled=false;focused.disabled=false;}
   });
-  return add(box,review,status,report);
+  return add(box,mode,review,status,report);
 }
 async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalCleanup=null;}const serial=++state.detailVersion;const dialog=$('detail');$('detail-kind').textContent=kindName(item.kind);$('detail-body').replaceChildren(e('p','empty','Loading item…'));if(!dialog.open)dialog.showModal();
   try{const full=await get(`/api/items/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`);if(serial!==state.detailVersion||!dialog.open)return;
     const d=e('h2','',full.review?.name||full.title||full.category||kindName(full.kind));d.id='detail-title';const meta=add(e('div','detail-meta'),e('span','',dateTime(full.startedAtMillis)),e('span','','·'),e('span','',full.kind==='journal'?bytes(full.bytes):duration(full.durationMs)));
     const nodes=[d,meta];if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
     const playerNode=nodes.find(node=>node?.classList?.contains('player'));
-    nodes.push(situationPanel(full,playerNode?.querySelector('audio')));
+    const story=storyPanel(full);nodes.push(story.box,situationPanel(full,playerNode?.querySelector('audio'),story));
     if(full.correction)nodes.push(contentBlock('Your correction',full.correction));if(full.note)nodes.push(contentBlock('Your note',full.note));
     if(full.kind==='clip')nodes.push(writingNote(full));
     if(full.review)nodes.push(filedWork(full));

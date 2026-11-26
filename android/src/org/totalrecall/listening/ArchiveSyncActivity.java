@@ -70,6 +70,8 @@ public final class ArchiveSyncActivity extends Activity {
         if(screen!=0)button("‹  Archive & sync",()->go(0));
         if(screen==1){local();return;}if(screen==2){choices();return;}if(screen==3){browse(tag);return;}
         title("Archive & sync");
+        String warning=LimitAlerts.message(this);
+        if(!warning.isEmpty()){label(warning,18);button("Review phone storage",()->go(1));if(!host().isEmpty())button("Check server capacity",()->serverSpace(tag));}
         String host=host();
         label(host.isEmpty()?"Phone only":"Private archive · "+host,17);
         String local=ArchiveStore.enabled(this)?"Recording all audio during listening sessions":"Selective moments only";
@@ -116,7 +118,7 @@ public final class ArchiveSyncActivity extends Activity {
         button("Done",this::finish);
     }
     private String host(){try{return new ArchiveDestination(ArchiveSync.pair(this)).host;}catch(Exception e){return "";}}
-    private String limits(){return (ArchiveSync.wifi(this)?"Wi-Fi required":"Any available network")+" · "+
+    private String limits(){return ArchiveSync.networkLabel(this)+" · "+
         (ArchiveSync.charging(this)?"charging required":"battery power allowed")+" · "+size(ArchiveSync.cap(this))+" and "+num(ArchiveSync.maxItems(this))+" items per batch";}
     private String selected(){
         List<String> a=new ArrayList<>();if(ArchiveSync.selected(this,"clip"))a.add("selected clips and edits");
@@ -137,7 +139,10 @@ public final class ArchiveSyncActivity extends Activity {
                 .setMessage("This includes recognized words outside selected clips. Only completed journal sessions within the batch limit are eligible.")
                 .setPositiveButton("Include journals",(d,w)->opt("journal",true)).setNegativeButton("Cancel",(d,w)->render()).setOnCancelListener(d->render()).show();
         });
-        check("Require Wi-Fi",ArchiveSync.wifi(this),(b,on)->opt("wifi",on));
+        button("Upload network · "+ArchiveSync.networkLabel(this),()->pick("Upload network",
+            new String[]{"Wi-Fi only","Prefer Wi-Fi · mobile after 1 hour","Any network"},i->{
+                ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putBoolean("wifi",i==0).putBoolean("preferWifi",i==1).remove("wifiWait").commit();
+            }));
         check("Require charging",ArchiveSync.charging(this),(b,on)->opt("charging",on));
         button("Batch limit · "+size(ArchiveSync.cap(this)),()->pick("Maximum per transfer batch",new String[]{"8 MiB","32 MiB","128 MiB","256 MiB","512 MiB","1 GiB"},i->{
             ArchiveSync.changed(this);ArchiveSync.prefs(this).edit().putInt("capMiB",new int[]{8,32,128,256,512,1024}[i]).commit();
@@ -164,6 +169,8 @@ public final class ArchiveSyncActivity extends Activity {
                 .setMessage("Everyone within microphone range may be recorded. Audio stays on your phone until you choose to transfer it. You can turn this off at any time.")
                 .setNegativeButton("Cancel",null).setPositiveButton("Enable full audio",(d,w)->{ArchiveStore.setEnabled(this,true);render();}).show();
         });
+        check("Skip near-silent blocks in new full audio",ArchiveStore.prune(this),(b,v)->ArchiveStore.setPrune(this,v));
+        try(ArchiveStore store=new ArchiveStore(this)){label(store.savings(),15);}
         double perDay=rate*86400d/8;label(String.format(Locale.getDefault(),"%d kbps · %.2f GB per 24 hours · about %.2f TB for seven years of 24/7 audio before overhead.",
             rate/1000,perDay/1e9,perDay*365.2425*7/1e12),15);
         button("Audio quality · "+rate/1000+" kbps",()->pick("AAC bitrate",new String[]{"24 kbps · smaller","32 kbps · standard","48 kbps · higher quality"},i->ArchiveStore.setBitrate(this,new int[]{24000,32000,48000}[i])));
@@ -268,10 +275,10 @@ public final class ArchiveSyncActivity extends Activity {
             .setNegativeButton("Close",null);
         if(s.local){
             LinearLayout actions=new LinearLayout(this);actions.setOrientation(LinearLayout.VERTICAL);
-            TextView facts=new TextView(this);facts.setPadding(dp(20),dp(10),dp(20),dp(8));facts.setText(s.bitrate/1000+" kbps AAC · "+exact(s.bytes)+"\nRetain through "+date(s.retainUntilMs)+"\n"+s.status);actions.addView(facts);
+            TextView facts=new TextView(this);facts.setPadding(dp(20),dp(10),dp(20),dp(8));facts.setText(s.bitrate/1000+" kbps AAC · "+exact(s.bytes)+"\nRetain through "+date(s.retainUntilMs)+"\n"+s.status);actions.addView(facts);actions.addView(StoryNotes.button(this,StoryNotes.Kind.SEGMENT,s.id,""));
             Button analyze=new Button(this);analyze.setAllCaps(false);analyze.setText("Analyze recording");actions.addView(analyze);
             dialog.setMessage(null).setView(actions);
-            analyze.setOnClickListener(v->AudioSituation.show(this,ex->{try(ArchiveStore db=new ArchiveStore(this);FileInputStream in=db.openForPlayback(s.id)){ex.setDataSource(in.getFD());}}));
+            analyze.setOnClickListener(v->AudioSituation.show(this,StoryNotes.Kind.SEGMENT,s.id,ex->{try(ArchiveStore db=new ArchiveStore(this);FileInputStream in=db.openForPlayback(s.id)){ex.setDataSource(in.getFD());}}));
             dialog.setPositiveButton("Play",(d,w)->play(s.id));
             dialog.setNeutralButton("Export AAC",(d,w)->{
                 exportId=s.id;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/aac")

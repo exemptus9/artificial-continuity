@@ -97,6 +97,13 @@ public final class ArchiveSync extends JobService {
     }
     static boolean auto(Context c){return prefs(c).getBoolean("auto",false);}
     static boolean wifi(Context c){return prefs(c).getBoolean("wifi",true);}
+    static boolean preferWifi(Context c){return prefs(c).getBoolean("preferWifi",false);}
+    static String networkLabel(Context c){return wifi(c)?"Wi-Fi only":preferWifi(c)?"Prefer Wi-Fi · mobile after 1 hour":"Any network";}
+    static boolean onWifi(Context c){
+        ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
+        NetworkCapabilities caps=cm==null?null:cm.getNetworkCapabilities(cm.getActiveNetwork());
+        return caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
+    }
     static boolean charging(Context c){return prefs(c).getBoolean("charging",true);}
     public static String constraints(Context c){
         ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
@@ -104,12 +111,15 @@ public final class ArchiveSync extends JobService {
         NetworkCapabilities caps=n==null?null:cm.getNetworkCapabilities(n);
         if(caps==null)return "Waiting for network";
         if(wifi(c)&&!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI))return "Waiting for Wi-Fi";
+        long since=prefs(c).getLong("wifiWait",0);
+        if(preferWifi(c) && since>0 && !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && System.currentTimeMillis()-since<3600000L)
+            return "Waiting for preferred Wi-Fi · mobile allowed after 1 hour";
         BatteryManager battery=c.getSystemService(BatteryManager.class);
         if(charging(c)&&(battery==null||!battery.isCharging()))return "Waiting for charging";
         return "";
     }
     static String settings(Context c){
-        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c)+"|"+maxItems(c)+(minutes(c)==60?"":"|spacing="+minutes(c));
+        return selected(c,"clip")+"|"+selected(c,"segment")+"|"+selected(c,"journal")+"|"+wifi(c)+"|"+charging(c)+"|"+cap(c)+"|"+maxItems(c)+(preferWifi(c)?"|preferWifi":"")+(minutes(c)==60?"":"|spacing="+minutes(c));
     }
     public static final class Plan {
         public long totalCount,oversized;
@@ -219,12 +229,13 @@ public final class ArchiveSync extends JobService {
         schedule(c);
     }
     static synchronized void changed(Context c){
-        migrateLimits(c);cancel(c);
-        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfer settings changed. Preview or enable automatic transfers.").commit();
+        migrateLimits(c);cancel(c);LimitAlerts.remote(c,false);
+        prefs(c).edit().putBoolean("auto",false).remove("wifiWait").remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfer settings changed. Preview or enable automatic transfers.").commit();
         clearQueue(c);
     }
     public static synchronized void stop(Context c){
-        prefs(c).edit().putBoolean("auto",false).remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfers stopped").commit();cancel(c);clearQueue(c);
+        LimitAlerts.remote(c,false);
+        prefs(c).edit().putBoolean("auto",false).remove("wifiWait").remove("manual").remove("manualBacklog").remove("automaticPlan").putString("status","Transfers stopped").commit();cancel(c);clearQueue(c);
     }
     public static synchronized void reset(Context c){
         stop(c);prefs(c).edit().clear().commit();
@@ -271,6 +282,7 @@ public final class ArchiveSync extends JobService {
                 }
             }
             int status=conn.getResponseCode();
+            if(t!=null && (status==507 || status==429))LimitAlerts.remote(t.c,true);
             if(status!=200 && status!=201)throw new IOException(status==507?"Archive is full or below reserve.":"Archive HTTP "+status);
             ByteArrayOutputStream buf=new ByteArrayOutputStream();
             try(InputStream in=conn.getInputStream()){
@@ -396,16 +408,20 @@ public final class ArchiveSync extends JobService {
                     if(summary.bytes>(backlog?BACKLOG_BYTES:cap(c))||summary.count>(backlog?BACKLOG_ITEMS:maxItems(c)))
                         throw new IOException("Batch exceeds confirmed limits");
                     if(summary.count>0){
+                        if(preferWifi(c) && !onWifi(c) && !p.contains("wifiWait")){
+                            if(!p.edit().putLong("wifiWait",System.currentTimeMillis()).commit())throw new IOException("Cannot save Wi-Fi preference timer");
+                        }
+                        check();
                         JSONObject remoteStatus=exchange(remote,"/v2/status","GET",null,0,-1,this);
                         if(remoteStatus.getLong("availableBytes")<0)throw new IOException("Invalid server capacity");
                     }
                     for(ArchiveBatchQueue.Row row;(row=q.next(ref))!=null;){
-                        check();one(row.item);
+                        check();one(row.item);LimitAlerts.remote(c,false);
                         synchronized(ArchiveSync.class){check();q.done(ref,row.position);}
                     }
                     synchronized(ArchiveSync.class){
                         check();idle=manual==null && summary.count==0;
-                        SharedPreferences.Editor edit=p.edit().putString("status",idle?"No eligible items in this check":
+                        SharedPreferences.Editor edit=p.edit().remove("wifiWait").putString("status",idle?"No eligible items in this check":
                             "Batch checked · "+java.text.DateFormat.getDateTimeInstance().format(new Date()));
                         if(manual!=null)edit.remove("manual").remove("manualBacklog");else edit.remove("automaticPlan").putLong("next",idle?0:System.currentTimeMillis()+minutes(c)*60000L);
                         if(!edit.commit())throw new IOException("Unable to save transfer completion");
@@ -415,6 +431,10 @@ public final class ArchiveSync extends JobService {
         }
     }
     @Override public boolean onStartJob(JobParameters job){
+        if(job.getJobId()==LimitAlerts.JOB){
+            new Thread(()->{try{LimitAlerts.remind(this);}finally{jobFinished(job,false);}},"archive-limit-check").start();
+            return true;
+        }
         if(job.getJobId()==WATCH){schedule(this);return false;}
         final Transfer t;
         try{t=new Transfer(this);}catch(Exception e){return false;}
@@ -429,5 +449,5 @@ public final class ArchiveSync extends JobService {
             });
         },"archive-transfer").start();return true;
     }
-    @Override public boolean onStopJob(JobParameters job){if(job.getJobId()==WATCH)return false;Transfer t=jobRun;jobRun=null;if(t!=null)t.abort();return auto(this)||prefs(this).contains("manual");}
+    @Override public boolean onStopJob(JobParameters job){if(job.getJobId()==WATCH || job.getJobId()==LimitAlerts.JOB)return false;Transfer t=jobRun;jobRun=null;if(t!=null)t.abort();return auto(this)||prefs(this).contains("manual");}
 }

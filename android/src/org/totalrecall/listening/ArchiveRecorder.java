@@ -43,7 +43,7 @@ public final class ArchiveRecorder implements AutoCloseable {
             if(encoder!=null&&encoder.stage.bitrate!=rate)finish();
             if(encoder!=null&&now>=nextSpaceCheck &&
                     app.getFilesDir().getUsableSpace()<ArchiveStore.reserveMiB(app)*1024L*1024){
-                throw new IOException("Phone free space fell below the archive reserve");
+                LimitAlerts.local(app,true);throw new IOException("Phone free space fell below the archive reserve");
             }
             if(now>=nextSpaceCheck)nextSpaceCheck=now+2000;
             int offset=0;
@@ -51,13 +51,13 @@ public final class ArchiveRecorder implements AutoCloseable {
                 if(encoder==null){
                     if(nextStart==0)nextStart=System.currentTimeMillis()-(count-offset)*1000L/ArchiveStore.RATE;
                     ArchiveStore.Stage stage=store.stage(nextStart,rate);
-                    try{encoder=new Encoder(stage);}
+                    try{encoder=new Encoder(stage);encoder.prune=ArchiveStore.prune(app);}
                     catch(IOException|RuntimeException failure){store.discardEmpty(stage);throw failure;}
                 }
                 int n=(int)Math.min(count-offset,MAX_SAMPLES-encoder.samples);
                 encoder.write(pcm,offset,n);offset+=n;
                 if(gap>=0){store.endGap(gap,encoder.stage.start);gap=-1;}
-                if(encoder.samples>=MAX_SAMPLES)finish();
+                if(encoder.samples>=MAX_SAMPLES || (encoder.prune && encoder.trailingQuiet>=5L*ArchiveStore.RATE))finish();
             }
         }catch(IOException|RuntimeException failure){
             long last=encoder==null?nextStart:encoder.stage.start;
@@ -83,6 +83,10 @@ public final class ArchiveRecorder implements AutoCloseable {
         finally{media.close();}
         if(!media.stage.partial.isFile()||media.stage.partial.length()==0){
             store.discardEmpty(media.stage);throw new IOException("Encoder produced no complete audio frames");
+        }
+        if(incomplete==null && media.prune && media.samples>=2L*ArchiveStore.RATE && media.samples==media.trailingQuiet){
+            long end=media.stage.start+media.samples*1000L/ArchiveStore.RATE;
+            store.omitQuiet(media.stage,end);nextStart=end;return;
         }
         ArchiveStore.Segment segment=store.seal(media.stage,incomplete==null?media.samples:-1);
         nextStart=segment.endMs;scheduleSync();
@@ -115,7 +119,8 @@ public final class ArchiveRecorder implements AutoCloseable {
         MediaCodec codec;
         FileOutputStream file;
         BufferedOutputStream out;
-        boolean started;
+        boolean started,prune;
+        long trailingQuiet;
         long samples,lastSync;
         Encoder(ArchiveStore.Stage s)throws IOException{
             stage=s;
@@ -147,6 +152,7 @@ public final class ArchiveRecorder implements AutoCloseable {
                 int n=Math.min(left,block.remaining()/2);if(n==0)throw new IOException("AAC input buffer is empty");
                 block.asShortBuffer().put(pcm,off,n);
                 codec.queueInputBuffer(ix,0,n*2,samples*1000000L/ArchiveStore.RATE,0);
+                if(prune)for(int i=off;i<off+n;i++)trailingQuiet=Math.abs((int)pcm[i])<=4?trailingQuiet+1:0;
                 samples+=n;off+=n;left-=n;drain(false);
             }
             long now=SystemClock.elapsedRealtime();

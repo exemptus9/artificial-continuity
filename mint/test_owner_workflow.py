@@ -41,6 +41,37 @@ class OwnerWorkflow(unittest.TestCase):
         for file in files:laptop.finish(self.arc,file,laptop.BASE)
         self.assertEqual(self.arc.status()["counts"],dict(segment=1,journal=0,clip=1))
         self.assertEqual(review.inbox(self.arc,"inbox",0)["total"],1)
+    def test_story_conflict_search_delete(self):
+        uid=self.stage(True)
+        fields=dict(kind="clip",id=uid,action="story",body="Working on the lighthouse illustration.",revision=0)
+        self.assertEqual(review.classify(self.arc,fields)["revision"],1)
+        with self.assertRaises(recall_archive.Failure):review.classify(self.arc,fields)
+        item=web.lookup(self.arc,"clip",uid)
+        self.assertEqual(item["story"]["body"],fields["body"])
+        self.assertEqual(web.items(self.arc,"all","lighthouse",10,0)["total"],1)
+        review.delete(self.arc,dict(kind="clip",id=uid,sha256=item["sha256"]))
+        with self.arc.connection() as db:self.assertEqual(db.execute("SELECT count(*) FROM item_stories").fetchone()[0],0)
+
+    def test_quiet_pruning_preserves_marks_old_spools_and_audible_frames(self):
+        stamp=recall_archive.now()-4000
+        for i,(prefix,peak) in enumerate((("quietcheck",4),("quietcheck",7),("mark",0),("segment",0))):
+            path=self.root/f"{prefix}-{stamp+i}-abc.pcm"
+            path.write_bytes(bytes(64000)+peak.to_bytes(2,"little"))
+            laptop.finish(self.arc,path,laptop.BASE)
+            self.assertFalse(path.exists())
+        self.assertEqual(self.arc.status()["counts"],dict(clip=1,segment=2,journal=0))
+        self.assertEqual(laptop.read(self.root/"last-omission.json",{})["at"],stamp)
+
+    def test_wifi_fallback_and_strict_policy(self):
+        laptop.write(self.root/"settings.json",dict(network="Prefer Wi-Fi for 1 hour"))
+        with patch.object(laptop,"on_wifi",return_value=False):
+            self.assertTrue(laptop.wait_for_wifi(self.root,"a"))
+            laptop.write(self.root/"wifi-wait.json",dict(since=time.time()-3601))
+            self.assertFalse(laptop.wait_for_wifi(self.root,"b"))
+            laptop.write(self.root/"settings.json",dict(network="Wi-Fi only"))
+            self.assertTrue(laptop.wait_for_wifi(self.root,"b"))
+        with patch.object(laptop,"on_wifi",return_value=True):self.assertFalse(laptop.wait_for_wifi(self.root,"b"))
+
     def test_review_delete_and_prevent_reimport(self):
         uid=self.stage(True);self.assertEqual(review.inbox(self.arc,"inbox",0)["total"],1)
         item=dict(kind="clip",id=uid)

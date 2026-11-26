@@ -21,19 +21,40 @@ public final class ArchiveStore extends SQLiteOpenHelper {
     private static final Object LOCK=new Object();
     private static final String COLS="id,start,end,duration,size,bitrate,sha,receipt,state,until_ms";
     private final Context app;
-    public ArchiveStore(Context c){super(c.getApplicationContext(),DB,null,1);app=c.getApplicationContext();}
+    public ArchiveStore(Context c){super(c.getApplicationContext(),DB,null,2);app=c.getApplicationContext();}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE segments(id TEXT PRIMARY KEY,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,duration INTEGER NOT NULL DEFAULT 0,size INTEGER NOT NULL DEFAULT 0,bitrate INTEGER NOT NULL,sha TEXT NOT NULL DEFAULT '',receipt TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,until_ms INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX segments_state_start ON segments(state,start)");
+        createOmissions(db);
         db.execSQL("CREATE TABLE gaps(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){throw new IllegalStateException("Unknown archive schema");}
+    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){if(from==1 && to==2){createOmissions(db);return;}throw new IllegalStateException("Unknown archive schema");}
+    private static void createOmissions(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE IF NOT EXISTS quiet_blocks(id TEXT PRIMARY KEY,start INTEGER,end INTEGER,bytes INTEGER)");
+    }
+    static boolean prune(Context c){return prefs(c).getBoolean("prune",false);}
+    static void setPrune(Context c,boolean on){commit(prefs(c).edit().putBoolean("prune",on).putLong("epoch",epoch(c)+1));}
+    String savings(){
+        try(Cursor cur=getReadableDatabase().rawQuery("SELECT count(*),coalesce(sum(end-start),0),coalesce(sum(bytes),0) FROM quiet_blocks",null)){
+            cur.moveToFirst();return cur.getLong(0)+" blocks omitted · "+cur.getLong(1)/1000+" s · "+cur.getLong(2)/1024+" KiB saved";
+        }
+    }
+    void omitQuiet(Stage stage,long end)throws IOException{synchronized(LOCK){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try{
+            db.execSQL("INSERT INTO quiet_blocks VALUES(?,?,?,?)",new Object[]{stage.id,stage.start,end,stage.partial.length()});
+            if(db.delete("segments","id=? AND state='staging'",arg(stage.id))!=1)throw new IOException("Recording catalog changed");
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        if(!unlink(stage.partial))issue(app,"Quiet block cleanup pending");
+    }}
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences(PREF,Context.MODE_PRIVATE);}
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
     static long epoch(Context c){return prefs(c).getLong("epoch",0);}
     public static void setEnabled(Context c,boolean on){synchronized(LOCK){
         SharedPreferences p=prefs(c);if(enabled(c)==on)return;
         commit(p.edit().putBoolean("enabled",on).putLong("epoch",epoch(c)+1));
+        if(!on)LimitAlerts.local(c,false);
     }}
     public static int bitrate(Context c){return prefs(c).getInt("bitrate",32000);}
     public static void setBitrate(Context c,int value){
@@ -166,7 +187,8 @@ public final class ArchiveStore extends SQLiteOpenHelper {
         Stage(String uid,long time,File f,int b){id=uid;start=time;partial=f;bitrate=b;}
     }
     Stage stage(long start,int b)throws IOException{synchronized(LOCK){
-        if(!maintain())throw new IOException("Phone archive budget or minimum free space reached");
+        if(!maintain()){LimitAlerts.local(app,true);throw new IOException("Phone archive budget or minimum free space reached");}
+        LimitAlerts.local(app,false);
         File dir=directory();if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Unable to create archive directory");
         String id=UUID.randomUUID().toString();
         ContentValues v=new ContentValues();v.put("id",id);v.put("start",start);v.put("bitrate",b);v.put("state","staging");
@@ -222,6 +244,13 @@ public final class ArchiveStore extends SQLiteOpenHelper {
         if(!app.getDatabasePath(DB).exists())return;
         long now=System.currentTimeMillis();
         getWritableDatabase().execSQL("UPDATE gaps SET end=MAX(start,?) WHERE end=0",new Object[]{now});
+        File[] partials=directory().listFiles((dir,name)->name.endsWith(".part"));
+        if(partials!=null)for(File f:partials){
+            String id=f.getName().substring(0,f.getName().length()-5);
+            try(Cursor cur=getReadableDatabase().rawQuery("SELECT 1 FROM quiet_blocks WHERE id=?",arg(id))){
+                if(cur.moveToFirst())unlink(f);
+            }
+        }
         for(Segment row:list("state='staging'",2000,0)){
             Stage stage=new Stage(row.id,row.startMs,file(row.id,true),row.bitrate);long end=row.startMs;
             File source=file(row.id,false).isFile()?file(row.id,false):stage.partial;

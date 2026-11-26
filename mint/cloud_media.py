@@ -400,7 +400,7 @@ class CloudMedia:
         with closing(sqlite3.connect(path)) as snap, snap:
             snap.execute("ATTACH DATABASE ? AS src",(str(self.archive.path),))
             snap.execute("BEGIN")
-            tables=("cloud_identity","cloud_media","cloud_wavs","clip_original_sizes","clips","observations","archive_settings","archive_uploads","cloud_transfer_month","owner_reviews","owner_options","deleted_items")
+            tables=("cloud_identity","cloud_media","cloud_wavs","clip_original_sizes","clips","observations","archive_settings","archive_uploads","cloud_transfer_month","owner_reviews","item_stories","recording_evidence","owner_options","deleted_items")
             for table in tables:
                 ddl=snap.execute("SELECT sql FROM src.sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
                 if not ddl and table=="cloud_transfer_month": continue

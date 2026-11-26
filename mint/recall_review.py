@@ -9,6 +9,8 @@ from recall_archive import Failure,UID,archive_lock,now,sync_dir
 DEFAULT_LABELS=["Forge Lexicon","Poem draft","Project decision","To do","Connection"]
 SCHEMA="""
 CREATE TABLE IF NOT EXISTS owner_reviews(kind TEXT,id TEXT,state TEXT,labels TEXT,name TEXT,writing TEXT,heard TEXT,updated INTEGER,PRIMARY KEY(kind,id));
+CREATE TABLE IF NOT EXISTS item_stories(kind TEXT,id TEXT,body TEXT,rev INTEGER,PRIMARY KEY(kind,id));
+CREATE TABLE IF NOT EXISTS recording_evidence(kind TEXT,id TEXT,offset INTEGER,mode TEXT,cues TEXT,PRIMARY KEY(kind,id,offset,mode));
 CREATE TABLE IF NOT EXISTS owner_options(slot INTEGER PRIMARY KEY,config TEXT);
 CREATE TABLE IF NOT EXISTS deleted_items(kind TEXT,id TEXT,PRIMARY KEY(kind,id));
 """
@@ -45,6 +47,13 @@ def classify(arc,data):
     with arc.connection() as db:
         db.execute("BEGIN IMMEDIATE");require(db,kind,uid)
         r=review(db,kind,uid)
+        if action=="story":
+            body=clean_text(data.get("body"),12000)
+            old=db.execute("SELECT rev FROM item_stories WHERE kind=? AND id=?",(kind,uid)).fetchone()
+            revision=old[0] if old else 0
+            if type(data.get("revision"))!=int or data["revision"]!=revision:raise Failure(409,"Story changed. Reopen the item to see the saved version.")
+            db.execute("INSERT OR REPLACE INTO item_stories VALUES(?,?,?,?)",(kind,uid,body,revision+1))
+            return dict(body=body,revision=revision+1)
         if action in ("add","remove"):
             label=clean_text(data.get("label"),42)
             if not label:raise Failure(400,"Choose a category")
@@ -99,7 +108,8 @@ def delete(arc,data):
                     if head.get("Metadata",{}).get("archive")!=cloud.instance:raise Failure(409,"Storage ownership changed")
                     cloud._call(cloud.s3.delete_object,Key=obj[0])
                 db.execute("DELETE FROM "+table+" WHERE id=?",(uid,))
-        db.execute("DELETE FROM owner_reviews WHERE kind=? AND id=?",(kind,uid))
+        for table in ("owner_reviews","item_stories","recording_evidence"):
+            db.execute("DELETE FROM "+table+" WHERE kind=? AND id=?",(kind,uid))
         db.execute("INSERT INTO deleted_items VALUES(?,?)",(kind,uid))
         if kind=="clip":
             for table,key in (("observations","clip_id"),("clip_original_sizes","id"),("clips","id")):

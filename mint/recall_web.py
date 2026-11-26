@@ -77,10 +77,10 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
         variants=[heard for name,heard in aliases if name==term][:8]
         prepared=where.pop()
         parts=[prepared for _ in [term,*variants]]
-        parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')),?)>0")
+        parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')||' '||coalesce(st.body,'')),?)>0 OR EXISTS(SELECT 1 FROM recording_evidence ev,json_each(ev.cues) ec WHERE ev.id=a.id AND ev.kind=a.kind AND instr(fold_text(json_extract(ec.value,'$.quote')),?)>0)")
         where.append("("+ " OR ".join(parts)+")")
-        args.extend((term,*variants,term))
-    sql=" FROM ("+BASE_SQL+") a LEFT JOIN owner_reviews rv ON rv.kind=a.kind AND rv.id=a.id"+(" WHERE "+" AND ".join(where) if where else "")
+        args.extend((term,*variants,term,term))
+    sql=" FROM ("+BASE_SQL+") a LEFT JOIN owner_reviews rv ON rv.kind=a.kind AND rv.id=a.id LEFT JOIN item_stories st ON st.kind=a.kind AND st.id=a.id"+(" WHERE "+" AND ".join(where) if where else "")
     with arc.connection() as db:
         if category: db.create_function("has_clip_label",2,lambda value,wanted: wanted in category_keys(value),deterministic=True)
         if terms: db.create_function("fold_text",1,str.casefold,deterministic=True)
@@ -115,7 +115,14 @@ def lookup(arc,kind,uid):
     result=item(row,True)
     with arc.connection() as db:
         result["review"]=recall_review.review(db,kind,uid);result["filingOptions"]=recall_review.options(db)
-    result["situation"]=situation.context_for(result)
+        story=db.execute("SELECT body,rev FROM item_stories WHERE kind=? AND id=?",(kind,uid)).fetchone()
+        result["story"]=dict(body=story[0],revision=story[1]) if story else dict(body="",revision=0)
+        evidence=list(db.execute("SELECT offset,mode,cues FROM recording_evidence WHERE kind=? AND id=? ORDER BY offset,mode",(kind,uid)))
+    groups=situation.context_for(result)
+    for offset,mode,cues in evidence:
+        if json.loads(cues):groups.append(dict(source="Recording · "+mode+" · "+situation.stamp(offset),items=json.loads(cues)))
+    result["situation"]=groups
+    result["story"]["draft"]=situation.story_draft(groups)
     return result
 
 # Stable labels written by Android SelectiveEngine and Store. A single clip can have several.
