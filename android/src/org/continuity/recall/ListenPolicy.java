@@ -20,6 +20,7 @@ public final class ListenPolicy {
     }
   }
   static void pauseService(Context c) {
+    RecallService.clearResume(c);
     if (RecallService.isListening()) RecallService.command(c, RecallService.PAUSE);
   }
 }

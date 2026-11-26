@@ -115,6 +115,31 @@ class HostedArchiveTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_installer_resumes_without_redirect_or_signin(self):
+        payload=b"0123456789abcdefghij";digest=hashlib.sha256(payload).hexdigest()
+        name="TotalRecall-fixture.apk";release=(name,len(payload),digest)
+        key="total-recall/installers/"+digest+"/"+name
+        self.bucket.put_object(Bucket="fixture",Key=key,Body=payload,Metadata={"sha256":digest})
+        import hmac
+        tag=hmac.digest(self.server.session_key,("download-apk/"+digest).encode(),"sha256").hex()[:32]
+        path=f"/downloads/{tag}/{name}"
+        with patch.object(cloud_host,"PREVIOUS_APK",release):
+            status,h,data=self.request("HEAD",path)
+            self.assertEqual((status,h["Content-Length"],data),(200,"20",b""))
+            self.assertIn(name,h["Content-Disposition"]);self.assertNotIn("Location",h)
+            etag=h["ETag"]
+            halves=[]
+            for interval,expected in (("0-7","0-7"),("8-","8-19"),("-2","18-19")):
+                status,h,data=self.request("GET",path,headers={"Range":"bytes="+interval,"If-Range":etag})
+                self.assertEqual((status,h["Content-Range"]),(206,"bytes "+expected+"/20"))
+                halves.append(data)
+            self.assertEqual(halves[0]+halves[1],payload);self.assertEqual(halves[2],payload[-2:])
+            status,_,data=self.request("GET",path,headers={"Range":"bytes=10-","If-Range":'"old"'})
+            self.assertEqual((status,data),(200,payload))
+            for invalid in ("bytes=20-","bytes=-0","bytes=7-2","bytes=0-1,4-5"):
+                status,h,_=self.request("GET",path,headers={"Range":invalid})
+                self.assertEqual((status,h["Content-Range"]),(416,"bytes */20"))
+
     def login(self):
         status,h,_ = self.request("POST","/login",urlencode({"key":self.owner_key}),self.origin)
         self.assertEqual(status,303)

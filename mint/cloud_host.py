@@ -154,11 +154,52 @@ class HostedHandler(recall_web.OwnerHandler):
                 head=media._head(key)
                 if head and head["ContentLength"]==size and head.get("Metadata",{}).get("sha256")==digest:break
             else:return self.json(503,{"error":"The Android installer is not available yet."})
-            method="head_object" if self.command=="HEAD" else "get_object"
-            url=media.s3.generate_presigned_url(method,Params={"Bucket":media.bucket,"Key":key},ExpiresIn=3600)
         except Exception:
             return self.json(503,{"error":"The installer is temporarily unavailable."})
-        self.send_response(307);self.send_header("Location",url);self.send_header("Content-Length","0");self.end_headers()
+
+        # Keep a stable origin, filename, byte count and validator across download-manager retries.
+        etag='"'+digest+'"'
+        header=self.headers.get("Range") if self.headers.get("If-Range",etag)==etag else None
+        first,last=0,size-1
+        if header is not None:
+            match=re.fullmatch(r"bytes=(\d{0,18})-(\d{0,18})",header.strip())
+            if match and any(match.groups()):
+                left,right=match.groups()
+                first=int(left) if left else max(0,size-int(right))
+                last=min(size-1,int(right)) if left and right else size-1
+            else:first=size
+            if first>last:
+                self.send_response(416);self.send_header("Content-Range",f"bytes */{size}")
+                self.send_header("Content-Length","0");self.end_headers();return
+        length=last-first+1
+        stream=None
+        if self.command!="HEAD":
+            try:
+                params={"Range":f"bytes={first}-{last}"} if header is not None else {}
+                obj=media._call(media.s3.get_object,Key=key,**params)
+                stream=obj["Body"]
+                if obj["ContentLength"]!=length or (header is not None and obj.get("ContentRange")!=f"bytes {first}-{last}/{size}"):
+                    raise ValueError("Unexpected installer range")
+            except Exception:
+                if stream is not None:stream.close()
+                return self.json(503,{"error":"The installer is temporarily unavailable."})
+        try:
+            self.send_response(206 if header is not None else 200)
+            self.send_header("Content-Type",APK_MIME)
+            self.send_header("Content-Disposition",'attachment; filename="'+name+'"')
+            self.send_header("Accept-Ranges","bytes")
+            self.send_header("ETag",etag)
+            self.send_header("Content-Length",str(length))
+            if header is not None:self.send_header("Content-Range",f"bytes {first}-{last}/{size}")
+            self.end_headers()
+            while stream is not None and length:
+                block=stream.read(min(length,256*1024))
+                if not block:break
+                self.wfile.write(block);length-=len(block)
+        except (OSError,ConnectionError):
+            self.close_connection=True
+        finally:
+            if stream is not None:stream.close()
 
     def install_apk(self):
         if not self.auth() or self.headers.get("Origin")!="https://"+self.server.public_host:

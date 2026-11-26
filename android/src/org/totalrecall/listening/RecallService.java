@@ -16,11 +16,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Single user-started microphone owner. All speech and detection work runs off the activity thread. */
 public final class RecallService extends Service {
     private static final String NS="org.totalrecall.listening.";
-    public static final String START=NS+"START",PAUSE=NS+"PAUSE",KEEP=NS+"KEEP",
+    public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",KEEP=NS+"KEEP",
         MISSED=NS+"MISSED",DISCARD_LAST=NS+"DISCARD_LAST",ACTION_CHANGED=NS+"CHANGED";
     private static final String CHANNEL="total_recall_listening";
     private static final String PREFS="total_recall_session";
-    private static final int NOTIFICATION=9021;
+    private static final int NOTIFICATION=9021, RESUME_NOTIFICATION=9022;
+    private volatile boolean userPaused;
     private static volatile boolean running;
     private static volatile String current="";
     private final ConcurrentLinkedQueue<String> commands=new ConcurrentLinkedQueue<>();
@@ -31,11 +32,27 @@ public final class RecallService extends Service {
     private Thread worker;
     private int lastStart;
     public static boolean isListening(){return running;}
+    public static long pausedAt(Context c){return c.getSharedPreferences(PREFS,MODE_PRIVATE).getLong("pausedAt",0);}
+    public static void clearResume(Context c){
+        c.getSharedPreferences(PREFS,MODE_PRIVATE).edit().remove("pausedAt").commit();
+        NotificationManager nm=c.getSystemService(NotificationManager.class);if(nm!=null)nm.cancel(RESUME_NOTIFICATION);
+    }
+    private void showResume(long since){
+        if(since<=0||!ListenPolicy.allowed(this))return;
+        Intent open=new Intent(this,RecallListenActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra("overlayStart",true).putExtra("resumeAt",since);
+        PendingIntent tap=PendingIntent.getActivity(this,203,open,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification n=new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_media_pause)
+            .setContentTitle("Total Recall paused").setContentText("Microphone off · tap to resume listening")
+            .setContentIntent(tap).setAutoCancel(true).setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_media_play,"Resume",tap).build();
+        try{notifications().notify(RESUME_NOTIFICATION,n);}catch(SecurityException ignored){}
+    }
     public static String status(Context c){
         if(running)return current;
         SharedPreferences p=c.getSharedPreferences(PREFS,MODE_PRIVATE);
         if(p.getBoolean("active",false))return "Session interrupted · resume listening";
-        return p.getString("last","Paused");
+        return pausedAt(c)>0?"Paused · microphone off":p.getString("last","Paused");
     }
     public static void command(Context c,String action){
         Intent i=new Intent(c,RecallService.class).setAction(action);
@@ -59,7 +76,7 @@ public final class RecallService extends Service {
         b.setContentTitle("Total Recall").setContentText(label).setSmallIcon(icon!=0?icon:android.R.drawable.ic_btn_speak_now)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(PendingIntent.getActivity(this,199,activity,flags));
-        String[] actions=capturing&&!stopping.get()?new String[]{KEEP,PAUSE}:new String[]{PAUSE};
+        String[] actions=capturing&&!stopping.get()?new String[]{KEEP,USER_PAUSE}:new String[]{USER_PAUSE};
         for(String act:actions){
             boolean keep=KEEP.equals(act);Intent i=new Intent(this,RecallService.class).setAction(act);
             b.addAction(keep?android.R.drawable.ic_menu_save:android.R.drawable.ic_media_pause,
@@ -86,11 +103,12 @@ public final class RecallService extends Service {
                 changed();stopSelf(startId);return START_NOT_STICKY;
             }
             if(worker==null){
-                stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
+                notifications().cancel(RESUME_NOTIFICATION);userPaused=false;stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
                 worker=new Thread(this::listen,"Recall-Mic");worker.start();
             }
         }else if(worker!=null){
-            if(PAUSE.equals(action)){
+            if(PAUSE.equals(action)||USER_PAUSE.equals(action)){
+                userPaused=USER_PAUSE.equals(action);
                 stopping.set(true);LiveCapture.stop("Pausing");RecallOverlay.sessionEnded(this);progress("Pausing");
                 // stop() also unblocks a native read if the microphone route went away.
                 AudioRecord rec=liveRecorder;
@@ -229,7 +247,7 @@ public final class RecallService extends Service {
                         }
                         try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
                     }
-                    @Override public void onPauseRequested(){stopping.set(true);}
+                    @Override public void onPauseRequested(){userPaused=true;stopping.set(true);}
                 };
                 try(OfflineSpeech speech=new OfflineSpeech(app)){
                     try(java.io.InputStream dictionary=getAssets().open("listening/cmudict-prosody.tsv.gz")){SelectiveEngine.loadPronunciations(dictionary);}
@@ -238,6 +256,7 @@ public final class RecallService extends Service {
                     AudioManager manager=(AudioManager)getSystemService(AUDIO_SERVICE);
                     Window window=new Window(store,journal,speech,listener);
                     short[] frame=new short[1600];MicrophoneContinuity continuity=new MicrophoneContinuity();
+                    long priorPause=pausedAt(app);
                     long retry=500,zeroSince=0;boolean selecting=false;String route="",resumeNote="";
                     try {
                         while(stillArmed()){
@@ -302,6 +321,11 @@ public final class RecallService extends Service {
                                 Arrays.fill(frame,(short)0);commands.clear();continue;
                             }
                             retry=500;
+                            if(priorPause>0){
+                                String pauseNote="Resumed after a manual pause of "+Math.max(0,System.currentTimeMillis()-priorPause)/1000+" s";
+                                store.gap(pauseNote);resumeNote=resumeNote.isEmpty()?pauseNote:pauseNote+" · "+resumeNote;
+                                prefs.edit().remove("pausedAt").commit();priorPause=0;
+                            }
                             archive.accept(frame,count);
                             String next=route(rec);
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
@@ -341,8 +365,9 @@ public final class RecallService extends Service {
             String result=end;LiveCapture.stop(result);RecallOverlay.sessionEnded(this);
             new Handler(Looper.getMainLooper()).post(()->{
                 worker=null;commands.clear();prefs.edit().putBoolean("active",false).putString("last",result).commit();
+                if(userPaused && ListenPolicy.allowed(this))prefs.edit().putLong("pausedAt",System.currentTimeMillis()).commit();
                 current=result;running=false;
-                if(!destroyed){stopForeground(true);changed();stopSelf(lastStart);}
+                if(!destroyed){stopForeground(true);if(pausedAt(this)>0)showResume(pausedAt(this));changed();stopSelf(lastStart);}
             });
         }
     }
@@ -375,7 +400,7 @@ public final class RecallService extends Service {
         }return "input route unreported";
     }
     @Override public void onDestroy(){
-        destroyed=true;stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.sessionEnded(this);
+        destroyed=true;stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);
         AudioRecord rec=liveRecorder;
         if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
         super.onDestroy();

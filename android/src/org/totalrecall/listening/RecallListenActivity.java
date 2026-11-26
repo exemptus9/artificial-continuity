@@ -169,6 +169,8 @@ public final class RecallListenActivity extends Activity {
     private void applyIntentQuery(Intent intent){
         if(intent!=null&&intent.getBooleanExtra("overlayStart",false)){
             intent.removeExtra("overlayStart");
+            long expected=intent.getLongExtra("resumeAt",0);
+            if(expected>0 && (expected!=RecallService.pausedAt(this)||!org.continuity.recall.ListenPolicy.allowed(this)))return;
             main.post(()->{if(alive()&&hasWindowFocus()&&!RecallService.isListening())tappedListen();
                 else if(alive()&&!RecallService.isListening())scheduleOverlayStart();});
         }
@@ -214,7 +216,7 @@ public final class RecallListenActivity extends Activity {
         firstUse.setVisibility(active||getPreferences(0).getBoolean("listened",false)?View.GONE:View.VISIBLE);
         String current=RecallService.status(this);
         state.setText(current==null||current.trim().isEmpty()?(active?"Listening on this phone.":"Paused. Start a session when you want to listen."):current);
-        toggle.setText(active?"Pause listening":"Start listening");
+        toggle.setText(active?"Pause listening":RecallService.pausedAt(this)>0?"Resume listening":"Start listening");
         toggle.setEnabled(!commandPending&&!searchRecording);
         View keep=manualActions.findViewWithTag("live-keep");keep.setVisibility(active?View.VISIBLE:View.GONE);
         micLabel.setText(active?"MIC ON":"MIC OFF");meterLive=active;
@@ -443,7 +445,7 @@ public final class RecallListenActivity extends Activity {
     }
     private void tappedListen(){
         endSpeech();stopPlayer();
-        if(RecallService.isListening()){command(RecallService.PAUSE);return;}
+        if(RecallService.isListening()){command(RecallService.USER_PAUSE);return;}
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED
             || (Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED
                 &&!getPreferences(0).getBoolean("noticeAsked",false))){
@@ -467,7 +469,7 @@ public final class RecallListenActivity extends Activity {
     private void command(String action){
         try{
             RecallService.command(this,action);
-            if(action.equals(RecallService.START)||action.equals(RecallService.PAUSE)){
+            if(action.equals(RecallService.START)||action.equals(RecallService.USER_PAUSE)){
                 commandPending=true;toggle.setEnabled(false);state.setText(action.equals(RecallService.START)?"Starting microphone…":"Pausing…");
                 main.postDelayed(()->{if(alive()){commandPending=false;refresh();}},800);
             }
@@ -478,7 +480,7 @@ public final class RecallListenActivity extends Activity {
             .setMessage("Start a session while everyone nearby knows the microphone is active. Speak naturally as you work. The meter shows microphone input, and the live words are an on-device transcription.\n\n"
                 +"Repeated lines, rhymes, words you define and project decisions can trigger a clip. Recall includes the lead-in. Under More → Capture sensitivity, choose More saves for freestyle or Fewer saves for a quieter timeline.\n\n"
                 +"Keep last minute saves on demand. You can also say “Lexi, keep the last minute.” A brief vibration acknowledges a manual catch when available. Rate clips to tune later selections.\n\n"
-                +"With full audio off, ordinary audio expires from memory. Archive & sync can retain the complete audio, and Text journal can retain the recognized words. An interrupted microphone creates a coverage gap until input returns. Pause ends the session.")
+                +"With full audio off, ordinary audio expires from memory. Archive & sync can retain the complete audio, and Text journal can retain the recognized words. An interrupted microphone creates a coverage gap until input returns. Pause releases the microphone. Resume starts a new audio segment and marks the break.")
             .setPositiveButton("Got it",null).show();
     }
 

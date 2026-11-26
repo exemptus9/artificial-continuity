@@ -135,6 +135,7 @@ public final class Store extends SQLiteOpenHelper {
     }
     /** Reset only after the active service has released its archive handles. */
     public static void reset(Context app){
+        RecallService.clearResume(app);
         if(RecallService.isListening()){
             RecallService.command(app,RecallService.PAUSE);
             throw new IllegalStateException("Listening is stopping. Retry reset once paused.");

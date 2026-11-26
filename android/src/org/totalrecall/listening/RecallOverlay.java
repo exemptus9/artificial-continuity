@@ -31,6 +31,14 @@ public final class RecallOverlay {
     }
     public static void sessionEnded(Context c) { MAIN.post(RecallOverlay::stop); }
 
+    static void afterService(Context c){
+        Context app=c.getApplicationContext();
+        MAIN.post(()->{
+            if(RecallService.isListening()){stop();return;}
+            if(RecallService.pausedAt(app)>0 && org.continuity.recall.ListenPolicy.allowed(app))show(app,true);
+            else stop();
+        });
+    }
     static void idlePreview(Context c) {
         Context app=c.getApplicationContext();
         MAIN.post(()->show(app,!RecallService.isListening()));
@@ -84,7 +92,7 @@ public final class RecallOverlay {
         final BroadcastReceiver screen=new BroadcastReceiver() {
             @Override public void onReceive(Context c,Intent i){
                 if(Intent.ACTION_SCREEN_OFF.equals(i.getAction())){
-                    if(preview) {stop();return;}
+                    if(preview && !resumePanel()) {stop();return;}
                     detach();
                 }
                 tick();
@@ -185,11 +193,12 @@ public final class RecallOverlay {
                 showText(caption,s.waiting?"Words paused while the mic is busy":line.isEmpty()?"Waiting for words…":line);
             }
         }
+        boolean resumePanel(){return preview && RecallService.pausedAt(app)>0;}
         void tick() {
             MAIN.removeCallbacks(pulse);
             if(active!=this)return;
             if(!enabled(app)||!Settings.canDrawOverlays(app)||(!preview && !RecallService.isListening())||
-               (preview && SystemClock.elapsedRealtime()>=expires)) {stop();return;}
+               (preview && ((!resumePanel() && SystemClock.elapsedRealtime()>=expires) || (resumePanel() && !org.continuity.recall.ListenPolicy.allowed(app))))) {stop();return;}
             PowerManager pm=app.getSystemService(PowerManager.class);
             KeyguardManager km=app.getSystemService(KeyguardManager.class);
             if(pm==null||km==null||!pm.isInteractive()||km.isKeyguardLocked()){
@@ -207,7 +216,7 @@ public final class RecallOverlay {
             root=new DragSurface();root.setOrientation(LinearLayout.VERTICAL);
             GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(21,43,45));bg.setCornerRadius(dp(14));
             root.setBackground(bg);root.setPadding(dp(6),dp(4),dp(6),dp(4));root.setElevation(dp(6));root.setFilterTouchesWhenObscured(true);
-            status=label(preview?"Preview · microphone off":"Opening microphone",13);
+            status=label(resumePanel()?"Paused · microphone off":preview?"Preview · microphone off":"Opening microphone",13);
             status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             if(!preview){
                 meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);
@@ -216,8 +225,9 @@ public final class RecallOverlay {
                 root.addView(meter,new LinearLayout.LayoutParams(-1,dp(5)));
             }
             LinearLayout actions=row(root);
-            if(preview)control(actions,"Start","Start listening",v->openApp(true));
+            if(preview)control(actions,resumePanel()?"Resume":"Start",resumePanel()?"Resume listening":"Start listening",v->openApp(true));
             else keep=control(actions,expanded?"Keep last 1m":"Keep 1m","Keep the last minute",v->request(RecallService.KEEP,"Keep requested"));
+            if(!preview && !expanded)control(actions,"Pause","Pause listening",v->command(RecallService.USER_PAUSE));
             control(actions,"Open app","Open Total Recall",v->openApp(false));
             control(actions,expanded?"Shrink":"Expand",expanded?"Shrink overlay":"Expand overlay",v->resize());
             control(actions,"×","Hide floating controls",v->stop());
@@ -228,14 +238,14 @@ public final class RecallOverlay {
                 boolean showWords=prefs.getBoolean("captions",false);
                 words=control(shortcuts,showWords?"Hide words":"Live words",showWords?"Hide live words":"Show live words",v->changeCaptions(app,!showWords));
                 control(shortcuts,"Archive","Open archive and sync",v->openScreen(ArchiveSyncActivity.class,false));
-                control(shortcuts,"Pause","Pause and clear temporary audio",v->{command(RecallService.PAUSE);});
+                control(shortcuts,"Pause","Pause and clear temporary audio",v->{command(RecallService.USER_PAUSE);});
                 if(showWords){
                     caption=label("Waiting for words…",15);caption.setMaxLines(3);
                     caption.setGravity(Gravity.BOTTOM);
                 }
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
-            layout.width=Math.min(dp(expanded?326:266),Math.max(dp(100),screenWidth-dp(12)));
+            layout.width=Math.min(dp(expanded?326:preview?266:330),Math.max(dp(100),screenWidth-dp(12)));
             preserveBoundary();
             try {wm.addView(root,layout);visible=true;}
             catch(RuntimeException e){stop();}
@@ -251,7 +261,7 @@ public final class RecallOverlay {
         void openApp(boolean start){openScreen(RecallListenActivity.class,start);}
         void openScreen(Class<?> destination,boolean start){
             Intent i=new Intent(app,destination).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            if(start)i.putExtra("overlayStart",true);
+            if(start){i.putExtra("overlayStart",true);if(resumePanel())i.putExtra("resumeAt",RecallService.pausedAt(app));}
             try{app.startActivity(i);if(start)stop();}
             catch(RuntimeException e){Toast.makeText(app,"Could not open Total Recall",Toast.LENGTH_SHORT).show();}
         }

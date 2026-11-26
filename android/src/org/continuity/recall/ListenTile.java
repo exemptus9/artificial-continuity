@@ -16,23 +16,24 @@ public final class ListenTile extends TileService {
     if (tile == null) return;
     boolean active = RecallService.isListening();
     tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
-    tile.setLabel(active ? "Pause Recall" : "Recall listening");
+    tile.setLabel(active ? "Pause Recall" : RecallService.pausedAt(this)>0?"Resume Recall":"Recall listening");
     tile.updateTile();
   }
   @Override public void onClick() {
     super.onClick();
     if (RecallService.isListening()) {
-      RecallService.command(this, RecallService.PAUSE);
+      RecallService.command(this, RecallService.USER_PAUSE);
       Tile tile = getQsTile();
       if (tile != null) {
         tile.setState(Tile.STATE_INACTIVE);
-        tile.setLabel("Recall listening");
+        tile.setLabel("Resume Recall");
         tile.updateTile();
       }
       return;
     }
     Intent open = new Intent(this, RecallListenActivity.class)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    long since=RecallService.pausedAt(this);if(since>0)open.putExtra("overlayStart",true).putExtra("resumeAt",since);
     if (Build.VERSION.SDK_INT >= 34) {
       startActivityAndCollapse(PendingIntent.getActivity(this, 0, open,
           PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
