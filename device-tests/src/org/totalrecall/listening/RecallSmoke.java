@@ -437,7 +437,7 @@ public final class RecallSmoke extends Instrumentation {
         require(n.performAction(AccessibilityNodeInfo.ACTION_CLICK),"Control rejected click: "+label);
     }
     private void overlay()throws Exception{
-        String app=target.getPackageName(), handle="Expand or collapse. Drag to move";
+        String app=target.getPackageName(), handle="Expand overlay";
         Activity a=launch();
         try{
             readWindows();
@@ -448,17 +448,21 @@ public final class RecallSmoke extends Instrumentation {
             click(waitText(a,"Floating controls",10000));
             tapNode("Show controls during listening");tapNode("Back to Total Recall");
             startListening(a);
-            Rect before=new Rect();waitNode(handle).getBoundsInScreen(before);
+            Rect before=new Rect();waitNode("Open Total Recall").getBoundsInScreen(before);
             int dx=Math.round(45*target.getResources().getDisplayMetrics().density);
             int dy=Math.round(65*target.getResources().getDisplayMetrics().density);
             deviceShell("input swipe "+before.centerX()+" "+before.centerY()+" "+(before.centerX()+dx)+" "
                     +(before.centerY()+dy)+" 600");
             until(()->{
-                AccessibilityNodeInfo n=node(handle);if(n==null)return false;
+                AccessibilityNodeInfo n=node("Open Total Recall");if(n==null)return false;
                 Rect after=new Rect();n.getBoundsInScreen(after);
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
-            tapNode(handle);waitNode("Pause and clear temporary audio");
+            tapNode(handle);waitNode("Pause and clear temporary audio");waitNode("Shrink overlay");
+            tapNode("Show live words");waitNode("Hide live words");
+            tapNode("Hide live words");waitNode("Show live words");
+            deviceShell("input keyevent KEYCODE_HOME");tapNode("Open Total Recall");
+            waitNode("More listening and archive options");require(RecallService.isListening(),"Opening app stopped capture");
             Method visible=method(RecallOverlay.class,"visible");
             deviceShell("input keyevent KEYCODE_SLEEP");
             until(()->{
@@ -469,7 +473,7 @@ public final class RecallSmoke extends Instrumentation {
                 return !attached[0];
             },10000,"Overlay window remained attached after the display locked");
             deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
-            waitNode(handle);tapNode("Hide floating controls");
+            waitNode("Shrink overlay");tapNode("Shrink overlay");waitNode(handle);tapNode("Hide floating controls");
             until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
             require(RecallService.isListening(),"Hiding the overlay stopped listening");
             passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, locking hid the window, and Hide left the microphone running.");

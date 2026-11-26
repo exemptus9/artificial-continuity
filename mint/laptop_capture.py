@@ -23,6 +23,7 @@ import wave
 import webbrowser
 import zipfile
 
+import live_words
 import recall_archive as storage
 
 HOST="total-recall-archive-production.up.railway.app"
@@ -162,6 +163,9 @@ def capture(arc,root,cfg,input_args):
     args=["ffmpeg","-nostdin","-hide_banner","-loglevel","error",*input_args,"-vn","-ar",str(RATE),"-ac","1","-f","s16le","pipe:1"]
     proc=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
     ring=bytearray();tail=b"";segment=None;seg_bytes=0;start=0;report=0;last_input=time.monotonic()
+    feed=live_words.WordFeed(root)
+    stream_pos=secrets.randbits(61)
+    began=time.monotonic()
     def seal():
         nonlocal segment,seg_bytes
         if segment:
@@ -185,6 +189,8 @@ def capture(arc,root,cfg,input_args):
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
                     start=now-round(len(block)*1000/BYTES_PER_SECOND)
                     segment=(root/f"segment-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
+                feed.send(stream_pos,block)
+                stream_pos+=len(block)
                 segment.write(block);seg_bytes+=len(block);ring.extend(block)
                 del ring[:max(0,len(ring)-cfg["keep"]*BYTES_PER_SECOND)]
                 if (root/"bookmark").exists():
@@ -194,11 +200,12 @@ def capture(arc,root,cfg,input_args):
                 if time.monotonic()-report>.45:
                     samples=memoryview(block).cast("h")
                     rms=math.sqrt(sum(int(x)*int(x) for x in samples)/max(1,len(samples)))
-                    write(root/"status.json",dict(state="Recording",at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND)))
+                    write(root/"status.json",dict(state="Recording",at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=len(ring)//BYTES_PER_SECOND))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
     finally:
+        feed.close()
         proc.terminate()
         try:proc.wait(timeout=3)
         except subprocess.TimeoutExpired:proc.kill();proc.wait()
@@ -262,6 +269,10 @@ def panel(arc):
     meter=ttk.Progressbar(box,maximum=100,length=310);meter.pack(fill="x",pady=4)
     info=tk.StringVar();summary=ttk.Label(box,textvariable=info,wraplength=340);summary.pack(anchor="w")
     controls=ttk.Frame(box);controls.pack(fill="x",pady=3)
+    words_view=tk.StringVar()
+    captions=ttk.Label(box,textvariable=words_view,wraplength=310)
+    reader=None
+    show_words=tk.BooleanVar(value=prefs.get("words",False))
     def toggle():
         if (root/"enabled").exists():stop(arc)
         else:start(arc)
@@ -270,6 +281,9 @@ def panel(arc):
     def mark():
         (root/"bookmark").touch(mode=0o600);state.set("Mark requested · saving recent audio")
     keep=ttk.Button(controls,text="Keep moment",command=mark);keep.pack(side="left",padx=4)
+    def open_app():
+        subprocess.Popen([sys.executable,"-I",str(Path(arc.desk.__file__).resolve()),"desk"],start_new_session=True)
+    ttk.Button(controls,text="Open app",command=open_app).pack(side="left",padx=2)
     server=None
     def archive(view="archive"):
         nonlocal server
@@ -301,7 +315,7 @@ def panel(arc):
                     if entry.get().strip():write(root/"pair.json",credentials(entry.get().strip()))
                     elif not paired:raise ValueError("Enter the hosted pairing code.")
                 else:(root/"pair.json").unlink(missing_ok=True)
-                write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get()))
+                write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get(),words=show_words.get()))
                 if at_login.get():
                     login.parent.mkdir(parents=True,exist_ok=True)
                     login.write_text("[Desktop Entry]\nType=Application\nName=Total Recall laptop microphone\nExec=total-recall-desk laptop-login\nX-GNOME-Autostart-enabled=true\n")
@@ -309,8 +323,7 @@ def panel(arc):
                 if share.get() and not running(root):
                     subprocess.Popen([sys.executable,"-I",str(Path(arc.desk.__file__).resolve()),"laptop-worker"],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 window.attributes("-topmost",top.get())
-                if compact.get():summary.pack_forget()
-                elif not summary.winfo_manager():summary.pack(before=controls,anchor="w")
+                layout()
                 # The capture loop notices a configuration change and seals its current segment.
                 dlg.destroy()
             except (ValueError,OSError) as ex:messagebox.showerror("Capture settings",str(ex),parent=dlg)
@@ -318,25 +331,85 @@ def panel(arc):
     ttk.Button(more,text="Review",command=lambda:archive("review")).pack(side="left",padx=4)
     ttk.Button(more,text="Settings",command=settings).pack(side="left",padx=4)
     ttk.Button(more,text="Hide panel",command=window.iconify).pack(side="left")
+    def layout():
+        mode.configure(text="Expand" if compact.get() else "Shrink")
+        word_btn.configure(text="Hide words" if show_words.get() else "Live words")
+        summary.pack_forget();more.pack_forget();captions.pack_forget()
+        if not compact.get():
+            summary.pack(before=controls,anchor="w")
+            more.pack(fill="x")
+        if show_words.get():captions.pack(before=controls,fill="x",pady=3)
+        write(root/"panel.json",dict(top=top.get(),compact=compact.get(),words=show_words.get()))
+    def resize():
+        compact.set(not compact.get());layout()
+    def toggle_words():
+        show_words.set(not show_words.get());layout();tick(False)
+    mode=ttk.Button(controls,command=resize,width=7);mode.pack(side="left")
+    word_btn=ttk.Button(more,command=toggle_words);word_btn.pack(side="left",padx=2)
     timer=None
     def tick(repeat=True):
-        nonlocal timer
+        nonlocal timer,reader
         if (root/"raise-panel").exists():
             (root/"raise-panel").unlink(missing_ok=True);window.deiconify();window.lift()
         s=read(root/"status.json",{});last=read(root/"last.json",{})
         active=(root/"enabled").exists();fresh=storage.now()-s.get("at",0)<6500
         status=s.get("state","Starting microphone") if active and fresh else "Waiting for recorder" if active else "Stopped"
-        state.set(status+(" · "+str(s.get("seconds",0))+" s" if status=="Recording" else ""))
+        ready=status=="Recording"
+        if ready:
+            elapsed=s.get("elapsed",0)
+            state.set(f"Recording  ·  {elapsed//60}:{elapsed%60:02}  ·  mic {s.get('level',0)}%")
+        else:state.set(status)
+        if ready and show_words.get() and "available" not in s:
+            words_view.set("Sign out and back in to load the updated recorder for live words.")
+        elif ready and show_words.get():
+            if reader is None:
+                try:reader=live_words.LiveWords(root)
+                except OSError as e:words_view.set("Live words unavailable · "+str(e))
+            if reader:words_view.set(reader.line)
+        else:
+            if reader:reader.close();reader=None
+            words_view.set("Words paused" if not ready else "")
+        keep.configure(text="Keep "+str(s.get("available",config(root)["keep"]))+" s" if ready else "Keep moment")
         meter["value"]=s.get("level",0) if active and fresh else 0
         keep.configure(state="normal" if active and fresh and status=="Recording" else "disabled")
         toggle_btn.configure(text="Stop recording" if active else "Start recording")
         saved=("Last saved "+time.strftime("%H:%M:%S",time.localtime(last["at"]/1000))+" · "+str(round(last["duration"]/1000))+" s") if last else "No laptop audio saved yet"
         if last.get("kind")=="clip":saved+=" · bookmark"
         sync=read(root/"sync.json","Waiting for transfer") if (root/"pair.json").exists() else "Saved on this laptop"
-        info.set(saved+"\n"+read(root/"save-error.json",sync))
+        segment=(f"Segment {s.get('seconds',0)} / {config(root)['seconds']} s  ·  " if ready else "")
+        info.set(segment+saved+"\n"+read(root/"save-error.json",sync))
         if repeat:timer=window.after(550,tick)
-    if compact.get():summary.pack_forget()
+    layout()
+    # First bindtag sees pointer events before Tk button bindings. Once dragging
+    # starts, suppress release so moving a Stop or Keep button never invokes it.
+    gesture={}
+    tag="RecallOverlayDrag"
+    def begin(e):
+        gesture.update(x=e.x_root,y=e.y_root,left=window.winfo_x(),top=window.winfo_y(),moving=False)
+    def move(e):
+        if not gesture:return
+        dx=e.x_root-gesture["x"];dy=e.y_root-gesture["y"]
+        if not gesture["moving"] and abs(dx)+abs(dy)<7:return
+        gesture["moving"]=True
+        x=max(0,min(gesture["left"]+dx,window.winfo_screenwidth()-window.winfo_width()))
+        y=max(0,min(gesture["top"]+dy,window.winfo_screenheight()-window.winfo_height()))
+        window.geometry(f"+{x}+{y}")
+        return "break"
+    def release(e):
+        move(e)
+        dragged=gesture.get("moving",False);gesture.clear()
+        if dragged:
+            if isinstance(e.widget,ttk.Button):e.widget.state(["!pressed"])
+            write(root/"position.json",dict(x=window.winfo_x(),y=window.winfo_y()))
+            return "break"
+    for event,fn in (("<ButtonPress-1>",begin),("<B1-Motion>",move),("<ButtonRelease-1>",release)):
+        window.bind_class(tag,event,fn)
+    def tag_tree(w):
+        w.bindtags((tag,)+w.bindtags())
+        for child in w.winfo_children():tag_tree(child)
+    tag_tree(window)
     def close():
+        if reader:reader.close()
         if timer is not None:window.after_cancel(timer)
         write(root/"position.json",dict(x=window.winfo_x(),y=window.winfo_y()))
         if server:server.shutdown();server.server_close()

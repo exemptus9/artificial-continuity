@@ -67,7 +67,7 @@ public final class OverlaySettingsActivity extends Activity {
                 Switch caption=new Switch(this);caption.setText("Show live words in expanded overlay");
                 caption.setChecked(RecallOverlay.options(this).getBoolean("captions",false));
                 caption.setOnCheckedChangeListener((b,on)->RecallOverlay.changeCaptions(this,on));body.addView(caption);
-                label("Anyone looking at the unlocked screen may see enabled captions. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
+                label("Drag anywhere on the panel, including its buttons. Tap Expand or Shrink to resize, or Open app to return to Total Recall. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
                 button(RecallService.isListening()?"Show controls now":"Preview start control",v->{RecallOverlay.idlePreview(this);finish();});
             }
         }

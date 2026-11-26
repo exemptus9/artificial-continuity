@@ -67,3 +67,5 @@ total-recall-desk restore-backup /path/to/snapshot /path/to/empty-archive
 The default archive lives under `~/.local/share/total-recall-listening`. Set `TOTAL_RECALL_ARCHIVE_HOME` to an absolute directory on your storage disk before starting the app or CLI to change it. Run the receiver under your own user account. It accepts uploads on the chosen private address. Configure the OS firewall only for the private network you intend to use.
 
 Run `python3 -m unittest discover -s mint` from the source tree for the Mint tests.
+
+Drag anywhere on the microphone panel, including a button, to move it. A stationary click activates the button. **Open app** raises the desktop archive. **Expand / Shrink** changes the panel size. **Live words** shows provisional English recognition from the same audio stream without using a second microphone or storing captions. The clock measures the current uninterrupted input stream. The Keep button shows the amount of recent audio available. If the recorder was already running during the package update, sign out and back in to load the new worker.

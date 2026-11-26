@@ -15,6 +15,8 @@ public final class LiveCapture {
     private static String partial="",lastSave="",reason="",state="Paused";
     private static long partialAt=-WINDOW,lastLevel=-1000;
     private static float level;
+    private static long finalSequence, sessionStart;
+    private static int savedCount;
     private static boolean active,waiting;
     private static final class Line{
         final long at;final String words;
@@ -24,9 +26,24 @@ public final class LiveCapture {
         public final String partial,lastSave,reason,state;
         public final List<String> finals;
         public final float level;
+        public final long finalSequence, sessionSeconds;
+        public final int savedCount;
+        public final boolean receiving;
         public final boolean active,waiting;
-        Snapshot(String p,String save,String why,String status,List<String> lines,float meter,boolean on,boolean wait){
+        Snapshot(String p,String save,String why,String status,List<String> lines,float meter,boolean on,boolean wait,long t){
             partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);level=meter;active=on;waiting=wait;
+            finalSequence=LiveCapture.finalSequence; savedCount=LiveCapture.savedCount;
+            sessionSeconds=on?Math.max(0,t-sessionStart)/1000:0;
+            receiving=on&&!wait&&t-lastLevel<750;
+        }
+        /** Only show lines completed after the overlay became visible. */
+        String overlayWords(long after){
+            if(waiting || finalSequence<after)return "";
+            int count=(int)Math.min(2,Math.min(finals.size(), finalSequence-after));
+            List<String> lines=finals.subList(finals.size()-count,finals.size());
+            String committed=String.join("\n",lines);
+            if(partial.isEmpty())return committed;
+            return committed.isEmpty()?partial:committed+"\n"+partial;
         }
     }
     private static long now(){return TimeUnit.NANOSECONDS.toMillis(System.nanoTime());}
@@ -40,15 +57,15 @@ public final class LiveCapture {
     static synchronized Snapshot at(long t){
         expire(t);ArrayList<String> lines=new ArrayList<>(recent.size());
         for(Line line:recent)lines.add(line.words);
-        return new Snapshot(partial,lastSave,reason,state,lines,level,active,waiting);
+        return new Snapshot(partial,lastSave,reason,state,lines,level,active,waiting,t);
     }
-    static synchronized void start(){clear();active=true;waiting=false;state="Preparing microphone";}
+    static synchronized void start(){clear();savedCount=0;sessionStart=now();active=true;waiting=false;state="Preparing microphone";}
     static synchronized void state(String label){state=bounded(label,200);}
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
     private static void clear(){recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
-    static synchronized void saved(String what,String why){if(active){lastSave=bounded(what,120);reason=bounded(why,250);}}
+    static synchronized void saved(String what,String why){if(active){savedCount++;lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
         if(!active||waiting)return;
@@ -58,7 +75,7 @@ public final class LiveCapture {
         partial="";
         if(!value.isEmpty()){
             if(recent.size()==LIMIT)recent.removeFirst();
-            recent.addLast(new Line(t,value));
+            finalSequence++;recent.addLast(new Line(t,value));
         }
     }
     static synchronized void samples(short[] pcm,int count){meterAt(pcm,count,now());}

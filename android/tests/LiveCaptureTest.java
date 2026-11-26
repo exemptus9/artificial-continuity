@@ -20,6 +20,18 @@ public final class LiveCaptureTest{
         LiveCapture.words("during gap",true);check(LiveCapture.snapshot().finals.isEmpty());
         LiveCapture.resume("Listening · phone microphone");LiveCapture.words("after",true);
         check(LiveCapture.snapshot().finals.size()==1&&!LiveCapture.snapshot().waiting);
+        long boundary=LiveCapture.snapshot().finalSequence;
+        check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
+        LiveCapture.words("repeated phrase",true);LiveCapture.words("repeated phrase",true);
+        LiveCapture.words("unfinished",false);
+        check(LiveCapture.snapshot().overlayWords(boundary).equals("repeated phrase\nrepeated phrase\nunfinished"));
+        long afterPartial=LiveCapture.snapshot().finalSequence+1;
+        check(LiveCapture.snapshot().overlayWords(afterPartial).isEmpty());
+        LiveCapture.words("unfinished phrase",true);
+        check(LiveCapture.snapshot().overlayWords(afterPartial).isEmpty());
+        LiveCapture.words("visible",false);
+        check(LiveCapture.snapshot().overlayWords(afterPartial).equals("visible"));
+        LiveCapture.waitFor("busy");check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
         LiveCapture.stop("Paused");check(!LiveCapture.snapshot().active && LiveCapture.snapshot().finals.isEmpty());
         MicrophoneContinuity gaps=new MicrophoneContinuity();check(gaps.lose(100));check(!gaps.lose(300));
         check(gaps.resume(600)==500);check(!gaps.waiting());check(gaps.resume(800)==-1);

@@ -13,7 +13,7 @@ import android.text.TextUtils;
 import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.*;
-import java.util.List;
+import java.util.Locale;
 
 /** Session-scoped floating controls. Microphone acquisition always belongs to RecallService. */
 public final class RecallOverlay {
@@ -42,7 +42,7 @@ public final class RecallOverlay {
     }
     static void changeCaptions(Context c,boolean value) {
         options(c).edit().putBoolean("captions",value).apply();
-        MAIN.post(()->{ if(active!=null && active.visible) { active.detach(); active.build(); } });
+        MAIN.post(()->{ if(active!=null && active.visible) { active.rebuild(); } });
     }
     public static void reset(Context c) {
         options(c).edit().clear().apply();
@@ -73,12 +73,13 @@ public final class RecallOverlay {
         final SharedPreferences prefs;
         final WindowManager.LayoutParams layout;
         LinearLayout root;
-        TextView caption, status, handle;
+        TextView caption, status, detail, keep, missed, words;
         ProgressBar meter;
-        boolean expanded,registered,visible,skipToNextFinal,wasWaiting;
-        TextView keep;
-        String ignoredPartial="";
-        String lastFinal="";
+        boolean expanded,registered,visible,wasWaiting;
+        long firstVisibleFinal,requestUntil;
+        int requestedAtCount;
+        String requestLabel="";
+        int screenWidth;
         long expires;
         final BroadcastReceiver screen=new BroadcastReceiver() {
             @Override public void onReceive(Context c,Intent i){
@@ -123,8 +124,7 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
-            root=null;caption=null;status=null;meter=null;handle=null;keep=null;visible=false;
-            lastFinal="";skipToNextFinal=true;
+            root=null;caption=null;status=null;detail=null;meter=null;keep=null;missed=null;words=null;visible=false;
         }
         int dp(int value){return (int)(value*app.getResources().getDisplayMetrics().density+0.5f);}
         int[] limits() {
@@ -142,11 +142,41 @@ public final class RecallOverlay {
             if(visible)try{wm.updateViewLayout(root,layout);}catch(RuntimeException lost){stop();}
         }
         void preserveBoundary() {
-            if(caption!=null)caption.setText("");
             LiveCapture.Snapshot s=LiveCapture.snapshot();
-            lastFinal=latest(s.finals);ignoredPartial=s.partial==null?"":s.partial;skipToNextFinal=!ignoredPartial.isEmpty();
+            firstVisibleFinal=s.finalSequence+(s.partial.isEmpty()?0:1);
+            if(caption!=null)caption.setText("");
         }
-        String latest(List<String> finals){return finals==null||finals.isEmpty()?"":finals.get(finals.size()-1);}
+        void rebuild(){detach();build();}
+        void showText(TextView view,String value){
+            if(view==null||TextUtils.equals(view.getText(),value))return;
+            view.setText(value);
+            if(view==caption)view.post(()->{
+                android.text.Layout lines=view.getLayout();
+                if(view==caption && lines!=null)view.scrollTo(0,Math.max(0,lines.getHeight()-view.getHeight()+view.getCompoundPaddingTop()+view.getCompoundPaddingBottom()));
+            });
+        }
+        void paint(LiveCapture.Snapshot s){
+            if(s.waiting!=wasWaiting){preserveBoundary();wasWaiting=s.waiting;requestUntil=0;}
+            boolean ready=s.receiving;
+            if(keep!=null)keep.setEnabled(ready);
+            if(missed!=null)missed.setEnabled(ready);
+            int level=Math.round(s.level*100);
+            meter.setProgress(s.waiting?0:level);
+            String headline=s.waiting?"Waiting for microphone":ready?"Listening":s.state;
+            if(s.savedCount>requestedAtCount)requestUntil=0;
+            if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
+            String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
+            showText(status,headline+"  ·  "+elapsed);
+            if(detail!=null){
+                String state=s.waiting?s.state:ready?"Mic level "+level+"%  ·  "+s.savedCount+" saved this session":s.state;
+                if(!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
+                showText(detail,state);
+            }
+            if(caption!=null){
+                String line=s.overlayWords(firstVisibleFinal);
+                showText(caption,s.waiting?"Words paused while the mic is busy":line.isEmpty()?"Waiting for words…":line);
+            }
+        }
         void tick() {
             MAIN.removeCallbacks(pulse);
             if(active!=this)return;
@@ -159,80 +189,73 @@ public final class RecallOverlay {
                 MAIN.postDelayed(pulse,1200);return;
             }
             if(!visible)build();
+            else if(screenWidth!=windowContext.getResources().getDisplayMetrics().widthPixels)rebuild();
             if(active!=this)return;
-            if(!preview){
-                LiveCapture.Snapshot s=LiveCapture.snapshot();
-                boolean waiting=s.waiting;
-                if(waiting) {
-                    if(!wasWaiting)preserveBoundary();
-                    if(caption!=null)caption.setText("");
-                    if(handle!=null)handle.setText(expanded?"Waiting for mic":"Wait");
-                    if(keep!=null)keep.setEnabled(false);
-                }else{
-                    if(wasWaiting)preserveBoundary();
-                    if(handle!=null)handle.setText("Recall");
-                    if(keep!=null)keep.setEnabled(true);
-                }
-                wasWaiting=waiting;
-                if(meter!=null)meter.setProgress(Math.max(0,Math.min(100,Math.round(100*s.level))));
-                if(!waiting && caption!=null && prefs.getBoolean("captions",false)) {
-                    String finalLine=latest(s.finals);
-                    boolean newFinal = !finalLine.isEmpty() && !finalLine.equals(lastFinal);
-                    if(newFinal) {
-                        lastFinal=finalLine;
-                        if(skipToNextFinal){skipToNextFinal=false;ignoredPartial="";caption.setText("");}
-                        else ignoredPartial=null;
-                    }
-                    if(!skipToNextFinal){
-                        String line=s.partial==null || s.partial.isEmpty()?(ignoredPartial==null?finalLine:""):s.partial;
-                        caption.setText(line);
-                    }
-                }
-            }
+            if(!preview)paint(LiveCapture.snapshot());
             position(layout.x,layout.y);
             MAIN.postDelayed(pulse,preview?1500:300);
         }
         void build(){
-            root=new LinearLayout(windowContext);root.setOrientation(LinearLayout.VERTICAL);
+            root=new DragSurface();root.setOrientation(LinearLayout.VERTICAL);
             GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(21,43,45));bg.setCornerRadius(dp(14));
             root.setBackground(bg);root.setPadding(dp(6),dp(4),dp(6),dp(4));root.setElevation(dp(6));root.setFilterTouchesWhenObscured(true);
-            LinearLayout row=row(root);
-            handle=control(row,"Recall",preview?"Start controls. Drag to move":"Expand or collapse. Drag to move",v->resize());
-            handle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-            drag(handle);
-            if(preview){
-                control(row,"Start","Start listening",v->{
-                    stop();Intent i=new Intent(app,RecallListenActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("overlayStart",true);
-                    try{app.startActivity(i);}catch(RuntimeException ignored){}
-                });
-            }else{
-                keep=control(row,"Keep","Keep the last minute",v->command(RecallService.KEEP));
-                control(row,"Pause","Pause and clear temporary audio",v->{command(RecallService.PAUSE);stop();});
-            }
-            control(row,"×","Hide floating controls",v->stop());
+            status=label(preview?"Preview · microphone off":"Opening microphone",13);
+            status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             if(!preview){
                 meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);
                 meter.setMax(100);meter.setContentDescription("Live microphone level");
-                root.addView(meter,new LinearLayout.LayoutParams(-1,dp(4)));
-                if(expanded && prefs.getBoolean("captions",false)){
-                    caption=new TextView(windowContext);caption.setTextSize(14);caption.setTextColor(Color.WHITE);caption.setMaxLines(3);
-                    caption.setEllipsize(TextUtils.TruncateAt.END);caption.setPadding(dp(6),dp(2),dp(6),dp(6));root.addView(caption);
+                meter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xff78e0c4));
+                root.addView(meter,new LinearLayout.LayoutParams(-1,dp(5)));
+            }
+            LinearLayout actions=row(root);
+            if(preview)control(actions,"Start","Start listening",v->openApp(true));
+            else keep=control(actions,expanded?"Keep last 1m":"Keep 1m","Keep the last minute",v->request(RecallService.KEEP,"Keep requested"));
+            control(actions,"Open app","Open Total Recall",v->openApp(false));
+            control(actions,expanded?"Shrink":"Expand",expanded?"Shrink overlay":"Expand overlay",v->resize());
+            control(actions,"×","Hide floating controls",v->stop());
+            if(expanded && !preview){
+                detail=label("",13);
+                LinearLayout shortcuts=row(root);
+                missed=control(shortcuts,"Missed one","Mark a missed moment",v->request(RecallService.MISSED,"Missed moment requested"));
+                boolean showWords=prefs.getBoolean("captions",false);
+                words=control(shortcuts,showWords?"Hide words":"Live words",showWords?"Hide live words":"Show live words",v->changeCaptions(app,!showWords));
+                control(shortcuts,"Archive","Open archive and sync",v->openScreen(ArchiveSyncActivity.class,false));
+                control(shortcuts,"Pause","Pause and clear temporary audio",v->{command(RecallService.PAUSE);});
+                if(showWords){
+                    caption=label("Waiting for words…",15);caption.setMaxLines(3);
+                    caption.setGravity(Gravity.BOTTOM);
                 }
             }
-            int max=Math.max(dp(100),app.getResources().getDisplayMetrics().widthPixels-dp(12));
-            layout.width=expanded?Math.min(dp(290),max):-2;
+            screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
+            layout.width=Math.min(dp(expanded?326:266),Math.max(dp(100),screenWidth-dp(12)));
             preserveBoundary();
             try {wm.addView(root,layout);visible=true;}
             catch(RuntimeException e){stop();}
         }
+        TextView label(String value,int size){
+            TextView t=new TextView(windowContext);t.setText(value);t.setTextSize(size);t.setTextColor(Color.WHITE);
+            t.setPadding(dp(7),dp(2),dp(7),dp(2));root.addView(t);return t;
+        }
         void resize(){
-            if(!preview){
-                expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
-                detach();build();
-            }
+            expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
+            rebuild();
+        }
+        void openApp(boolean start){openScreen(RecallListenActivity.class,start);}
+        void openScreen(Class<?> destination,boolean start){
+            Intent i=new Intent(app,destination).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            if(start)i.putExtra("overlayStart",true);
+            try{app.startActivity(i);if(start)stop();}
+            catch(RuntimeException e){Toast.makeText(app,"Could not open Total Recall",Toast.LENGTH_SHORT).show();}
+        }
+        void request(String action,String message){
+            if(!LiveCapture.snapshot().receiving)return;
+            requestedAtCount=LiveCapture.snapshot().savedCount;
+            requestLabel=message;requestUntil=SystemClock.elapsedRealtime()+1800;
+            command(action);
         }
         void command(String action){
-            if(RecallService.isListening())try{RecallService.command(app,action);}catch(RuntimeException ignored){}
+            if(RecallService.isListening())try{RecallService.command(app,action);}
+            catch(RuntimeException e){requestUntil=0;Toast.makeText(app,"Recorder could not accept this action",Toast.LENGTH_SHORT).show();}
         }
         LinearLayout row(LinearLayout host){
             LinearLayout row=new LinearLayout(windowContext); row.setOrientation(LinearLayout.HORIZONTAL);host.addView(row);return row;
@@ -240,32 +263,43 @@ public final class RecallOverlay {
         TextView control(LinearLayout row,String label,String hint,View.OnClickListener listener){
             TextView t=new TextView(windowContext);
             t.setText(label);t.setTextSize(14);t.setTextColor(Color.WHITE);t.setGravity(Gravity.CENTER);
-            t.setMinWidth(dp(42));t.setMinHeight(dp(44));t.setPadding(dp(7),0,dp(7),0);t.setClickable(true);
+            t.setMinWidth(0);t.setMinHeight(dp(48));t.setPadding(dp(2),0,dp(2),0);t.setClickable(true);
             t.setContentDescription(hint);t.setFilterTouchesWhenObscured(true);t.setOnClickListener(listener);
             t.setAccessibilityDelegate(new View.AccessibilityDelegate(){
                 @Override public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){
                     super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.Button");
                 }});
-            row.addView(t);return t;
+            row.addView(t,new LinearLayout.LayoutParams(0,-2,"×".equals(label)?0.65f:1f));return t;
         }
-        void drag(View v){
-            v.setOnTouchListener(new View.OnTouchListener(){
-                float downX,downY;int oldX,oldY;boolean moved;
-                @Override public boolean onTouch(View touched,MotionEvent e){
-                    switch(e.getActionMasked()){
-                      case MotionEvent.ACTION_DOWN: downX=e.getRawX();downY=e.getRawY();oldX=layout.x;oldY=layout.y;moved=false;return true;
-                      case MotionEvent.ACTION_MOVE:
-                        float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
-                        if(!moved && Math.hypot(dx,dy)>ViewConfiguration.get(app).getScaledTouchSlop())moved=true;
-                        if(moved)position(oldX+Math.round(dx),oldY+Math.round(dy));return true;
-                      case MotionEvent.ACTION_UP:
-                        if(moved)prefs.edit().putInt("x",layout.x).putInt("y",layout.y).apply();
-                        else touched.performClick();return true;
-                      case MotionEvent.ACTION_CANCEL:return true;
-                      default:return false;
+        /** Observe the whole window before child dispatch. A drag cancels the original button press. */
+        final class DragSurface extends LinearLayout {
+            float downX,downY;int oldX,oldY;
+            boolean moving,blocked;
+            final int slop=ViewConfiguration.get(windowContext).getScaledTouchSlop();
+            DragSurface(){super(windowContext);}
+            void cancelChild(MotionEvent e){
+                MotionEvent cancel=MotionEvent.obtain(e);cancel.setAction(MotionEvent.ACTION_CANCEL);
+                super.dispatchTouchEvent(cancel);cancel.recycle();
+            }
+            @Override public boolean dispatchTouchEvent(MotionEvent e){
+                int action=e.getActionMasked();
+                if(!onFilterTouchEventForSecurity(e)){cancelChild(e);blocked=true;return true;}
+                if(action==MotionEvent.ACTION_DOWN){
+                    moving=false;blocked=false;downX=e.getRawX();downY=e.getRawY();oldX=layout.x;oldY=layout.y;
+                }
+                if(action==MotionEvent.ACTION_POINTER_DOWN){cancelChild(e);blocked=true;}
+                if(blocked)return true;
+                float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
+                if(action==MotionEvent.ACTION_MOVE || action==MotionEvent.ACTION_UP){
+                    if(!moving && Math.hypot(dx,dy)>slop){cancelChild(e);moving=true;}
+                    if(moving){
+                        position(oldX+Math.round(dx),oldY+Math.round(dy));
+                        if(action==MotionEvent.ACTION_UP)prefs.edit().putInt("x",layout.x).putInt("y",layout.y).apply();
+                        return true;
                     }
                 }
-            });
+                super.dispatchTouchEvent(e);return true;
+            }
         }
     }
 }

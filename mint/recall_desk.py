@@ -580,7 +580,7 @@ def install_runtime():
     if MODULES!=ROOT:
         known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
         pending={};accepted={}
-        for name in ("recall_archive.py","recall_web.py","recall_review.py","laptop_capture.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
+        for name in ("recall_archive.py","recall_web.py","recall_review.py","laptop_capture.py","live_words.py","archive_backup.py","web/index.html","web/app.css","web/app.js"):
             origin=MODULES/name;dest=ROOT/name
             if not origin.is_file():continue
             if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")
@@ -723,6 +723,12 @@ def desktop(receive_at=None):
         raise Issue("Mint's desktop view needs python3-tk. The import, search and connect commands work without it.") from None
     import queue,threading
     setup()
+    desk_lock=(ROOT/"desktop-window.lock").open("a")
+    raise_request=ROOT/"raise-desktop"
+    try:fcntl.flock(desk_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:
+        if not receive_at:
+            raise_request.touch();desk_lock.close();return
     window=tk.Tk()
     window.title("Total Recall · Private captures")
     window.geometry("820x560")
@@ -893,6 +899,8 @@ def desktop(receive_at=None):
             except Exception as e: inbox.put((False,str(e)))
         threading.Thread(target=run,daemon=True).start()
     def pump():
+        if raise_request.exists():
+            raise_request.unlink(missing_ok=True);window.deiconify();window.lift();window.focus_force()
         try:
             while True:
                 ok,text=inbox.get_nowait()

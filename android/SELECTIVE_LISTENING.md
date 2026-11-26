@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.12.0
+# Live listening on Galaxy · 0.13.0
 
-Install `TotalRecall-0.12.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.13.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -8,7 +8,7 @@ Speak naturally. In the default mode, a 90-second rolling buffer holds recent au
 
 **Live captions** show what the recognizer is hearing. Wording can change during an utterance. Open a saved moment and choose **Playback & trim** to hear the original, mark the part you want and **Save excerpt…**. The new clip keeps its link to the original. If you are still recording, playback offers **Pause & play**. Tap **Start listening** afterward to begin a fresh session.
 
-**Floating controls** on the listening screen lets you enable a movable panel with level, live captions, keep and pause controls. Grant Android's display-over-other-apps permission when prompted. The panel hides on the lock screen.
+**Floating controls** on the listening screen opens the overlay settings. Grant display-over-other-apps access and enable the panel. Drag anywhere, including over a button. Tap **Open app** to return to the listening screen, or **Expand** for **Live words**, **Missed one**, **Archive**, and **Pause**. **Shrink** returns to the small panel. The clock measures session time, including microphone gaps. Live words are provisional and clear when you hide them, lock the phone, or lose the microphone. **×** hides the overlay while listening continues.
 
 ## Change apps or use voice mode
 
