@@ -27,9 +27,10 @@ DAY = 86400
 TRANSFER_CAP = 25_000_000_000
 MEDIA_CAP = 1_000_000_000_000
 KEY = re.compile(r"[0-9a-f]{64}")
-APK_NAME = "TotalRecall-0.12.0.apk"
-APK_SIZE = 56_121_560
-APK_SHA = "7fc15a16dcb448a601bea9334147be96ab6f3166419546e2c1d38626557457b1"
+PREVIOUS_APK = ("TotalRecall-0.12.0.apk",56_121_560,"7fc15a16dcb448a601bea9334147be96ab6f3166419546e2c1d38626557457b1")
+APK_NAME = "TotalRecall-0.14.0.apk"
+APK_SIZE = 56129834
+APK_SHA = "83c346764d3553ad58d8f49c14b6bedfff4102e8c547837ff15dfb2121b2ef1f"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
@@ -138,19 +139,22 @@ class HostedHandler(recall_web.OwnerHandler):
         raw=json.dumps({"url":"https://"+self.server.public_host,"token":self.server.token,"tls":"public-ca"},separators=(",",":")).encode()
         return "TR1."+base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
-    def apk_path(self):
+    def apk_path(self,name=APK_NAME,digest=APK_SHA):
         # This capability can download one specific release; archive credentials never enter the link.
-        tag=hmac.digest(self.server.session_key,("download-apk/"+APK_SHA).encode(),"sha256").hex()[:32]
-        return "/downloads/"+tag+"/"+APK_NAME
+        tag=hmac.digest(self.server.session_key,("download-apk/"+digest).encode(),"sha256").hex()[:32]
+        return "/downloads/"+tag+"/"+name
 
-    def download_apk(self):
+    def download_apk(self,release=None):
         media=self.server.archive.media_store
         try:
-            head=media._head(APK_KEY)
-            if not head or head["ContentLength"]!=APK_SIZE or head.get("Metadata",{}).get("sha256")!=APK_SHA:
-                return self.json(503,{"error":"The Android installer is not available yet."})
+            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),PREVIOUS_APK]
+            for name,size,digest in choices:
+                key="total-recall/installers/"+digest+"/"+name
+                head=media._head(key)
+                if head and head["ContentLength"]==size and head.get("Metadata",{}).get("sha256")==digest:break
+            else:return self.json(503,{"error":"The Android installer is not available yet."})
             method="head_object" if self.command=="HEAD" else "get_object"
-            url=media.s3.generate_presigned_url(method,Params={"Bucket":media.bucket,"Key":APK_KEY},ExpiresIn=3600)
+            url=media.s3.generate_presigned_url(method,Params={"Bucket":media.bucket,"Key":key},ExpiresIn=3600)
         except Exception:
             return self.json(503,{"error":"The installer is temporarily unavailable."})
         self.send_response(307);self.send_header("Location",url);self.send_header("Content-Length","0");self.end_headers()
@@ -179,7 +183,8 @@ class HostedHandler(recall_web.OwnerHandler):
         path=urlsplit(self.path).path
         if path=="/healthz": return self.json(200,{"ok":True})
         if not self.valid_host(self.headers.get("Host","")): return self.json(403,{"error":"Unrecognized origin"})
-        if path==self.apk_path():return self.download_apk()
+        if path==self.apk_path():return self.download_apk((APK_NAME,APK_SIZE,APK_SHA))
+        if path==self.apk_path(PREVIOUS_APK[0],PREVIOUS_APK[2]):return self.download_apk(PREVIOUS_APK)
         if path=="/v2/status": return recall_desk.TransferHandler.do_GET(self)
         if path.startswith("/open/"): return self.json(404,{"error":"Unknown route"})
         if not self.auth():
