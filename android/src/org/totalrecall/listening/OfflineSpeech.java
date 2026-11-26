@@ -18,7 +18,13 @@ import java.util.zip.ZipInputStream;
 /** Decodes the same 16 kHz mono PCM that enters the volatile audio window. Single worker thread. */
 public final class OfflineSpeech implements AutoCloseable {
     private static final String MODEL = "vosk-model-small-en-us-0.15";
+    private final QuietSpeech quietSpeech=new QuietSpeech();
     private Model model;
+    private org.vosk.SpeakerModel speakerModel;
+    private final SpeakerGroups groups=new SpeakerGroups();
+    private int voice;
+    int lastVoice(){return voice;}
+    boolean groupsReady(){return speakerModel!=null;}
     private Recognizer recognizer;
     private Recognizer commandRecognizer;
     private String pendingCommand;
@@ -30,10 +36,19 @@ public final class OfflineSpeech implements AutoCloseable {
         this(context,true);
     }
     OfflineSpeech(Context context,boolean commands) throws IOException {
-        File dir = unpack(context.getApplicationContext());
+        this(context,commands,commands && context.getSharedPreferences("recall-speech",0).getBoolean("voices",true));
+    }
+    OfflineSpeech(Context context,boolean commands,boolean groupVoices) throws IOException {
+        File dir = unpack(context.getApplicationContext(),MODEL);
         try {
             model = new Model(dir.getAbsolutePath());
             recognizer = new Recognizer(model, 16000f);
+            if(groupVoices)try{
+                File path=unpack(context.getApplicationContext(),"vosk-model-spk-0.4");
+                speakerModel=new org.vosk.SpeakerModel(path.getAbsolutePath());recognizer.setSpeakerModel(speakerModel);
+            }catch(IOException|RuntimeException|LinkageError failed){
+                if(speakerModel!=null){speakerModel.close();speakerModel=null;}Log.w("TotalRecallSpeech","Speaker grouping unavailable",failed);
+            }
             if(!commands)return;
             org.json.JSONArray grammar = new org.json.JSONArray();
             grammar.put(KEEP).put(PAUSE).put(MISSED).put("[unk]");
@@ -46,13 +61,17 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Returns the finalized utterance on an endpoint and null on other frames. */
     public String accept(short[] pcm, int count) {
+        return accept(pcm,count,false);
+    }
+    String accept(short[] pcm,int count,boolean liftQuiet) {
         if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(pcm, count)) {
             String heard = text(commandRecognizer.getResult(), "text");
             if (KEEP.equals(heard) || PAUSE.equals(heard) || MISSED.equals(heard)) {
                 pendingCommand = heard;
             }
         }
-        return recognizer.acceptWaveForm(pcm, count) ? text(recognizer.getResult(), "text") : null;
+        if(!liftQuiet)quietSpeech.reset();
+        return recognizer.acceptWaveForm(liftQuiet?quietSpeech.apply(pcm,count):pcm, count) ? finalized(recognizer.getResult()) : null;
     }
 
     /** An exact full-utterance command from a restricted decoder that also models unknown words. */
@@ -64,8 +83,8 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
     public void resetStream() {
-        recognizer.reset();
-        commandRecognizer.reset();
+        quietSpeech.reset();groups.clear();voice=0;recognizer.reset();
+        if(commandRecognizer!=null)commandRecognizer.reset();
         pendingCommand = null;
     }
 
@@ -74,7 +93,16 @@ public final class OfflineSpeech implements AutoCloseable {
     }
 
     public String finish() {
-        return text(recognizer.getFinalResult(), "text");
+        return finalized(recognizer.getFinalResult());
+    }
+
+    private String finalized(String json){
+        voice=speakerModel==null?0:-1;
+        try{
+            JSONObject words=new JSONObject(json);
+            if(speakerModel!=null)voice=groups.match(words.optJSONArray("spk"),words.optInt("spk_frames",0));
+            String result=words.optString("text","").trim();return result.isEmpty()?null:result;
+        }catch(JSONException invalid){return null;}
     }
 
     private static String text(String json, String key) {
@@ -96,6 +124,7 @@ public final class OfflineSpeech implements AutoCloseable {
             recognizer.close();
             recognizer = null;
         }
+        if(speakerModel!=null){speakerModel.close();speakerModel=null;}
         if (model != null) {
             model.close();
             model = null;
@@ -103,16 +132,16 @@ public final class OfflineSpeech implements AutoCloseable {
     }
 
     /** Build once in private storage. Only a complete staging directory can become the live model. */
-    private static synchronized File unpack(Context context) throws IOException {
+    private static synchronized File unpack(Context context,String modelName) throws IOException {
         File base = context.getNoBackupFilesDir();
-        File target = new File(base, MODEL);
+        File target = new File(base, modelName);
         if (target.isDirectory()) return target;
-        File stage = new File(base, MODEL + ".installing");
+        File stage = new File(base, modelName + ".installing");
         remove(stage);
         if (!stage.mkdirs()) throw new IOException("Cannot prepare local speech model");
-        String prefix = MODEL + "/";
+        String prefix = modelName + "/";
         try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(
-                context.getAssets().open("offline-speech/" + MODEL + ".zip")))) {
+                context.getAssets().open("offline-speech/" + modelName + ".zip")))) {
             byte[] buffer = new byte[65536];
             for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
                 if (entry.isDirectory()) continue;
@@ -128,7 +157,9 @@ public final class OfflineSpeech implements AutoCloseable {
                 }
                 zip.closeEntry();
             }
-            if (!new File(stage, "am/final.mdl").isFile() || !new File(stage, "graph/Gr.fst").isFile()
+            if(!MODEL.equals(modelName)){
+                if(!new File(stage,"final.ext.raw").isFile() || !new File(stage,"transform.mat").isFile())throw new IOException("Bundled speaker model incomplete");
+            }else if (!new File(stage, "am/final.mdl").isFile() || !new File(stage, "graph/Gr.fst").isFile()
                     || !new File(stage, "conf/model.conf").isFile()) throw new IOException("Bundled model incomplete");
             if (!stage.renameTo(target)) throw new IOException("Cannot activate offline speech model");
         } finally {

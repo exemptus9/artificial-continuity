@@ -169,6 +169,9 @@ public final class Store extends SQLiteOpenHelper {
     }
     private static String escaped(String term){return term.replace("\\","\\\\").replace("%","\\%").replace("_","\\_");}
     public List<Moment> search(String term){
+        return search(term,0);
+    }
+    List<Moment> search(String term,int limit){
         String query=term==null?"":term.trim();
         String[] words=query.isEmpty()?new String[0]:query.split("\\s+",8);
         StringBuilder sql=new StringBuilder("SELECT * FROM clips");
@@ -178,6 +181,7 @@ public final class Store extends SQLiteOpenHelper {
             args[i]="%"+escaped(words[i])+"%";
         }
         sql.append(" ORDER BY start_ms DESC,id DESC");
+        if(limit>0)sql.append(" LIMIT ").append(limit);
         ArrayList<Moment> rows=new ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery(sql.toString(),args)){
             while(c.moveToNext())rows.add(new Moment(c,directory));

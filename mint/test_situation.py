@@ -18,6 +18,12 @@ class SituationTest(unittest.TestCase):
         self.assertEqual([(r["stamp"],r["label"]) for r in row],[("14:02:00","Possible obstacle")])
         self.assertEqual(context_for({"kind":"segment"}),[])
 
+    def test_voice_label_is_evidence_context(self):
+        groups=context_for(dict(kind="journal",text="2026-11-26 15:01:03 Z  [Voice 2 · Radio · Media] Where did we put the keys?"))
+        cue=groups[0]["items"][0]
+        self.assertEqual(cue["quote"],"Where did we put the keys?")
+        self.assertIn("Radio · Media",cue["stamp"])
+
     def test_quiet_recording_and_partial_frame(self):
         decoder=SimpleNamespace(start_utt=lambda:None,end_utt=lambda:None,hyp=lambda:None,process_raw=lambda *_:None)
         result=scan(io.BytesIO(bytes(33000)),decoder,600)

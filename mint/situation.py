@@ -52,7 +52,9 @@ def context_for(item):
             for line in item.get("text","").splitlines():
                 hit = ENTRY.match(line)
                 if hit and not hit[2].startswith("[capture status]"):
-                    yield hit[2],hit[1],None
+                    who=re.match(r"^\[(Voice \d+(?: · [^\]]+)?|Uncertain voice)\] (.*)$",hit[2])
+                    if who:yield who[2],hit[1]+" · "+who[1],None
+                    else:yield hit[2],hit[1],None
         parts.append(("Journal entries",interpret(entries())))
     else:
         key = "correction" if item.get("correction") else "transcript"

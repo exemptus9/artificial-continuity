@@ -17,6 +17,8 @@ ASSETS = ROOT / "assets" / "offline-speech"
 MAVEN = "https://repo.maven.apache.org/maven2/"
 MODEL = "vosk-model-small-en-us-0.15.zip"
 INGREDIENTS = [
+    (ASSETS / "vosk-model-spk-0.4.zip","https://alphacephei.com/vosk/models/vosk-model-spk-0.4.zip",
+     "a74d8f51144484813e16af689bb0f916b7a111e2347f467c4933c1166097b5a7"),
     (BUILD / "zxing-core.jar", MAVEN + "com/google/zxing/core/3.5.3/core-3.5.3.jar",
      "8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82"),
     (CACHE / "jna.aar", MAVEN + "net/java/dev/jna/jna/5.18.1/jna-5.18.1.aar",

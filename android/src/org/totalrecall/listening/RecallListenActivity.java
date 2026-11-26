@@ -59,6 +59,7 @@ public final class RecallListenActivity extends Activity {
     private final Runnable tick=new Runnable(){public void run(){if(registered&&alive()){paintLive();if(android.os.SystemClock.elapsedRealtime()-archiveRefresh>=30000)readArchiveStatus();main.postDelayed(this,200);}}};
 
     private Button toggle, ask;
+    private ListView list;
     private EditText search;
     private boolean reviewToday;
     private volatile int speechGeneration;
@@ -75,7 +76,7 @@ public final class RecallListenActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                                      WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         getWindow().setStatusBarColor(INK);
@@ -89,7 +90,7 @@ public final class RecallListenActivity extends Activity {
             });
         }
         setContentView(page);
-        ListView list=new ListView(this); list.setDivider(null); list.setCacheColorHint(Color.TRANSPARENT);
+        list=new ListView(this); list.setDivider(null); list.setCacheColorHint(Color.TRANSPARENT);
         list.setHeaderDividersEnabled(false); list.setFooterDividersEnabled(false);
         list.setClipToPadding(false); list.setPadding(dp(16),dp(8),dp(16),dp(24));
         LinearLayout header=column();
@@ -127,6 +128,8 @@ public final class RecallListenActivity extends Activity {
         manualActions=row();split(manualActions,toggle,keep);controls.addView(manualActions);
         latestCatch=text("",14,0xffd3e8d7,false);latestCatch.setPadding(0,dp(8),0,0);latestCatch.setMaxLines(3);
         latestCatch.setEllipsize(TextUtils.TruncateAt.END);controls.addView(latestCatch);header.addView(controls);
+        Button reviewCapture=button("Live words & capture archive",true);
+        reviewCapture.setOnClickListener(v->startActivity(new Intent(this,CaptureReviewActivity.class)));header.addView(reviewCapture);
         LinearLayout sessionTools=row();journalButton=link("Text journal");
         journalButton.setOnClickListener(v->showJournal());Button floating=link("Floating controls");
         floating.setOnClickListener(v->{try{startActivity(new Intent().setClassName(this,"org.totalrecall.listening.OverlaySettingsActivity"));}
@@ -167,6 +170,18 @@ public final class RecallListenActivity extends Activity {
         super.onNewIntent(intent);setIntent(intent);applyIntentQuery(intent);
     }
     private void applyIntentQuery(Intent intent){
+        if(intent!=null && intent.hasExtra("captureDestination")){
+            String target=intent.getStringExtra("captureDestination");intent.removeExtra("captureDestination");
+            if("journalOptions".equals(target))main.post(this::showJournal);
+            if("allJournals".equals(target))main.post(this::listJournals);
+            if("journal".equals(target)){long id=intent.getLongExtra("journalId",-1);worker.execute(()->{
+                try(JournalStore j=new JournalStore(this)){
+                    for(JournalStore.Session session:j.sessions())if(session.id==id){main.post(()->{if(alive())openJournal(session);});return;}
+                    main.post(()->{if(alive())Toast.makeText(this,"This journal is no longer on the phone.",Toast.LENGTH_SHORT).show();});
+                }});
+            }
+            if("clips".equals(target)){reviewToday=false;search.setText("");scheduleRead(0);main.post(()->list.setSelection(1));}
+        }
         if(intent!=null&&intent.getBooleanExtra("overlayStart",false)){
             intent.removeExtra("overlayStart");
             long expected=intent.getLongExtra("resumeAt",0);
@@ -412,8 +427,11 @@ public final class RecallListenActivity extends Activity {
                     TextView coverage=text(session.endReason,14,SECOND,true);coverage.setPadding(0,0,0,dp(12));column.addView(coverage);
                 }
                 column.addView(StoryNotes.button(this,StoryNotes.Kind.JOURNAL,String.valueOf(session.id),story));
-                labeled(column,"Situation from journal entries",situation);
+                TextView cues=labeled(column,"Situation from journal entries",situation);
                 TextView body=text(nonempty(transcript)?transcript:"No recognized speech yet.",17,INK,false);
+                Button names=link("Name voices or correct a line");names.setOnClickListener(v->new VoiceEditor(this,worker,session.id,()->worker.execute(()->{
+                    try(JournalStore fresh=new JournalStore(this)){String updated=fresh.text(session.id),analysis=Situation.read(this,updated,true);main.post(()->{if(alive()){body.setText(updated);if(cues!=null)cues.setText(analysis);}});}
+                })).open());column.addView(names);
                 body.setTextIsSelectable(true);body.setLineSpacing(dp(4),1f);column.addView(body);
                 new AlertDialog.Builder(this).setTitle(momentDate(session.startMs)).setView(scroll)
                     .setNegativeButton("Delete",(d,w)->new AlertDialog.Builder(this).setTitle("Delete this journal?")
@@ -541,9 +559,9 @@ public final class RecallListenActivity extends Activity {
         EditText e=new EditText(this);e.setSingleLine(single);e.setContentDescription(label);e.setText(value==null?"":value);e.setMinHeight(dp(48));
         body.addView(e);return e;
     }
-    private void labeled(LinearLayout body,String label,String value){
-        if(!nonempty(value))return;TextView name=text(label,14,SECOND,true);name.setPadding(0,dp(14),0,dp(3));
-        body.addView(name);TextView text=text(value,17,INK,false);text.setTextIsSelectable(true);text.setPadding(0,0,0,dp(8));body.addView(text);
+    private TextView labeled(LinearLayout body,String label,String value){
+        if(!nonempty(value))return null;TextView name=text(label,14,SECOND,true);name.setPadding(0,dp(14),0,dp(3));
+        body.addView(name);TextView text=text(value,17,INK,false);text.setTextIsSelectable(true);text.setPadding(0,0,0,dp(8));body.addView(text);return text;
     }
     private void stopPlayer(){
         if(studio!=null){studio.close();studio=null;}

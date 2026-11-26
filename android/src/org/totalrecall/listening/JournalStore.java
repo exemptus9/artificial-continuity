@@ -22,15 +22,55 @@ public final class JournalStore extends SQLiteOpenHelper {
     private static final DateTimeFormatter FORMAT=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX");
     private final Context app;
     public JournalStore(Context context){
-        super(context.getApplicationContext(),DB,null,1);app=context.getApplicationContext();
+        super(context.getApplicationContext(),DB,null,2);app=context.getApplicationContext();
     }
     @Override public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL DEFAULT '')");
-        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL,voice INTEGER NOT NULL DEFAULT 0)");
+        createVoices(db);
         db.execSQL("CREATE INDEX lines_session ON lines(session,id)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){throw new IllegalStateException("Unsupported journal schema");}
+    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){if(from==1 && to==2){db.execSQL("ALTER TABLE lines ADD COLUMN voice INTEGER NOT NULL DEFAULT 0");createVoices(db);return;}
+        throw new IllegalStateException("Unsupported journal schema");}
+    private static void createVoices(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE journal_voices(session INTEGER REFERENCES sessions(id) ON DELETE CASCADE,voice INTEGER,name TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(session,voice))");
+    }
+    static String voiceLabel(int id,String name,String source){
+        String label=LiveCapture.defaultVoice(id);
+        if(name!=null && !name.isEmpty())label+=" · "+name;
+        if(source!=null && !source.isEmpty())label+=" · "+source;
+        return label;
+    }
+    java.util.TreeMap<Integer,String[]> voices(long session){
+        java.util.TreeMap<Integer,String[]> result=new java.util.TreeMap<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT voice FROM lines WHERE session=? AND voice>0 GROUP BY voice",new String[]{String.valueOf(session)})){
+            while(c.moveToNext())result.put(c.getInt(0),new String[]{"",""});
+        }
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT voice,name,source FROM journal_voices WHERE session=?",new String[]{String.valueOf(session)})){
+            while(c.moveToNext())result.put(c.getInt(0),new String[]{c.getString(1),c.getString(2)});
+        }return result;
+    }
+    void nameVoice(long session,int voice,String name,String source){
+        if(voice<1 || name.length()>64 || name.matches("(?s).*[\\[\\]\\p{Cntrl}].*"))throw new IllegalArgumentException("Choose a short name without brackets or line breaks.");
+        if(!java.util.Arrays.asList("","Me","Another person","Media").contains(source))throw new IllegalArgumentException("Choose a listed source.");
+        getWritableDatabase().execSQL("INSERT OR REPLACE INTO journal_voices VALUES(?,?,?,?)",new Object[]{session,voice,name,source});
+    }
+    static final class Turn{
+        final long id;final int voice;final String text;
+        Turn(Cursor c){id=c.getLong(0);voice=c.getInt(1);text=c.getString(2);}
+    }
+    List<Turn> turns(long session,long before){
+        ArrayList<Turn> turns=new ArrayList<>();
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT id,voice,text FROM lines WHERE session=? AND id<? AND is_partial<>2 ORDER BY id DESC LIMIT 31",
+            new String[]{String.valueOf(session),String.valueOf(before)})){while(c.moveToNext())turns.add(new Turn(c));}
+        return turns;
+    }
+    void assign(long session,long row,int voice){
+        ContentValues v=new ContentValues();v.put("voice",voice);
+        if(getWritableDatabase().update("lines",v,"id=? AND session=? AND is_partial<>2",new String[]{String.valueOf(row),String.valueOf(session)})!=1)
+            throw new IllegalStateException("That journal line is no longer available.");
+    }
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences(PREF,Context.MODE_PRIVATE);}
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
     static long epoch(Context c){return prefs(c).getLong("epoch",0);}
@@ -97,6 +137,9 @@ public final class JournalStore extends SQLiteOpenHelper {
         }
     }
     boolean append(long session,long expectedEpoch,String value,boolean partial){
+        return append(session,expectedEpoch,value,partial,0);
+    }
+    boolean append(long session,long expectedEpoch,String value,boolean partial,int voice){
         if(value==null||value.trim().isEmpty()||session<0)return false;
         synchronized(GUARD){
             if(!enabled(app)||epoch(app)!=expectedEpoch)return false;
@@ -105,7 +148,7 @@ public final class JournalStore extends SQLiteOpenHelper {
                 if(!c.moveToFirst())return false;
             }
             ContentValues v=new ContentValues();v.put("session",session);v.put("at",System.currentTimeMillis());
-            v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);return true;
+            v.put("voice",voice);v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);return true;
         }
     }
     void finish(long id,String why){if(id<0)return;synchronized(GUARD){
@@ -115,10 +158,11 @@ public final class JournalStore extends SQLiteOpenHelper {
         public final long id,startMs,endMs;public final int count;public final String endReason;
         Session(Cursor c){id=c.getLong(0);startMs=c.getLong(1);endMs=c.getLong(2);count=c.getInt(3);endReason=c.getString(4);}
     }
-    public List<Session> sessions(){
+    public List<Session> sessions(){return sessions(0);}
+    List<Session> sessions(int limit){
         synchronized(GUARD){
             prune();List<Session> out=new ArrayList<>();
-            try(Cursor c=getReadableDatabase().rawQuery("SELECT s.id,s.start,s.end,COUNT(l.id),s.reason FROM sessions s LEFT JOIN lines l ON s.id=l.session GROUP BY s.id ORDER BY s.start DESC,s.id DESC",null)){
+            try(Cursor c=getReadableDatabase().rawQuery("SELECT s.id,s.start,s.end,COUNT(l.id),s.reason FROM sessions s LEFT JOIN lines l ON s.id=l.session GROUP BY s.id ORDER BY s.start DESC,s.id DESC"+(limit>0?" LIMIT "+limit:""),null)){
                 while(c.moveToNext())out.add(new Session(c));
             }return out;
         }
@@ -133,9 +177,10 @@ public final class JournalStore extends SQLiteOpenHelper {
             out.write(c.getLong(1)==0?"Session open\n":("Ended "+stamp(c.getLong(1))+" · "+c.getString(2)+"\n"));
             out.write("On-device speech recognition. Timestamps mark recognition time; words may be inaccurate.\n\n");
         }
-        try(Cursor c=db.rawQuery("SELECT at,text,is_partial FROM lines WHERE session=? ORDER BY id",new String[]{String.valueOf(id)})){
+        try(Cursor c=db.rawQuery("SELECT l.at,l.text,l.is_partial,l.voice,v.name,v.source FROM lines l LEFT JOIN journal_voices v ON l.session=v.session AND l.voice=v.voice WHERE l.session=? ORDER BY l.id",new String[]{String.valueOf(id)})){
             int bytes=0;while(c.moveToNext()){
-                String text=c.getString(1);
+                String speaker=voiceLabel(c.getInt(3),c.getString(4),c.getString(5));
+                String text=(speaker.isEmpty()?"":"["+speaker+"] ")+c.getString(1);
                 if(max>0 && bytes+text.length()>max){out.write("… Export to read the complete transcript.\n");break;}
                 out.write(stamp(c.getLong(0))+"  "+(c.getInt(2)==1?"[unfinished utterance] ":c.getInt(2)==2?"[capture status] ":"")+text+"\n");
                 bytes+=text.length()+32;

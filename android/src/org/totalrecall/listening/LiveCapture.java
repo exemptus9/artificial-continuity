@@ -17,21 +17,38 @@ public final class LiveCapture {
     private static float level;
     private static long finalSequence, sessionStart;
     private static int savedCount;
+    private static long journalId=-1,voiceSession,aliasVersion;
+    private static boolean groupsReady;
+    private static final java.util.Map<Integer,String> names=new java.util.TreeMap<>();
+    static synchronized void voiceSession(long journal,boolean available){voiceSession++;journalId=journal;groupsReady=available;names.clear();aliasVersion++;}
+    static synchronized boolean rename(long generation,int id,String value){
+        if(generation!=voiceSession || !active || !names.containsKey(id))return false;
+        names.put(id,value);aliasVersion++;return true;
+    }
+    static String defaultVoice(int id){return id>0?"Voice "+id:id<0?"Uncertain voice":"";}
     private static boolean active,waiting;
     private static final class Line{
-        final long at;final String words;
-        Line(long time,String text){at=time;words=text;}
+        final long at;final String words;final int voice;
+        Line(long time,String text,int id){at=time;words=text;voice=id;}
     }
     public static final class Snapshot{
         public final String partial,lastSave,reason,state;
         public final List<String> finals;
+        public final List<Long> recognizedAt;
+        final List<Integer> voices;final java.util.Map<Integer,String> names;
+        final long voiceSession,journalId,aliasVersion;
+        final boolean groupsReady;
+        String who(int i){int id=voices.get(i);return names.getOrDefault(id,defaultVoice(id));}
+        String attributed(int i){String source=who(i);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
         public final float level;
         public final long finalSequence, sessionSeconds;
         public final int savedCount;
         public final boolean receiving;
         public final boolean active,waiting;
-        Snapshot(String p,String save,String why,String status,List<String> lines,float meter,boolean on,boolean wait,long t){
-            partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);level=meter;active=on;waiting=wait;
+        Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
+            partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);recognizedAt=Collections.unmodifiableList(times);level=meter;active=on;waiting=wait;
+            voices=Collections.unmodifiableList(ids);names=new java.util.TreeMap<>(LiveCapture.names);
+            voiceSession=LiveCapture.voiceSession;journalId=LiveCapture.journalId;aliasVersion=LiveCapture.aliasVersion;groupsReady=LiveCapture.groupsReady;
             finalSequence=LiveCapture.finalSequence; savedCount=LiveCapture.savedCount;
             sessionSeconds=on?Math.max(0,t-sessionStart)/1000:0;
             receiving=on&&!wait&&t-lastLevel<750;
@@ -40,7 +57,7 @@ public final class LiveCapture {
         String overlayWords(long after){
             if(waiting || finalSequence<after)return "";
             int count=(int)Math.min(2,Math.min(finals.size(), finalSequence-after));
-            List<String> lines=finals.subList(finals.size()-count,finals.size());
+            List<String> lines=new ArrayList<>();for(int i=finals.size()-count;i<finals.size();i++)lines.add(attributed(i));
             String committed=String.join("\n",lines);
             if(partial.isEmpty())return committed;
             return committed.isEmpty()?partial:committed+"\n"+partial;
@@ -56,18 +73,23 @@ public final class LiveCapture {
     public static synchronized Snapshot snapshot(){return at(now());}
     static synchronized Snapshot at(long t){
         expire(t);ArrayList<String> lines=new ArrayList<>(recent.size());
-        for(Line line:recent)lines.add(line.words);
-        return new Snapshot(partial,lastSave,reason,state,lines,level,active,waiting,t);
+        ArrayList<Long> times=new ArrayList<>(recent.size());
+        ArrayList<Integer> ids=new ArrayList<>();for(Line line:recent){lines.add(line.words);times.add(line.at);ids.add(line.voice); }
+        return new Snapshot(partial,lastSave,reason,state,lines,times,ids,level,active,waiting,t);
     }
     static synchronized void start(){clear();savedCount=0;sessionStart=now();active=true;waiting=false;state="Preparing microphone";}
     static synchronized void state(String label){state=bounded(label,200);}
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){voiceSession(-1,false);recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){if(active){savedCount++;lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
+        wordsAt(text,complete,t,0);
+    }
+    static synchronized void attributed(String words,int voice){wordsAt(words,true,now(),voice);}
+    private static void wordsAt(String text,boolean complete,long t,int voice){
         if(!active||waiting)return;
         expire(t);
         String value=bounded(text,3000);
@@ -75,7 +97,8 @@ public final class LiveCapture {
         partial="";
         if(!value.isEmpty()){
             if(recent.size()==LIMIT)recent.removeFirst();
-            finalSequence++;recent.addLast(new Line(t,value));
+            if(voice>0)names.putIfAbsent(voice,defaultVoice(voice));
+            finalSequence++;recent.addLast(new Line(t,value,voice));
         }
     }
     static synchronized void samples(short[] pcm,int count){meterAt(pcm,count,now());}

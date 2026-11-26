@@ -20,6 +20,17 @@ public final class RecallOverlay {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final String PREFS = "selective-floating-controls";
     private static Controller active;
+    private static boolean reviewing,restoreAfterReview;
+    static void reviewVisible(Context c,boolean shown){
+        if(shown==reviewing)return;
+        reviewing=shown;
+        if(shown){restoreAfterReview=active!=null;stop();return;}
+        if(restoreAfterReview && enabled(c)){
+            if(RecallService.isListening())show(c.getApplicationContext(),false);
+            else if(RecallService.pausedAt(c)>0)show(c.getApplicationContext(),true);
+        }
+        restoreAfterReview=false;
+    }
 
     private RecallOverlay() {}
     static SharedPreferences options(Context c) { return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE); }
@@ -62,6 +73,7 @@ public final class RecallOverlay {
     private static void show(Context c,boolean preview) {
         stop();
         if(!enabled(c)||!Settings.canDrawOverlays(c))return;
+        if(reviewing){restoreAfterReview=true;return;}
         try {
             active=new Controller(c,preview);
             active.start();
@@ -111,8 +123,7 @@ public final class RecallOverlay {
             wm=(WindowManager)windowContext.getSystemService(Context.WINDOW_SERVICE);
             expanded=prefs.getBoolean("expanded",false);
             layout=new WindowManager.LayoutParams(-2,-2,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL|
-                WindowManager.LayoutParams.FLAG_SECURE, PixelFormat.TRANSLUCENT);
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT);
             layout.gravity=Gravity.TOP|Gravity.LEFT;
             layout.setTitle("Total Recall floating controls");
             layout.x=prefs.getInt("x",dp(8));layout.y=prefs.getInt("y",dp(100));
@@ -154,7 +165,9 @@ public final class RecallOverlay {
             firstVisibleFinal=s.finalSequence+(s.partial.isEmpty()?0:1);
             if(caption!=null)caption.setText("");
         }
-        void rebuild(){detach();build();}
+        void rebuild(){
+            long boundary=firstVisibleFinal;detach();build();firstVisibleFinal=boundary;
+        }
         void showText(TextView view,String value){
             if(view==null||TextUtils.equals(view.getText(),value))return;
             view.setText(value);
@@ -175,17 +188,25 @@ public final class RecallOverlay {
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
             showText(status,headline+"  ·  "+elapsed);
-            String visibleWords=caption==null||s.waiting?"":s.overlayWords(firstVisibleFinal);
-            if(!visibleWords.equals(lastContextLine)){
-                lastContextLine=visibleWords;liveCue="";
-                if(!visibleWords.isEmpty())try{
-                    Situation context=new Situation(app);context.add(visibleWords,"");liveCue=context.cue();
+            String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
+            String contextKey=s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
+            if(detail!=null && !contextKey.equals(lastContextLine)){
+                lastContextLine=contextKey;liveCue="";
+                if(!s.waiting && s.finalSequence>=firstVisibleFinal)try{
+                    Situation context=new Situation(app);
+                    int count=(int)Math.min(s.finals.size(),s.finalSequence-firstVisibleFinal);
+                    for(int i=s.finals.size()-count;i<s.finals.size();i++)context.add(s.finals.get(i),"");
+                    liveCue=context.interpretation();
+                    if(liveCue.isEmpty() && !s.partial.isEmpty()){
+                        Situation tentative=new Situation(app);tentative.add(s.partial,"");
+                        if(!tentative.cue().isEmpty())liveCue="Tentative · "+tentative.cue();
+                    }
                 }catch(java.io.IOException ignored){}
             }
             if(detail!=null){
                 String state=s.waiting?s.state:ready?"Mic level "+level+"%  ·  "+s.savedCount+" saved this session":s.state;
                 if(!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
-                if(!liveCue.isEmpty())state+="\nWords suggest · "+liveCue;
+                if(!liveCue.isEmpty())state+="\n"+liveCue;
                 showText(detail,state);
             }
             if(caption!=null){
@@ -224,28 +245,33 @@ public final class RecallOverlay {
                 meter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xff78e0c4));
                 root.addView(meter,new LinearLayout.LayoutParams(-1,dp(5)));
             }
-            LinearLayout actions=row(root);
-            if(preview)control(actions,resumePanel()?"Resume":"Start",resumePanel()?"Resume listening":"Start listening",v->openApp(true));
-            else keep=control(actions,expanded?"Keep last 1m":"Keep 1m","Keep the last minute",v->request(RecallService.KEEP,"Keep requested"));
-            if(!preview && !expanded)control(actions,"Pause","Pause listening",v->command(RecallService.USER_PAUSE));
-            control(actions,"Open app","Open Total Recall",v->openApp(false));
-            control(actions,expanded?"Shrink":"Expand",expanded?"Shrink overlay":"Expand overlay",v->resize());
-            control(actions,"×","Hide floating controls",v->stop());
-            if(expanded && !preview){
-                detail=label("",13);
-                LinearLayout shortcuts=row(root);
-                missed=control(shortcuts,"Missed one","Mark a missed moment",v->request(RecallService.MISSED,"Missed moment requested"));
-                boolean showWords=prefs.getBoolean("captions",false);
-                words=control(shortcuts,showWords?"Hide words":"Live words",showWords?"Hide live words":"Show live words",v->changeCaptions(app,!showWords));
-                control(shortcuts,"Archive","Open archive and sync",v->openScreen(ArchiveSyncActivity.class,false));
-                control(shortcuts,"Pause","Pause and clear temporary audio",v->{command(RecallService.USER_PAUSE);});
-                if(showWords){
-                    caption=label("Waiting for words…",15);caption.setMaxLines(3);
-                    caption.setGravity(Gravity.BOTTOM);
+            boolean showWords=prefs.getBoolean("captions",true);
+            if(!preview && showWords){
+                caption=label("Listening for words…",15);
+                caption.setMaxLines(expanded?3:2);caption.setGravity(Gravity.BOTTOM);
+            }
+            LinearLayout capture=row(root);
+            if(preview)control(capture,resumePanel()?"Resume listening":"Start listening","Open Total Recall and start microphone capture",v->openApp(true));
+            else{
+                keep=control(capture,"Save last minute","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Saving recent audio…"));
+                control(capture,"Pause mic","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
+            }
+            LinearLayout nav=row(root);
+            control(nav,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
+            control(nav,expanded?"Shrink panel":"Expand panel",expanded?"Shrink to essential controls":"Expand for feedback and more actions",v->resize());
+            if(expanded){
+                if(!preview){
+                    detail=label("",13);
+                    LinearLayout tools=row(root);
+                    missed=control(tools,"Mark missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Marking missed moment…"));
+                    words=control(tools,showWords?"Hide captions":"Show captions",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));
                 }
+                LinearLayout panel=row(root);
+                control(panel,"Open recorder","Open the main listening screen",v->openApp(false));
+                control(panel,"Hide panel","Dismiss the overlay and keep the current microphone state",v->stop());
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
-            layout.width=Math.min(dp(expanded?326:preview?266:330),Math.max(dp(100),screenWidth-dp(12)));
+            layout.width=Math.min(dp(expanded?310:252),Math.max(dp(100),screenWidth-dp(12)));
             preserveBoundary();
             try {wm.addView(root,layout);visible=true;}
             catch(RuntimeException e){stop();}
@@ -281,8 +307,8 @@ public final class RecallOverlay {
         TextView control(LinearLayout row,String label,String hint,View.OnClickListener listener){
             TextView t=new TextView(windowContext);
             t.setText(label);t.setTextSize(14);t.setTextColor(Color.WHITE);t.setGravity(Gravity.CENTER);
-            t.setMinWidth(0);t.setMinHeight(dp(48));t.setPadding(dp(2),0,dp(2),0);t.setClickable(true);
-            t.setContentDescription(hint);t.setFilterTouchesWhenObscured(true);t.setOnClickListener(listener);
+            t.setMinWidth(0);t.setMinHeight(dp(48));t.setPadding(dp(3),0,dp(3),0);t.setClickable(true);
+            t.setContentDescription(hint);t.setTooltipText(hint);t.setFilterTouchesWhenObscured(true);t.setOnClickListener(listener);
             t.setAccessibilityDelegate(new View.AccessibilityDelegate(){
                 @Override public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){
                     super.onInitializeAccessibilityNodeInfo(host,info);info.setClassName("android.widget.Button");

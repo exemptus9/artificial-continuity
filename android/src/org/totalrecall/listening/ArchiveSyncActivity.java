@@ -20,6 +20,7 @@ public final class ArchiveSyncActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LinearLayout page;
     private int screen,revision,offset;
+    private String selectedRecording;
     private boolean busy,advanced;
     private String exportId;
     private MediaPlayer player;
@@ -28,7 +29,9 @@ public final class ArchiveSyncActivity extends Activity {
         if("status".equals(k)||"lastReceiptAt".equals(k))runOnUiThread(()->{if(transferStatus!=null)transferStatus.setText(status());});
     };
     @Override protected void onCreate(Bundle state){
-        super.onCreate(state);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(state);
+        if(state==null)selectedRecording=getIntent().getStringExtra("recordingId");
+        if(state==null && getIntent().getBooleanExtra("recordings",false))screen=3;
         if(state!=null){screen=state.getInt("screen",0);offset=state.getInt("offset",0);exportId=state.getString("exportId");}
         if(android.os.Build.VERSION.SDK_INT>=35)getWindow().getDecorView().setOnApplyWindowInsetsListener((v,i)->{
             android.graphics.Insets bar=i.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
@@ -253,13 +256,18 @@ public final class ArchiveSyncActivity extends Activity {
         });
     }
     private void browse(int tag){
-        title("Phone audio");TextView note=label("Reading segments…",16);
+        title("Recordings on this phone");button("Full audio settings",()->go(1));TextView note=label("Reading segments…",16);
         io.execute(()->{
             try(ArchiveStore db=new ArchiveStore(this)){
                 List<ArchiveStore.Segment> items=db.segments(26,offset);List<String> gaps=db.latestGaps(5);
                 runOnUiThread(()->{
                     if(tag!=revision)return;
-                    note.setText(items.isEmpty()?"No full-audio segments in this page.":"Select a recording to play, analyze or export.");
+                    note.setText(items.isEmpty()?(ArchiveStore.enabled(this)?"No finished recordings on this page yet. A recording appears when its segment closes.":"Full audio is off. Open Full audio settings to keep continuous recordings."):"Select a recording to play, analyze or export.");
+                    if(selectedRecording!=null){
+                        String id=selectedRecording;selectedRecording=null;
+                        io.execute(()->{try(ArchiveStore local=new ArchiveStore(this)){ArchiveStore.Segment selected=local.get(id);
+                            runOnUiThread(()->{if(tag==revision && selected!=null)detail(selected);});}});
+                    }
                     for(int i=0;i<Math.min(25,items.size());i++){ArchiveStore.Segment s=items.get(i);
                         button(date(s.startMs)+" · "+Math.round(s.durationMs/1000d)+" s · "+size(s.bytes)+"\n"+s.status,()->detail(s));}
                     if(offset>0)button("Previous 25",()->{offset=Math.max(0,offset-25);render();});

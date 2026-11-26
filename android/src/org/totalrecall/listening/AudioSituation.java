@@ -59,7 +59,7 @@ public final class AudioSituation {
             if(!raw){codec=MediaCodec.createDecoderByType(mime);codec.configure(format,null,null,0);codec.start();}
             if(raw && format.containsKey(MediaFormat.KEY_PCM_ENCODING) && format.getInteger(MediaFormat.KEY_PCM_ENCODING)!=AudioFormat.ENCODING_PCM_16BIT)
                 throw new IOException("This PCM format is unsupported.");
-            try(OfflineSpeech speech=new OfflineSpeech(a,false)){
+            try(OfflineSpeech speech=new OfflineSpeech(a,false,a.getSharedPreferences("recall-speech",0).getBoolean("voices",true))){
                 Scan scan=new Scan(a,speech);scan.focused=focused;
                 MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();boolean eof=false;long tick=0,lastWork=SystemClock.elapsedRealtime();
                 ByteBuffer packet=raw?ByteBuffer.allocateDirect(256*1024):null;
@@ -115,21 +115,29 @@ public final class AudioSituation {
             gain=Math.min(target,.65*gain+.35*target);
             for(int i=0;i<used;i++)window[i]=(short)Math.max(-32768,Math.min(32767,Math.round(frame[i]*gain)));
         }
+        final java.util.ArrayList<String> turns=new java.util.ArrayList<>();
+        void addTurn(String text){
+            if(text==null||text.trim().isEmpty())return;
+            String who=LiveCapture.defaultVoice(speech.lastVoice());
+            String at=time(start/16000)+"–"+time(samples/16000)+(who.isEmpty()?"":" · "+who);
+            context.add(text,at);start=samples;
+            if(turns.size()<40)turns.add(at+"  "+text.substring(0,Math.min(250,text.length())));
+        }
         void flush(){
             if(used==0)return;
             if(energy/used>=10738){active+=used;quiet=0;}else{quiet+=used;longest=Math.max(longest,quiet);}
             if(focused)focus();
             String line=speech.accept(window,used);
-            if(line!=null){context.add(line,time(start/16000)+"–"+time(samples/16000));start=samples;}
+            addTurn(line);
             used=0;energy=0;
         }
         String finish(){
-            flush();context.add(speech.finish(),time(start/16000)+"–"+time(samples/16000));
+            flush();addTurn(speech.finish());
             if(samples==0)return "No audio samples were decoded.";
             return "Audio decoded  "+time(samples/16000)+"\nAbove −50 dBFS  "+Math.round(active*100d/samples)+"% of decoded time"+
                 "\nLongest quiet stretch  "+String.format(Locale.ROOT,"%.1f s",longest/16000d)+"\nPeak level  "+
                 (peak==0?"silence":String.format(Locale.ROOT,"%.1f dBFS",20*Math.log10(peak/32768d)))+
-                "\n\nFrom offline speech recognition\n"+context.result()+"\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
+                "\n\nFrom offline speech recognition\n"+context.result()+(turns.isEmpty()?"":"\n\nRecognized passages (first 40)\n"+String.join("\n",turns))+"\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
         }
     }
 }

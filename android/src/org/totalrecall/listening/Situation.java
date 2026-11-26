@@ -45,6 +45,18 @@ public final class Situation {
         int start=Math.max(0,at-55),end=Math.min(line.length(),start+190);
         return (stamp.isEmpty()?"":stamp+"  ")+(start>0?"…":"")+"“"+line.substring(start,end)+(end<line.length()?"…":"")+"”";
     }
+    String interpretation(){
+        boolean decision=evidence.containsKey("Possible decision"),step=evidence.containsKey("Possible next step");
+        boolean question=evidence.containsKey("Question"),obstacle=evidence.containsKey("Possible obstacle");
+        boolean idea=evidence.containsKey("Creative idea"),time=evidence.containsKey("Time reference");
+        if(obstacle && (step||question))return "Possible troubleshooting · an obstacle and a question or next step were mentioned.";
+        if(idea && (decision||step))return "Possible creative planning · an idea and a choice or next step were mentioned.";
+        if(decision && step)return "Possible planning · a choice and a follow-up were mentioned.";
+        if(step && time)return "Possible scheduling · a next step and a time were mentioned.";
+        if(question && evidence.containsKey("Needs checking"))return "Possible fact-checking · a question and uncertainty were expressed.";
+        if(evidence.isEmpty())return "";
+        return "Words suggest · "+cue();
+    }
     public String draft(){
         if(first.isEmpty())return "";
         if(evidence.isEmpty())return "One passage reads "+first+".";
@@ -62,7 +74,7 @@ public final class Situation {
         if(evidence.isEmpty())return "Source excerpt  "+first+"\nNo explicit situation cue matched.";
         ArrayList<String> lines=new ArrayList<>();
         for(Map.Entry<String,String> e:evidence.entrySet())lines.add(e.getKey()+"  "+e.getValue());
-        return String.join("\n\n",lines);
+        return interpretation()+"\n\n"+String.join("\n\n",lines);
     }
     public static String read(Context c,String text,boolean journal){
         return read(c,text,journal,false);
@@ -74,7 +86,13 @@ public final class Situation {
                 Pattern entry=Pattern.compile("^\\d{4}-\\d{2}-\\d{2} (\\d{2}:\\d{2}:\\d{2}) (?:Z|[+-]\\d{2}:\\d{2})  (.+)$");
                 for(String line:text.split("\n")){
                     Matcher m=entry.matcher(line);
-                    if(m.matches()&&!m.group(2).startsWith("[capture status]"))result.add(m.group(2),m.group(1));
+                    if(m.matches()&&!m.group(2).startsWith("[capture status]")){
+                        String words=m.group(2),source=m.group(1);int end=words.indexOf("] ");
+                        if(end>0 && (words.startsWith("[Voice ")||words.startsWith("[Uncertain voice]"))){
+                            source+=" · "+words.substring(1,end);words=words.substring(end+2);
+                        }
+                        result.add(words,source);
+                    }
                 }
             }else result.add(text,"");
             return story?result.draft():result.result();
