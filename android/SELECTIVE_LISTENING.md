@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.23.0
+# Live listening on Galaxy · 0.24.0
 
-Install `TotalRecall-0.23.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.24.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -73,3 +73,9 @@ The expanded overlay shows **Now** and **Last**. These are interpretations of re
 Choose **Record my words** on the large panel or **Record my words & edit** on the recorder. Speak after the timer starts. **Finish & edit** opens the saved take. A take also closes at one minute or when usable microphone input ends. **Listen to original** offers to pause the live microphone for playback. Edit **What I actually said**, then **Save corrected words**. You can copy or share the wording or share the original WAV separately. Takes appear in **Saved on phone → Recent saved clips** even with the journal switched off.
 
 Tap a passage in **Full journal** to correct, copy or share its wording. **Compare with original recognition** and session text exports retain the earlier reading.
+
+## Listen with the phone locked
+
+Expand Total Recall’s ongoing notification to see microphone reception, registration of words, saves, flags, capture settings, and backup status. **Save last min** keeps recent audio. **Start take** begins a new one-minute recording and becomes **Finish take**. **Pause** releases the microphone. The paused notification offers **Resume** and a tap-through to the recorder. Android and your lock-screen settings determine the controls you see and whether authentication is required.
+
+Open **Live & saved → Lock screen & sound** for transcript and situation previews, Android notification settings, and sound controls. The rising wake sound means Recall is ready for your command. The falling save sound follows a requested clip or voice take reaching local storage. Optional spoken receipts say “Clip stored” or “Take stored.” Use **Test wake** and **Test save** to set your cue level. Audio follows media volume and output routing.

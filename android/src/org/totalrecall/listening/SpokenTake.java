@@ -14,7 +14,7 @@ final class SpokenTake {
             this.recording=recording;this.seconds=seconds;this.clip=clip;this.message=message;
         }
     }
-    static volatile long firstLine;
+    static volatile long firstLine,generation;
     static volatile Status status=new Status(false,0,-1,"");
     private short[] pcm;
     private int count;
@@ -23,7 +23,7 @@ final class SpokenTake {
     boolean active(){return pcm!=null;}
     void begin(){
         if(active())return;
-        firstLine=LiveCapture.snapshot().finalSequence;pcm=new short[LIMIT];count=0;heard.setLength(0);start=System.currentTimeMillis();
+        generation++;firstLine=LiveCapture.snapshot().finalSequence;pcm=new short[LIMIT];count=0;heard.setLength(0);start=System.currentTimeMillis();
         status=new Status(true,0,-1,"Recording your take");
     }
     boolean add(short[] frame,int n){

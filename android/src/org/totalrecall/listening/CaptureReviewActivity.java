@@ -18,6 +18,7 @@ public final class CaptureReviewActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LinearLayout page,body,nav,results;
     private TextView status,words,draft,context,scope,voiceState;
+    private CaptureCues preview;
     private Button liveTab,savedTab;
     private Switch journal;
     private boolean saved,visible,reading;
@@ -42,6 +43,7 @@ public final class CaptureReviewActivity extends Activity {
         LinearLayout quick=row(page);
         action(quick,"Full journal",()->startActivity(new Intent(this,FullJournalActivity.class)));
         action(quick,"Voice commands",this::guide);
+        action(quick,"Lock screen & sound",this::feedbackSettings);
         body=column();page.addView(body);tab(saved);
         if(getIntent().getBooleanExtra("commands",false)&&state==null)guide();
     }
@@ -49,7 +51,7 @@ public final class CaptureReviewActivity extends Activity {
     @Override protected void onStart(){super.onStart();RecallOverlay.reviewVisible(this,true);}
     @Override protected void onStop(){RecallOverlay.reviewVisible(this,false);super.onStop();}
     @Override protected void onResume(){super.onResume();visible=true;nextRead=0;main.removeCallbacks(pulse);pulse.run();}
-    @Override protected void onPause(){visible=false;main.removeCallbacks(pulse);super.onPause();}
+    @Override protected void onPause(){visible=false;stopPreview();main.removeCallbacks(pulse);super.onPause();}
     @Override protected void onDestroy(){io.shutdownNow();super.onDestroy();}
     private void tab(boolean selectSaved){
         saved=selectSaved;liveTab.setSelected(!saved);savedTab.setSelected(saved);
@@ -103,21 +105,55 @@ public final class CaptureReviewActivity extends Activity {
             });
             text(settings,"Sample a fan or steady hum again after a pause or microphone change. The saved audio keeps the original sound.",14,false);
             text(settings,"Recent words stay here for up to 90 seconds. Turn on the journal to keep future words. Quiet boost affects live English transcription only.",14,false);
-            LinearLayout alerts=card("Notifications");
-            Switch notice=new Switch(this);notice.setText("Include words and situation cues on the lock screen");notice.setMinHeight(dp(48));
-            notice.setChecked(getSharedPreferences("recall-speech",0).getBoolean("noticeWords",false));alerts.addView(notice);
-            notice.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("noticeWords",on).apply());
-            text(alerts,"Expand the recording notification for time, input level, saves and backup status. Android controls what appears while locked.",14,false);
-            action(alerts,"Android notification settings",()->startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName())));
             action(body,"Open recorder controls",()->recorder(null));paintLive();
         }
     }
+    private void feedbackSettings(){
+        android.content.SharedPreferences prefs=getSharedPreferences("recall-speech",0);
+        LinearLayout options=column();options.setPadding(dp(18),dp(8),dp(18),dp(12));
+        text(options,"Expand the recording notification to save recent audio, start or finish a one-minute take, or pause. Tap the notification itself to review your recordings.",15,false);
+        Switch words=new Switch(this);words.setMinHeight(dp(48));words.setText("Show recognized words and situations while locked");words.setChecked(prefs.getBoolean("noticeWords",false));options.addView(words);
+        words.setOnCheckedChangeListener((v,on)->{
+            prefs.edit().putBoolean("noticeWords",on).apply();
+            if(RecallService.isListening())RecallService.command(this,RecallService.REFRESH_NOTICE);
+        });
+        action(options,"Android lock-screen notification settings",()->{
+            android.app.NotificationManager manager=getSystemService(android.app.NotificationManager.class);
+            if(manager.getNotificationChannel("total_recall_listening")!=null)
+                startActivity(new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,"total_recall_listening"));
+            else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()));
+        });
+        text(options,"Sound feedback",18,true);
+        Switch chime=new Switch(this);chime.setText("Play wake and save chimes");chime.setMinHeight(dp(48));chime.setChecked(prefs.getBoolean("chime",true));options.addView(chime);
+        chime.setOnCheckedChangeListener((v,on)->prefs.edit().putBoolean("chime",on).apply());
+        Switch speech=new Switch(this);speech.setText("Say “Clip stored” or “Take stored” after a requested save");speech.setMinHeight(dp(48));speech.setChecked(prefs.getBoolean("spokenReceipts",false));options.addView(speech);
+        speech.setOnCheckedChangeListener((v,on)->prefs.edit().putBoolean("spokenReceipts",on).apply());
+        String[] levels={"Soft","Clear","Prominent"};
+        Button level=action(options,"Cue level · "+levels[cueLevel(prefs)],()->{});
+        level.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setTitle("Cue level")
+            .setSingleChoiceItems(levels,cueLevel(prefs),(dialog,i)->{prefs.edit().putInt("cueLevel",i).apply();level.setText("Cue level · "+levels[i]);dialog.dismiss();}).setNegativeButton("Cancel",null).show());
+        text(options,"Two rising notes mean Recall heard the wake word. A falling chime confirms a save. Use your media volume buttons to adjust the actual loudness.",14,false);
+        LinearLayout tests=row(options);
+        action(tests,"Test wake",()->previewCue(CaptureCues.Cue.WAKE));action(tests,"Test save",()->previewCue(CaptureCues.Cue.CLIP));
+        ScrollView scroll=new ScrollView(this);scroll.addView(options);
+        android.app.AlertDialog dialog=new android.app.AlertDialog.Builder(this).setTitle("Lock screen & sound").setView(scroll).setPositiveButton("Done",null).create();
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
+        dialog.setOnDismissListener(dialogInterface->{stopPreview();setVolumeControlStream(android.media.AudioManager.USE_DEFAULT_STREAM_TYPE);});dialog.show();
+    }
+    private int cueLevel(android.content.SharedPreferences p){return Math.max(0,Math.min(2,p.getInt("cueLevel",2)));}
+    private void stopPreview(){if(preview!=null){preview.close();preview=null;}}
+    private void previewCue(CaptureCues.Cue cue){
+        android.content.SharedPreferences p=getSharedPreferences("recall-speech",0);
+        if(!p.getBoolean("chime",true) && (cue==CaptureCues.Cue.WAKE||!p.getBoolean("spokenReceipts",false))){
+            Toast.makeText(this,"Enable a sound above to hear this preview.",Toast.LENGTH_SHORT).show();return;
+        }
+        try{if(preview==null)preview=new CaptureCues(this);preview.play(cue);}
+        catch(RuntimeException e){Toast.makeText(this,"Audio preview is unavailable.",Toast.LENGTH_SHORT).show();}
+    }
     private void guide(){
-        Switch sounds=new Switch(this);sounds.setText("Wake and save sounds");
-        sounds.setChecked(getSharedPreferences("recall-speech",0).getBoolean("chime",true));
-        sounds.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("chime",on).apply());
-        LinearLayout contents=column();contents.setPadding(dp(20),dp(12),dp(20),dp(12));contents.addView(sounds);
+        LinearLayout contents=column();contents.setPadding(dp(20),dp(12),dp(20),dp(12));
+        action(contents,"Test or change recognition sounds",this::feedbackSettings);
         text(contents,SelectiveEngine.guide(),16,false);
         ScrollView scroll=new ScrollView(this);scroll.addView(contents);
         new android.app.AlertDialog.Builder(this).setTitle("Voice commands").setView(scroll).setPositiveButton("Close",null).show();

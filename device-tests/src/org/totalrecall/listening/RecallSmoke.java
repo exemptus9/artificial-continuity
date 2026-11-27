@@ -671,6 +671,20 @@ public final class RecallSmoke extends Instrumentation {
         android.os.ParcelFileDescriptor fd=getUiAutomation().executeShellCommand(command);
         try(InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){bytes(in);}
     }
+    private android.app.PendingIntent noticeButton(String title){
+        android.app.NotificationManager manager=target.getSystemService(android.app.NotificationManager.class);
+        for(android.service.notification.StatusBarNotification row:manager.getActiveNotifications()){
+            android.app.Notification n=row.getNotification();
+            if(n.actions!=null)for(android.app.Notification.Action action:n.actions)
+                if(title.contentEquals(action.title))return action.actionIntent;
+        }
+        return null;
+    }
+    private android.app.PendingIntent waitForButton(String title){
+        final android.app.PendingIntent[] found={null};
+        until(()->(found[0]=noticeButton(title))!=null,16000,"Missing notification action "+title);
+        return found[0];
+    }
     private void microphone()throws Exception{
         Activity a=launch();
         android.os.PowerManager power=(android.os.PowerManager) target.getSystemService(Context.POWER_SERVICE);
@@ -693,8 +707,14 @@ public final class RecallSmoke extends Instrumentation {
             require(!power.isInteractive(),"Emulator display did not turn off");
             SystemClock.sleep(4000);
             require(!power.isInteractive()&&RecallService.isListening(),"Listening interrupted while screen was off");
-            // Dispatch the same foreground service intent used by the notification's Keep action.
-            target.startService(new Intent(target,RecallService.class).setAction(RecallService.KEEP));
+            android.app.PendingIntent begin=waitForButton("Start take");begin.send();
+            android.app.PendingIntent finish=waitForButton("Finish take");SystemClock.sleep(600);finish.send();
+            until(()->store.search("Voice take").stream().anyMatch(row->!previous.contains(row.uid)),16000,"Lock-screen take failed to save");
+            waitForButton("Start take");begin.send();SystemClock.sleep(900);
+            require(noticeButton("Finish take")==null,"Expired Start take action restarted recording");
+            require(!power.isInteractive(),"A lock-screen take woke the screen");
+            for(Store.Moment row:store.search("Voice take"))if(!previous.contains(row.uid))store.delete(row.id);
+            waitForButton("Save last min").send();
             Store.Moment kept=null;
             end=SystemClock.elapsedRealtime()+35000;
             while(kept==null && SystemClock.elapsedRealtime()<end){
@@ -710,6 +730,13 @@ public final class RecallSmoke extends Instrumentation {
             require(!power.isInteractive(),"Display woke before WAV verification");
             passed("Screen off throughout retrospective save: foreground microphone accepted Keep, stored "
                 +(kept.endMs-kept.startMs)+" ms of emulator PCM and verified WAV bytes against catalog SHA-256.");
+            android.app.PendingIntent priorPause=waitForButton("Pause");priorPause.send();
+            android.app.PendingIntent resume=waitForButton("Resume");
+            require(!RecallService.isListening() && !power.isInteractive(),"Pause did not release the mic while asleep");
+            resume.send();waitForButton("Save last min");
+            require(RecallService.isListening() && !power.isInteractive(),"Resume did not recover an active microphone with screen off");
+            priorPause.send();SystemClock.sleep(500);require(RecallService.isListening(),"Old pause affected the new session");
+            passed("Posted notification actions started and finished a voice take, saved recent PCM, paused and resumed the microphone with the display off. Stale take and pause actions were rejected.");
             deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
             View pause=waitText(a,"Pause listening",10000);runOnMainSync(pause::performClick);
             waitText(a,"Resume listening",20000);

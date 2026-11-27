@@ -29,7 +29,7 @@ public final class LiveCapture {
     private static int savedCount, flags;
     private static long wordCount,eventAt;
     private static String event="",flagLabel="";
-    private static long latestClip=-1;
+    private static long latestClip=-1,latestSaveTime;
     static synchronized void feedback(String message){event=bounded(message,160);eventAt=now();}
     static synchronized void flag(String category){flags++;flagLabel=bounded(category,70);feedback("Flagged · "+category);}
     private static long journalId=-1,voiceSession,aliasVersion;
@@ -63,12 +63,12 @@ public final class LiveCapture {
         String attributed(int i){String source=who(i);int split=source.indexOf(" · ");if(split>=0)source=source.substring(split+3);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
         public final float level;
         public final long finalSequence, sessionSeconds;
-        public final int savedCount,flags; public final long words; public final String event,lastFlag;public final long clipId;
+        public final int savedCount,flags; public final long words; public final String event,lastFlag;public final long clipId,savedAt;
         public final boolean receiving;
         public final boolean active,waiting;
         Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
             boolean stale=t-situationAt>=45000;
-            lastFlag=flagLabel;clipId=latestClip;
+            lastFlag=flagLabel;clipId=latestClip;savedAt=latestSaveTime;
             currentCue=stale?"":situation;currentSeq=situationSeq;
             previousCue=stale?situation:previousSituation;previousSeq=stale?situationSeq:previousSituationSeq;
             partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);recognizedAt=Collections.unmodifiableList(times);level=meter;active=on;waiting=wait;
@@ -131,9 +131,9 @@ public final class LiveCapture {
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){saved(-1,what,why);}
-    static synchronized void saved(long id,String what,String why){if(active){latestClip=id;savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
+    static synchronized void saved(long id,String what,String why){if(active){latestClip=id;latestSaveTime=System.currentTimeMillis();savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
         wordsAt(text,complete,t,0);
