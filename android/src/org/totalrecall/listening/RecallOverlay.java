@@ -297,6 +297,11 @@ public final class RecallOverlay {
                     if(!expanded)caption.setSingleLine(true);
                 }
             }
+            if(!expanded){
+                // Keep one line plus its ascenders and descenders without a font's spare vertical padding.
+                compactLine(status);
+                if(caption!=null)compactLine(caption);
+            }
             if(!expanded && !ultra && !preview){
                 keep=key(header,"Save","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Keep requested…"));
                 key(header,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
@@ -361,6 +366,12 @@ public final class RecallOverlay {
             preserveBoundary();
             try {wm.addView(root,layout);visible=true;}
             catch(RuntimeException e){stop();}
+        }
+        void compactLine(TextView line){
+            if(Build.VERSION.SDK_INT>=28)line.setFallbackLineSpacing(false);
+            line.setGravity(Gravity.CENTER_VERTICAL);
+            int height=(int)Math.ceil(line.getTextSize()*1.6f)+line.getPaddingTop()+line.getPaddingBottom();
+            line.setHeight(height);
         }
         TextView key(LinearLayout row,String title,String hint,View.OnClickListener tap){
             TextView v=control(row,title,hint,tap);v.setLayoutParams(new LinearLayout.LayoutParams(dp(48),-2));v.setTextSize(12);return v;
