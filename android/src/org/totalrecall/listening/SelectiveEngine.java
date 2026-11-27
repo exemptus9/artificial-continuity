@@ -76,7 +76,12 @@ public final class SelectiveEngine {
         String reading=normalize(general);
         if(choiceWord(reading))return label.equals(reading);
         if(label.equals("cancel") && reading.equals("can sell"))return true;
-        return !reading.contains(" ") && !reading.equals("no") && !reading.equals("never");
+        if(reading.contains(" "))return false;
+        switch(reading){
+            case "no": case "nope": case "never": case "not": case "don't": case "dont":
+            case "stop": case "wait": case "wrong": case "pause": case "abort": case "discard":return false;
+            default:return true;
+        }
     }
     static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
     private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
@@ -108,6 +113,16 @@ public final class SelectiveEngine {
         return wake+" "+narrow.group(3);
     }
 
+    private static final Pattern CHOICE_AFTER_UNKNOWN=Pattern.compile("^(?:\\[unk\\] )+(hey recall|total recall|hey lexi|lexi) (save (?:this |that )?as)$");
+    // This only asks a question. A second, separate label is still required to write audio.
+    private static String corroboratedChoice(String restricted,String original){
+        if(restricted==null || original==null || reportedAddress(original))return null;
+        java.util.regex.Matcher match=CHOICE_AFTER_UNKNOWN.matcher(restricted);
+        if(!match.matches())return null;
+        String open=normalize(original),request=match.group(2);
+        return !CommandEndpoints.REPORTING.matcher(open).find() && open.endsWith(" "+request)?match.group(1)+" "+request:null;
+    }
+
     /** Reconcile only nearby final endpoints. Prefer ordinary exact commands immediately. */
     static final class CommandEndpoints {
         private String tail,dictation;
@@ -128,6 +143,7 @@ public final class SelectiveEngine {
             if(samples-tailAt>RATE*3/2)tail=null;
             if(samples-dictationAt>RATE*3/2)dictation=null;
             String command=reported?null:corroboratedSave(tail,dictation);
+            if(command==null && !reported)command=corroboratedChoice(tail,dictation);
             if(original!=null)reportedUntil=-1;
             if(command!=null)clear();
             return command;

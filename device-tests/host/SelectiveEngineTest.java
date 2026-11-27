@@ -196,6 +196,18 @@ public class SelectiveEngineTest {
         check(pair.observe("[unk]",null,"the instructor",17000)==null);
         check(pair.observe("hey recall keep that word",null,"the instructor read a strange word",26000)==null);
         check(pair.observe("hey recall keep that word","hey recall keep that word",null,100000)!=null);
+        pair.clear();
+        check(pair.observe("[unk] hey recall save as",null,null,16000)==null);
+        check("hey recall save as".equals(pair.observe(null,"hey murray call save as",null,23000)));
+        check(pair.observe(null,"the instructor said hey recall save as",null,32000)==null);
+        check(pair.observe("[unk] hey recall save as",null,"the instructor said hey recall save as",33000)==null);
+        pair.clear();
+        check(pair.observe("[unk] recall save as","let us save as",null,16000)==null);
+        check(pair.observe("[unk] hey recall save as","we may save that",null,17000)==null);
+        for(String refusal:new String[]{"stop","wait","don't","wrong","no","discard","nope","not","pause","cancel","don't save"}){
+            check(!SelectiveEngine.shortChoiceReading("line",refusal));
+        }
+        check(SelectiveEngine.shortChoiceReading("line","line") && SelectiveEngine.shortChoiceReading("cancel","can sell"));
         System.out.println("Hands-free choices passed: frozen audio, cue, origin, deduplication, final labels, cancellation, bounded prompt time, pause, status, help and repeat.");
     }
 
