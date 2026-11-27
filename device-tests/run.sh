@@ -35,7 +35,7 @@ trap restore_shade EXIT
 "${a[@]}" shell settings put secure lock_screen_show_notifications 1
 "${a[@]}" shell settings put secure lock_screen_show_silent_notifications 1
 if ! "${a[@]}" shell am instrument -w -e phase shade org.totalrecall.smoke/org.totalrecall.listening.RecallSmoke | tee build/receipts/shade.txt; then failed=1; fi
-if ! grep -q "outcome=PASS_shade" build/receipts/shade.txt; then failed=1; fi
+if ! grep -q "outcome=PASS_shade" build/receipts/shade.txt; then "${a[@]}" logcat -d -s RecallSmoke:I | tail -180; failed=1; fi
 for screen in paused listening; do
   "${a[@]}" pull "/data/local/tmp/recall-v11-$screen.png" "build/receipts/$screen.png" || failed=1
   "${a[@]}" shell rm -f "/data/local/tmp/recall-v11-$screen.png"

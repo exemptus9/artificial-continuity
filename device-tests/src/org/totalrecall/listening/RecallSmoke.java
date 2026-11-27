@@ -707,9 +707,40 @@ public final class RecallSmoke extends Instrumentation {
         android.os.ParcelFileDescriptor fd=getUiAutomation().executeShellCommand(command);
         try(InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){bytes(in);}
     }
-    private AccessibilityNodeInfo shadeButton(){
-        AccessibilityNodeInfo found=node("Save last min");
-        return found!=null && found.isVisibleToUser() && "com.android.systemui".contentEquals(found.getPackageName())?found:null;
+    private AccessibilityNodeInfo shadeNode(String kind,boolean log){
+        for(AccessibilityWindowInfo window:getUiAutomation().getWindows()){
+            AccessibilityNodeInfo root=window.getRoot();
+            if(root==null)continue;
+            if(log)Log.i("RecallSmoke","Shade window "+window.getType()+" "+root.getPackageName()+" "+window.getTitle());
+            if(!"com.android.systemui".contentEquals(String.valueOf(root.getPackageName())))continue;
+            java.util.ArrayDeque<AccessibilityNodeInfo> todo=new java.util.ArrayDeque<>();todo.add(root);
+            while(!todo.isEmpty()){
+                AccessibilityNodeInfo n=todo.removeFirst();
+                String text=String.valueOf(n.getText()),desc=String.valueOf(n.getContentDescription()),id=String.valueOf(n.getViewIdResourceName());
+                if(n.isVisibleToUser()){
+                    if(log && (!"null".equals(text)||!"null".equals(desc)))Log.i("RecallSmoke","Shade item "+text+" | "+desc+" | "+id);
+                    if(kind.equals("save") && (text.equalsIgnoreCase("Save last min")||desc.equalsIgnoreCase("Save last min")))return n;
+                    if(kind.equals("recall") && (text.equalsIgnoreCase("Total Recall")||text.equalsIgnoreCase("Listening")
+                        ||desc.startsWith("Total Recall")||text.contains(" words · ")))return n;
+                }
+                for(int k=0;k<n.getChildCount();k++){AccessibilityNodeInfo child=n.getChild(k);if(child!=null)todo.add(child);}
+            }
+        }
+        return null;
+    }
+    private AccessibilityNodeInfo shadeButton(){return shadeNode("save",false);}
+    private void expandRecallRow(AccessibilityNodeInfo item)throws Exception{
+        for(AccessibilityNodeInfo row=item;row!=null;row=row.getParent()){
+            for(String id:new String[]{"android:id/expand_button","com.android.systemui:id/expand_button"}){
+                for(AccessibilityNodeInfo button:row.findAccessibilityNodeInfosByViewId(id)){
+                    if(button.isVisibleToUser()){touch(button);return;}
+                }
+            }
+            if(row.performAction(AccessibilityNodeInfo.ACTION_EXPAND))return;
+            if(String.valueOf(row.getClassName()).contains("NotificationRow"))break;
+        }
+        Rect r=new Rect();item.getBoundsInScreen(r);
+        deviceShell("input swipe "+r.centerX()+" "+r.centerY()+" "+r.centerX()+" "+(r.centerY()+200)+" 370");
     }
     private void touch(AccessibilityNodeInfo item)throws Exception{
         Rect bounds=new Rect();item.getBoundsInScreen(bounds);
@@ -726,17 +757,18 @@ public final class RecallSmoke extends Instrumentation {
             until(()->!power.isInteractive(),6000,"Screen did not turn off");
             SystemClock.sleep(1500);deviceShell("input keyevent KEYCODE_WAKEUP");
             until(keyguard::isKeyguardLocked,8000,"Swipe lock did not engage on disposable emulator");
-            deviceShell("cmd statusbar expand-notifications");SystemClock.sleep(1200);
-            if(shadeButton()==null){
-                AccessibilityNodeInfo title=node("Listening");
-                if(title==null)title=node("Total Recall");
-                for(AccessibilityNodeInfo row=title;row!=null;row=row.getParent()){
-                    java.util.List<AccessibilityNodeInfo> expand=row.findAccessibilityNodeInfosByViewId("android:id/expand_button");
-                    if(expand.isEmpty())expand=row.findAccessibilityNodeInfosByViewId("com.android.systemui:id/expand_button");
-                    if(!expand.isEmpty()){touch(expand.get(0));break;}
-                }
+            SystemClock.sleep(950);
+            android.util.DisplayMetrics metrics=target.getResources().getDisplayMetrics();
+            int x=metrics.widthPixels/3,y=metrics.heightPixels*3/4;
+            for(int attempt=0;attempt<4 && shadeButton()==null;attempt++){
+                shadeNode("dump",true);
+                AccessibilityNodeInfo item=shadeNode("recall",false);
+                if(item!=null)expandRecallRow(item);
+                else if(attempt==2)deviceShell("cmd statusbar expand-notifications");
+                else deviceShell("input swipe "+x+" 1 "+x+" "+y+" 480");
+                SystemClock.sleep(1050);
             }
-            until(()->shadeButton()!=null,12000,"Save last min was not visible in System UI");
+            if(shadeButton()==null){shadeNode("dump",true);throw new AssertionError("Save last min was not visible in System UI");}
             require(keyguard.isKeyguardLocked(),"Shade dismissed keyguard before save");
             int before=LiveCapture.snapshot().savedCount;
             touch(shadeButton());
