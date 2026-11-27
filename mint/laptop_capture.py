@@ -226,7 +226,7 @@ def capture(arc,root,cfg,input_args):
     feed=live_words.WordFeed(root)
     voice_feed=live_words.WordFeed(root,"voice-control.fifo")
     requests=queue.SimpleQueue();passage=None;passage_start=0
-    counter=0;awake=0;event="";event_at=0;cue="";cue_at=0
+    counter=0;awake=0;event="";event_at=0;cue="";cue_at=0;last_cue=""
     def flush_passage():
         nonlocal passage,passage_start
         if passage:
@@ -234,7 +234,7 @@ def capture(arc,root,cfg,input_args):
             path.write_bytes(passage);path.rename(path.with_suffix(""))
         passage=None
     def heard(words):
-        nonlocal counter,awake,event,event_at,cue,cue_at
+        nonlocal counter,awake,event,event_at,cue,cue_at,last_cue
         if not (root/"enabled").exists():return
         counter+=len(words.split());cmd=words.lower().strip()
         matched=re.match(r"^(?:hey recall|total recall|hey lexi|lexi)(?: |$)",cmd)
@@ -257,7 +257,10 @@ def capture(arc,root,cfg,input_args):
             awake=0;event_at=time.monotonic()
         if cmd:
             found=situation.interpret([(speech_context.correct(words),"",None)])
-            if found and found[0]["label"]!="Source excerpt":cue=found[0]["label"];cue_at=time.monotonic()
+            if found and found[0]["label"]!="Source excerpt":
+                label=found[0]["label"]
+                if label!=cue:last_cue, cue=cue,label
+                cue_at=time.monotonic()
     voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) else None
     stream_pos=secrets.randbits(61)
     began=time.monotonic()
@@ -308,7 +311,7 @@ def capture(arc,root,cfg,input_args):
                 if time.monotonic()-report>.45:
                     samples=memoryview(block).cast("h")
                     rms=math.sqrt(sum(int(x)*int(x) for x in samples)/max(1,len(samples)))
-                    write(root/"status.json",dict(state="Recording",words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<90 else ""),at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=len(ring)//BYTES_PER_SECOND))
+                    write(root/"status.json",dict(state="Recording",words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=len(ring)//BYTES_PER_SECOND))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
@@ -526,7 +529,7 @@ def panel(arc):
         segment=(f"Segment {s.get('seconds',0)} / {config(root)['seconds']} s  ·  " if ready else "")
         omit=read(root/"last-omission.json",{})
         if omit.get("at",0)>last.get("at",0):saved="Quiet block skipped · "+str(round(omit["duration"]/1000))+" s"
-        facts=(str(s.get("words",0))+" words · "+(s.get("cue") or "Waiting for context")) if ready and config(root)["commands"] else ""
+        facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and config(root)["commands"] else ""
         info.set("\n".join(filter(None,(s.get("voice","") if ready else "",facts,segment+saved,read(root/"save-error.json",sync)))))
         alerts=[read(root/(kind+"-limit.json"),{}).get("text","") for kind in ("capture","upload")]
         if any(alerts):info.set("\n".join(filter(None,alerts)))

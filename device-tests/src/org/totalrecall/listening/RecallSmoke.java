@@ -274,6 +274,20 @@ public final class RecallSmoke extends Instrumentation {
             require("she was allowed to read".equals(apply.invoke(corrector,"","she was allowed to read")),"Literal spelling was damaged");
             require("pun intended peace of paper".equals(apply.invoke(corrector,"","pun intended peace of paper")),"Explicit wordplay was rewritten");
             require("for RhymeMosaic".equals(apply.invoke(corrector,"","for rhyme mosaic")),"Personal spelling was lost");
+            Class<?> profileType=Class.forName("org.totalrecall.listening.VoiceProfiles$Profile");
+            java.lang.reflect.Constructor<?> profile=profileType.getDeclaredConstructor(String.class,String.class,String.class);profile.setAccessible(true);
+            Object me=profile.newInstance("test-id","My voice","Me"),media=profile.newInstance("media-id","Radio","Media");
+            Class<?> wording=Class.forName("org.totalrecall.listening.VoiceWording");
+            Object edit=method(wording,"difference",String.class,String.class).invoke(null,"publish my rhyme mosaic draft","publish my RhymeMosaic draft");
+            java.lang.reflect.Field heard=wording.getDeclaredField("heard"),wanted=wording.getDeclaredField("wanted"),map=profileType.getDeclaredField("wordings");
+            heard.setAccessible(true);wanted.setAccessible(true);map.setAccessible(true);
+            for(Object person:new Object[]{me,media}){
+                ((java.util.Map)map.get(person)).put(heard.get(edit),wanted.get(edit));method(profileType,"compileWordings").invoke(person);
+            }
+            prefs.edit().putString("spellings","[]").commit();
+            Method adapted=method(type,"apply",String.class,String.class,profileType);
+            require("for RhymeMosaic tonight".equals(adapted.invoke(corrector,"","for rhyme mosaic tonight",me)),"Confirmed voice correction lost");
+            require("for rhyme mosaic tonight".equals(adapted.invoke(corrector,"","for rhyme mosaic tonight",media)),"Owner wording leaked to media");
             prefs.edit().putBoolean("contextSpelling",false).commit();
             require("read it allowed".equals(apply.invoke(corrector,"","read it allowed")),"Original wording unavailable with corrections off");
         }finally{prefs.edit().putBoolean("contextSpelling",enabled).putString("spellings",oldEntries).commit();}

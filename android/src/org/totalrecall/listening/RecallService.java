@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Single user-started microphone owner. All speech and detection work runs off the activity thread. */
 public final class RecallService extends Service {
     private static final String NS="org.totalrecall.listening.";
+    public static final String LEARN_ROOM=NS+"LEARN_ROOM";
     public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",END=NS+"END",KEEP=NS+"KEEP",
         MISSED=NS+"MISSED",DISCARD_LAST=NS+"DISCARD_LAST",ACTION_CHANGED=NS+"CHANGED";
     private static final String CHANNEL="total_recall_listening";
@@ -171,7 +172,7 @@ public final class RecallService extends Service {
                 // stop() also unblocks a native read if the microphone route went away.
                 AudioRecord rec=liveRecorder;
                 if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
-            }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action))commands.offer(action);
+            }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action)||LEARN_ROOM.equals(action))commands.offer(action);
         }else stopSelf(startId);
         return START_NOT_STICKY;
     }
@@ -212,7 +213,7 @@ public final class RecallService extends Service {
         final OfflineSpeech speech;
         final SelectiveEngine.Listener listener;
         SelectiveEngine engine;
-        boolean liftQuiet,skipMedia,deferUntilSpeaker;
+        boolean reduceRoom,liftQuiet,skipMedia,deferUntilSpeaker;
         long epoch=-1,session=-1,nextPartial,nextFeedback,nextPrune,nextSensitivity;
         Window(Store s,JournalStore j,OfflineSpeech asr,SelectiveEngine.Listener l){
             store=s;journal=j;speech=asr;listener=l;
@@ -239,7 +240,7 @@ public final class RecallService extends Service {
                 // A decoder can span an opt-in boundary. Finish and reset it before a fresh
                 // journal epoch, so previously overheard speech never enters the new journal.
                 String before=speech.finish();
-                if(before!=null){LiveCapture.attributed(before,speech.lastVoice());engine.text(before,true);}
+                if(before!=null){LiveCapture.attributed(before,speech.lastVoice());engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));}
                 speech.resetStream();
                 journal.finish(session,"Journal setting changed");epoch=latest;
                 session=JournalStore.enabled(RecallService.this)?journal.begin(epoch):-1;
@@ -248,6 +249,7 @@ public final class RecallService extends Service {
             }
             if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
             if(clock>=nextSensitivity){
+                reduceRoom=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false);
                 liftQuiet=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("liftQuiet",true);
                 skipMedia=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("skipMedia",true);
                 deferUntilSpeaker=skipMedia && speech.groupsReady() && speech.hasMediaProfiles();
@@ -256,10 +258,11 @@ public final class RecallService extends Service {
             }
             if(clock>=nextPrune && session>=0){journal.prune();nextPrune=clock+3600000;}
             LiveCapture.samples(data,count);
-            String utterance=speech.accept(data,count,liftQuiet),command=speech.pollCommand();
+            String utterance=speech.accept(data,count,liftQuiet,reduceRoom),command=speech.pollCommand();
             if(utterance!=null){
-                remember();speech.offerExample(utterance);
+                remember();speech.offerExample();
                 LiveCapture.attributed(utterance,speech.lastVoice());
+                Situation.updateLive(RecallService.this,utterance,speech.isMedia());
                 journal.append(session,epoch,utterance,false,speech.lastVoice(),speech.rawWords());
             }else if(clock>=nextPartial){
                 nextPartial=clock+140;String partial=speech.partial();
@@ -403,12 +406,16 @@ public final class RecallService extends Service {
                             archive.accept(frame,count);
                             String next=route(rec);inputRoute=next;
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
-                            else if(!next.equals(route)){store.gap("Input changed from "+route+" to "+next);route=next;progress("Listening · "+route);}
+                            else if(!next.equals(route)){speech.clearRoom();store.gap("Input changed from "+route+" to "+next);route=next;progress("Listening · "+route);}
                             window.tick(frame,count);
                             if(stopping.get())break;
                             String action;
                             while((action=commands.poll())!=null){
-                                if(KEEP.equals(action))window.engine.keep();
+                                if(LEARN_ROOM.equals(action)){
+                                    if(getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false)){
+                                        window.reduceRoom=true;speech.learnRoom();
+                                    }
+                                }else if(KEEP.equals(action))window.engine.keep();
                                 else if(MISSED.equals(action))window.engine.missed();
                                 else if(DISCARD_LAST.equals(action)&&lastSaved[0]>=0){
                                     store.delete(lastSaved[0]);lastSaved[0]=-1;progress("Latest saved clip removed");

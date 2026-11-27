@@ -61,6 +61,30 @@ public final class Situation {
         if(evidence.isEmpty())return "";
         return "Words suggest · "+cue();
     }
+    static void updateLive(Context c,String words,boolean media){
+        if(media){LiveCapture.noteSituation("Possible media playback");return;}
+        try{
+            Situation newest=new Situation(c);newest.add(words,"");
+            LiveCapture.Snapshot snapshot=LiveCapture.snapshot();
+            String label=newest.interpretation();
+            if(!label.isEmpty() && snapshot.finals.size()>1){
+                int i=snapshot.finals.size()-1;
+                if(snapshot.recognizedAt.get(i)-snapshot.recognizedAt.get(i-1)<=18000){
+                    Situation pair=new Situation(c);pair.add(snapshot.finals.get(i-1),"");pair.add(words,"");
+                    String combined=pair.interpretation();
+                    if(!combined.startsWith("Words suggest") && !combined.equals("Possible media playback · a broadcast-style phrase was heard."))label=combined;
+                }
+            }else if(label.isEmpty() && snapshot.finals.size()>=3){
+                int i=snapshot.finals.size()-1;
+                if(snapshot.recognizedAt.get(i)-snapshot.recognizedAt.get(i-2)<18000 &&
+                    snapshot.voices.get(i)>0 && snapshot.voices.get(i-1)>0 &&
+                    !snapshot.voices.get(i).equals(snapshot.voices.get(i-1)))label=snapshot.scene(snapshot.finalSequence-3);
+            }
+            if(label.startsWith("Words suggest · "))label=label.substring("Words suggest · ".length());
+            int why=label.indexOf(" · ");if(why>0)label=label.substring(0,why);
+            LiveCapture.noteSituation(label);
+        }catch(IOException ignored){}
+    }
     public String draft(){
         if(first.isEmpty())return "";
         if(evidence.isEmpty())return "One passage reads "+first+".";

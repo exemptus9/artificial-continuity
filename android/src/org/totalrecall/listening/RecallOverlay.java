@@ -104,7 +104,7 @@ public final class RecallOverlay {
         boolean ultra,expanded,registered,visible,wasWaiting;
         long firstVisibleFinal,requestUntil;
         int requestedAtCount;
-        String requestLabel="",lastContextLine="",liveCue="";
+        String requestLabel="",partialSeen="",tentativeCue="";
         int screenWidth;
         long expires;
         final BroadcastReceiver screen=new BroadcastReceiver() {
@@ -149,7 +149,7 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
-            lastContextLine="";liveCue="";root=null;caption=null;status=null;detail=null;meter=null;keep=null;missed=null;words=null;visible=false;
+            root=null;caption=null;status=null;detail=null;meter=null;keep=null;missed=null;words=null;visible=false;
         }
         int dp(int value){return (int)(value*app.getResources().getDisplayMetrics().density+0.5f);}
         int[] limits() {
@@ -196,28 +196,21 @@ public final class RecallOverlay {
             String compact=s.waiting?"Mic busy":!s.event.isEmpty()?s.event:ready?"Live "+elapsed:headline;
             showText(status,expanded?headline+" · "+elapsed:ultra && ready && s.event.isEmpty()?"● "+s.words+"w · "+s.savedCount+" saved":compact);
             String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
-            String contextKey=s.aliasVersion+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
-            if(detail!=null && !contextKey.equals(lastContextLine)){
-                lastContextLine=contextKey;liveCue="";
-                if(!s.waiting && s.finalSequence>=firstVisibleFinal)try{
-                    Situation context=new Situation(app);
-                    int count=(int)Math.min(s.finals.size(),s.finalSequence-firstVisibleFinal);
-                    for(int i=s.finals.size()-count;i<s.finals.size();i++)context.add(s.finals.get(i),"");
-                    liveCue=context.interpretation();
-                    String scene=s.scene(firstVisibleFinal);
-                    if(!scene.isEmpty())liveCue=liveCue.isEmpty()?scene:liveCue+" "+scene;
-                    if(liveCue.isEmpty() && !s.partial.isEmpty()){
-                        Situation tentative=new Situation(app);tentative.add(s.partial,"");
-                        if(!tentative.cue().isEmpty())liveCue="Tentative · "+tentative.cue();
-                    }
-                }catch(java.io.IOException ignored){}
-            }
             if(detail!=null){
                 String state=s.waiting?s.state:s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
                 if(expanded)state+=" · Journal "+(JournalStore.enabled(app)?"on":"off");
 
                 if(LiveCapture.clipping())state+=" · Mic clipping: move farther away";
-                state+="\nSituation · "+(liveCue.isEmpty()?"Waiting for context":liveCue);
+                String pending=s.waiting || s.finalSequence<firstVisibleFinal?"":s.partial;
+                if(!pending.equals(partialSeen)){
+                    partialSeen=pending;tentativeCue="";
+                    if(!pending.isEmpty())try{
+                        Situation provisional=new Situation(app);provisional.add(pending,"");
+                        tentativeCue=provisional.cue();
+                    }catch(java.io.IOException ignored){}
+                }
+                state+="\n"+s.situationLines(firstVisibleFinal);
+                if(!tentativeCue.isEmpty())state+="\nHearing · "+tentativeCue+" (tentative)";
                 showText(detail,state);
             }
             if(caption!=null){
@@ -277,7 +270,7 @@ public final class RecallOverlay {
             TextView size=key(header,expanded?"↙":"↗",expanded?"Shrink panel":ultra?"Open medium panel":"Expand panel",v->resize());size.setTextSize(22);
             if(expanded && !toolsOpen){
                 if(!preview){
-                    detail=label(root,"",12);detail.setMaxLines(3);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setTextColor(0xffc0d5cd);
+                    detail=label(root,"",12);detail.setMaxLines(5);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setTextColor(0xffc0d5cd);
                 }
                 LinearLayout actions=row(root);
                 if(preview)control(actions,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));

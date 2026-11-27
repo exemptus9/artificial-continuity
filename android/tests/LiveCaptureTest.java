@@ -31,7 +31,13 @@ public final class LiveCaptureTest{
         check(LiveCapture.snapshot().overlayWords(afterPartial).isEmpty());
         LiveCapture.words("visible",false);
         check(LiveCapture.snapshot().overlayWords(afterPartial).equals("visible"));
-        LiveCapture.waitFor("busy");check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
+        LiveCapture.words("one",true);LiveCapture.noteSituation("Creative idea");
+        LiveCapture.words("two",true);LiveCapture.noteSituation("Question");
+        LiveCapture.words("three",true);LiveCapture.noteSituation("Question");
+        check(LiveCapture.snapshot().situationLines(boundary).equals("Now · Question\nLast · Creative idea"));
+        check(LiveCapture.at(TimeUnit.NANOSECONDS.toMillis(System.nanoTime())+46000).situationLines(0).equals("Now · Waiting for context\nLast · Question"));
+        check(!LiveCapture.snapshot().situationLines(LiveCapture.snapshot().finalSequence).contains("Question"));
+        LiveCapture.waitFor("busy");check(!LiveCapture.snapshot().situationLines(0).contains("Question"));check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
         LiveCapture.stop("Paused");check(!LiveCapture.snapshot().active && LiveCapture.snapshot().finals.isEmpty());
         MicrophoneContinuity gaps=new MicrophoneContinuity();check(gaps.lose(100));check(!gaps.lose(300));
         check(gaps.resume(600)==500);check(!gaps.waiting());check(gaps.resume(800)==-1);

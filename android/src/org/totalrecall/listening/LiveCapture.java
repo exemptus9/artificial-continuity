@@ -17,6 +17,14 @@ public final class LiveCapture {
     private static float level;
     private static long clipWarningUntil;
     static synchronized boolean clipping(){return active && !waiting && now()<clipWarningUntil;}
+    static volatile String roomStatus="Room filter off";
+    private static String situation="",previousSituation="";
+    private static long situationAt,situationSeq,previousSituationSeq;
+    static synchronized void noteSituation(String label){
+        if(!active || waiting || label.isEmpty())return;
+        if(!label.equals(situation)){previousSituation=situation;previousSituationSeq=situationSeq;situation=label;}
+        situationSeq=finalSequence;situationAt=now();
+    }
     private static long finalSequence, sessionStart;
     private static int savedCount, flags;
     private static long wordCount,eventAt;
@@ -38,6 +46,12 @@ public final class LiveCapture {
         Line(long time,String text,int id){at=time;words=text;voice=id;}
     }
     public static final class Snapshot{
+        private final String currentCue,previousCue;
+        private final long currentSeq,previousSeq;
+        String situationLines(long after){
+            return "Now · "+(currentSeq>after && !currentCue.isEmpty()?currentCue:"Waiting for context")+
+                "\nLast · "+(previousSeq>after && !previousCue.isEmpty()?previousCue:"No earlier cue");
+        }
         public final String partial,lastSave,reason,state;
         public final List<String> finals;
         public final List<Long> recognizedAt;
@@ -52,6 +66,9 @@ public final class LiveCapture {
         public final boolean receiving;
         public final boolean active,waiting;
         Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
+            boolean stale=t-situationAt>=45000;
+            currentCue=stale?"":situation;currentSeq=situationSeq;
+            previousCue=stale?situation:previousSituation;previousSeq=stale?situationSeq:previousSituationSeq;
             partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);recognizedAt=Collections.unmodifiableList(times);level=meter;active=on;waiting=wait;
             voices=Collections.unmodifiableList(ids);names=new java.util.TreeMap<>(LiveCapture.names);
             voiceSession=LiveCapture.voiceSession;journalId=LiveCapture.journalId;aliasVersion=LiveCapture.aliasVersion;groupsReady=LiveCapture.groupsReady;
@@ -101,7 +118,7 @@ public final class LiveCapture {
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){voiceSession(-1,false);clipWarningUntil=0;event="";recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event="";recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){if(active){savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){

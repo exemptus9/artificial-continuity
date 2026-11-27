@@ -29,10 +29,13 @@ public final class OfflineSpeech implements AutoCloseable {
         String reading=verified(json);
         if(reading==null)return null;
         boolean same=voice>0 && voice==priorSpeaker && streamSamples-priorAt<5L*16000;
-        String displayed=spellings.apply(same?priorContext:"",reading);
+        String displayed=spellings.apply(same?priorContext:"",reading,known);
         priorContext=SpeechContext.tail(reading);priorAt=streamSamples;priorSpeaker=voice;
         rawPartial="";return displayed;
     }
+    private final RoomNoise room=new RoomNoise();
+    void learnRoom(){room.learn();LiveCapture.roomStatus="Sampling room noise";LiveCapture.feedback("Learning room noise · stay quiet for two seconds");}
+    void clearRoom(){room.reset();LiveCapture.roomStatus="Room filter off";}
     private final QuietSpeech quietSpeech=new QuietSpeech();
     private Model model;
     private org.vosk.SpeakerModel speakerModel;
@@ -44,7 +47,7 @@ public final class OfflineSpeech implements AutoCloseable {
     private int frames;
     String attributedVoice(){return known==null?LiveCapture.defaultVoice(voice):known.description();}
     VoiceProfiles.Profile known(){return known;}
-    void offerExample(String words){VoiceProfiles.offer(words,latestVector,frames);}
+    void offerExample(){VoiceProfiles.offer(rawWords,latestVector,frames);}
     private int voice;
     private boolean archiveReview;
     private Recognizer retry;
@@ -164,9 +167,14 @@ public final class OfflineSpeech implements AutoCloseable {
     public String accept(short[] pcm, int count) {
         return accept(pcm,count,false);
     }
-    String accept(short[] pcm,int count,boolean liftQuiet) {
+    String accept(short[] pcm,int count,boolean liftQuiet) {return accept(pcm,count,liftQuiet,false);}
+    String accept(short[] pcm,int count,boolean liftQuiet,boolean reduceRoom) {
         if(!liftQuiet)quietSpeech.reset();
-        short[] input=liftQuiet?quietSpeech.apply(pcm,count):pcm;
+        boolean learned=room.ready();
+        if(!reduceRoom && room.running())clearRoom();
+        short[] filtered=reduceRoom?room.apply(pcm,count):pcm;
+        if(!learned && room.ready()){LiveCapture.roomStatus="Room filter on";LiveCapture.feedback("Room noise learned · filtering live speech");}
+        short[] input=liftQuiet?quietSpeech.apply(filtered,count):filtered;
         if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(input, count)) {
             String heard = text(commandRecognizer.getResult(), "text");
             if (heard!=null && SelectiveEngine.grammarMatch(heard)) {
@@ -187,7 +195,7 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
     public void resetStream() {
-        priorContext="";rawPartial="";rawWords="";priorSpeaker=0;priorAt=0;streamSamples=0;used=0;energy=0;overflow=false;quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
+        clearRoom();priorContext="";rawPartial="";rawWords="";priorSpeaker=0;priorAt=0;streamSamples=0;used=0;energy=0;overflow=false;quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
         if(commandRecognizer!=null)commandRecognizer.reset();
         pendingCommand = null;
     }

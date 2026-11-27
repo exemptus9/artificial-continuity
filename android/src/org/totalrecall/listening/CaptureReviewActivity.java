@@ -90,6 +90,17 @@ public final class CaptureReviewActivity extends Activity {
             Switch quiet=new Switch(this);quiet.setText("Boost quiet speech for transcription");quiet.setMinHeight(dp(48));
             quiet.setChecked(getSharedPreferences("recall-speech",0).getBoolean("liftQuiet",true));settings.addView(quiet);
             quiet.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("liftQuiet",on).apply());
+            action(settings,"Learn room noise · 2 seconds",()->{
+                if(!LiveCapture.snapshot().receiving){Toast.makeText(this,"Start listening and wait for an active microphone first.",Toast.LENGTH_LONG).show();return;}
+                getSharedPreferences("recall-speech",0).edit().putBoolean("reduceRoom",true).apply();
+                startService(new Intent(this,RecallService.class).setAction(RecallService.LEARN_ROOM));
+                Toast.makeText(this,"Stay quiet for two seconds while the room is sampled.",Toast.LENGTH_LONG).show();
+            });
+            action(settings,"Turn off room noise reduction",()->{
+                getSharedPreferences("recall-speech",0).edit().putBoolean("reduceRoom",false).apply();
+                Toast.makeText(this,"Live room filter off.",Toast.LENGTH_SHORT).show();
+            });
+            text(settings,"Sample a fan or steady hum again after a pause or microphone change. The saved audio keeps the original sound.",14,false);
             text(settings,"Recent words stay here for up to 90 seconds. Turn on the journal to keep future words. Quiet boost affects live English transcription only.",14,false);
             LinearLayout alerts=card("Notifications");
             Switch notice=new Switch(this);notice.setText("Include words and situation cues on the lock screen");notice.setMinHeight(dp(48));
@@ -112,7 +123,7 @@ public final class CaptureReviewActivity extends Activity {
     }
     private void paintLive(){
         LiveCapture.Snapshot s=LiveCapture.snapshot();
-        put(status,(s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"%":s.state)+" · "+s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved"+(s.event.isEmpty()?"":"\n"+s.event));
+        put(status,(s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"% · "+LiveCapture.roomStatus:s.state)+" · "+s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved"+(s.event.isEmpty()?"":"\n"+s.event));
         put(voiceState,!s.active?"Saved voice profiles are available next time you listen.":s.waiting?"Waiting for microphone access.":!s.groupsReady?"Voice grouping is off or preparing.":s.names.isEmpty()?"Listening for a clear voice. Short or mixed phrases may stay uncertain.":String.join("  •  ",s.names.values()));
         StringBuilder lines=new StringBuilder();
         long wall=System.currentTimeMillis(),clock=TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
@@ -122,7 +133,7 @@ public final class CaptureReviewActivity extends Activity {
         }
         put(words,lines.length()>0?lines.toString():s.waiting?"Waiting for microphone access.":s.active?"Waiting for recognized speech…":"Start or resume listening to see words here.");
         put(draft,s.partial.isEmpty()?"":"In progress · "+s.partial);
-        String key=s.finalSequence+"|"+s.finals.size()+"|"+s.aliasVersion+"|"+s.partial;
+        String key=s.situationLines(0)+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.aliasVersion+"|"+s.partial;
         if(key.equals(lastEvidence))return;lastEvidence=key;
         try{
             Situation analysis=new Situation(this);
@@ -135,7 +146,7 @@ public final class CaptureReviewActivity extends Activity {
                 Situation tentative=new Situation(this);tentative.add(s.partial,"");
                 if(!tentative.cue().isEmpty())result+="\n\nTentative · "+tentative.cue()+" · “"+s.partial+"”";
             }
-            String scene=s.scene(0);put(context,scene.isEmpty()?result:scene+"\n\n"+result);
+            String scene=s.scene(0);put(context,s.situationLines(0)+"\n\n"+(scene.isEmpty()?result:scene+"\n\n"+result));
         }catch(java.io.IOException e){put(context,"Could not load the situation cues.");}
     }
     private void readCatalog(){

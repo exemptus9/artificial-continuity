@@ -14,6 +14,13 @@ public final class VoiceProfiles {
     static final class Profile {
         final String id,name,source;
         final List<double[]> examples=new ArrayList<>();
+        final LinkedHashMap<String,String> wordings=new LinkedHashMap<>();
+        final List<SpeechContext.Rule> trainedRules=new ArrayList<>();
+        void compileWordings(){
+            trainedRules.clear();ArrayList<String> heard=new ArrayList<>(wordings.keySet());
+            heard.sort((a,b)->Integer.compare(b.length(),a.length()));
+            for(String key:heard)trainedRules.add(new VoiceWording(key,wordings.get(key)).rule());
+        }
         Profile(String id,String name,String source){this.id=id;this.name=name;this.source=source;}
         String description(){return name+" · "+source;}
     }
@@ -33,7 +40,9 @@ public final class VoiceProfiles {
             JSONArray rows=new JSONArray(data);
             for(int i=0;i<rows.length();i++){
                 JSONObject row=rows.getJSONObject(i);Profile p=new Profile(row.getString("id"),row.getString("name"),row.getString("source"));
-                JSONArray samples=row.getJSONArray("samples");
+                JSONObject learned=row.optJSONObject("wordings");
+                if(learned!=null)for(Iterator<String> keys=learned.keys();keys.hasNext();){String k=keys.next();p.wordings.put(k,learned.getString(k));}
+                p.compileWordings();JSONArray samples=row.getJSONArray("samples");
                 for(int j=0;j<samples.length();j++){double[] v=vector(samples.optJSONArray(j));if(v!=null)p.examples.add(v);}
                 if(!p.examples.isEmpty())result.add(p);
             }
@@ -65,7 +74,7 @@ public final class VoiceProfiles {
         JSONArray rows=new JSONArray();
         try{for(Profile p:updated){
             JSONArray samples=new JSONArray();for(double[] v:p.examples){JSONArray a=new JSONArray();for(double n:v)a.put(n);samples.put(a);}
-            rows.put(new JSONObject().put("id",p.id).put("name",p.name).put("source",p.source).put("samples",samples));
+            rows.put(new JSONObject().put("id",p.id).put("name",p.name).put("source",p.source).put("samples",samples).put("wordings",new JSONObject(p.wordings)));
         }}catch(JSONException ex){throw new IllegalStateException("Could not encode voice samples.",ex);}
         if(!prefs.edit().putString(MODEL,rows.toString()).commit())throw new IllegalStateException("Could not save voice profiles.");
         cached=null;
@@ -81,10 +90,11 @@ public final class VoiceProfiles {
                 else if(p.source.equals(source) && (source.equals("Me") || p.name.equalsIgnoreCase(name)))throw new IllegalArgumentException("A profile already has that name or is marked Me.");
             }
             if(old==null)throw new IllegalArgumentException("This profile was removed.");
-            Profile next=new Profile(id,name,source);next.examples.addAll(old.examples);all.remove(old);all.add(next);write(all);
+            Profile next=new Profile(id,name,source);next.examples.addAll(old.examples);if(source.equals("Me") && old.source.equals("Me"))next.wordings.putAll(old.wordings);all.remove(old);all.add(next);write(all);
         }
     }
-    void enroll(String id,String name,String source,double[] sample){
+    void enroll(String id,String name,String source,double[] sample){enroll(id,name,source,sample,null);}
+    void enroll(String id,String name,String source,double[] sample,VoiceWording wording){
         synchronized(VoiceProfiles.class){
             name=name.trim();
             checkName(name);
@@ -104,10 +114,23 @@ public final class VoiceProfiles {
             if(existing!=null){
                 double best=-2;for(double[] v:existing.examples)best=Math.max(best,similarity(v,sample));
                 if(best<.47)throw new IllegalArgumentException("This voice differs from your earlier samples. Try a clear phrase nearer the microphone.");
-                next.examples.addAll(existing.examples);all.remove(existing);
+                next.examples.addAll(existing.examples);next.wordings.putAll(existing.wordings);all.remove(existing);
+            }
+            if(wording!=null && source.equals("Me")){
+                String key=wording.heard.toLowerCase(Locale.ROOT);
+                if(!next.wordings.containsKey(key) && next.wordings.size()>=48)throw new IllegalArgumentException("Forget an older voice correction before adding another.");
+                next.wordings.put(key,wording.wanted);
             }
             if(next.examples.size()>=MAX_SAMPLES)next.examples.remove(1);
             next.examples.add(sample.clone());all.add(next);write(all);
+        }
+    }
+    void forgetWording(String id,String heard){
+        synchronized(VoiceProfiles.class){
+            List<Profile> all=new ArrayList<>(list());
+            for(int i=0;i<all.size();i++){Profile old=all.get(i);if(!old.id.equals(id))continue;
+                Profile next=new Profile(old.id,old.name,old.source);next.examples.addAll(old.examples);next.wordings.putAll(old.wordings);next.wordings.remove(heard);all.set(i,next);write(all);return;
+            }
         }
     }
     void forget(String id){synchronized(VoiceProfiles.class){List<Profile> all=new ArrayList<>(list());all.removeIf(p->p.id.equals(id));write(all);}}

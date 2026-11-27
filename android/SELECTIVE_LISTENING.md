@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.14.0
+# Live listening on Galaxy · 0.22.0
 
-Install `TotalRecall-0.14.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.22.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -59,3 +59,11 @@ An existing **More → Connect to Mint** pairing can continue sending selected c
 Open a saved moment to see cues supported by its words. Edited transcripts and personal notes have separate labels. Tap **Analyze original recording** to scan the audio locally. For a complete session, open **Archive & sync → Browse recordings & analysis**, choose a recording, and tap **Analyze recording**. Quiet time includes all sound below the indicated threshold. English speech recognition is approximate.
 
 Automatic backup follows the paired destination, selected content, network, power and per-batch limits. **Transfer choices → Automatic batch spacing** offers 5, 15 or 60 minutes. Re-enable automatic backup after changing a choice. The archive shows its most recent verified receipt.
+
+## Calibrate your voice and room
+
+While the microphone is receiving audio, open **Live now → Remember voices → Teach my voice**. Speak a sentence on your own and pause. Check the speaker and edit **What I actually said** before you use the sample. Add two more samples from your usual microphone positions. The phone stores a speaker embedding and the short wording correction you confirmed. The wording applies to future finalized lines matched to **Me** while context correction is on. **My voice corrections** lets you forget individual entries.
+
+Under **Capture choices**, choose **Learn room noise · 2 seconds** while only the background is audible. The live English decoder uses the resulting filter. Capture keeps the original audio. Learn again after a pause or a microphone change, or turn off reduction at any time.
+
+The expanded overlay shows **Now** and **Last**. These are interpretations of recent words and voice activity. After 45 seconds without a fresh cue the latest one moves to **Last**. Open **Live & saved** to inspect the source wording.

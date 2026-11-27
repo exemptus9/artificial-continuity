@@ -15,6 +15,7 @@ public final class VoiceProfilesActivity extends Activity {
     private VoiceProfiles.Profile target;
     private String name,source;
     private TextView sampleText;
+    private EditText intended;
     private Button confirm;
     private long deadline;
     private boolean training;
@@ -22,7 +23,8 @@ public final class VoiceProfilesActivity extends Activity {
     private final Runnable poll=new Runnable(){public void run(){
         if(!training)return;
         VoiceProfiles.Example example=VoiceProfiles.sample();
-        if(example!=null){sampleText.setText("Did "+name+" say this?\n\n“"+example.text+"”");confirm.setEnabled(true);return;}
+        if(example!=null){sampleText.setText("Did "+name+" say this?\n\n“"+example.text+"”");if(intended!=null){intended.setText(example.text);intended.setVisibility(View.VISIBLE);}
+            confirm.setEnabled(true);return;}
         if(!RecallService.isListening() || SystemClock.elapsedRealtime()>deadline){
             VoiceProfiles.cancel();training=false;home();toast("Sample timed out. Start listening and try again.");return;
         }
@@ -56,8 +58,17 @@ public final class VoiceProfilesActivity extends Activity {
         VoiceProfiles.Profile self=null;for(VoiceProfiles.Profile p:profiles.list())if(p.source.equals("Me"))self=p;
         final VoiceProfiles.Profile me=self;
         action(me==null?"Teach my voice":"Add a sample of my voice",()->{if(me==null)create(true);else begin(me,me.name,me.source);});
+        if(me!=null && !me.wordings.isEmpty())action("My voice corrections · "+me.wordings.size(),()->wordings(me));
         action("Add another person or media voice",()->create(false));
         for(VoiceProfiles.Profile p:profiles.list())action(p.description()+" · "+p.examples.size()+" samples",()->options(p));
+    }
+    private void wordings(VoiceProfiles.Profile p){
+        java.util.ArrayList<String> keys=new java.util.ArrayList<>(p.wordings.keySet());
+        String[] labels=new String[keys.size()];
+        for(int i=0;i<labels.length;i++)labels[i]=keys.get(i)+" → "+p.wordings.get(keys.get(i));
+        new AlertDialog.Builder(this).setTitle("My voice corrections").setItems(labels,(dialog,i)->
+            new AlertDialog.Builder(this).setMessage("Forget “"+labels[i]+"” for future transcripts?")
+            .setPositiveButton("Forget",(d,w)->{profiles.forgetWording(p.id,keys.get(i));home();}).setNegativeButton("Keep",null).show()).setNegativeButton("Close",null).show();
     }
     private void options(VoiceProfiles.Profile p){
         new AlertDialog.Builder(this).setTitle(p.description()).setItems(new String[]{"Add a voice sample","Edit name or source","Forget this voiceprint"},(d,i)->{
@@ -89,9 +100,18 @@ public final class VoiceProfilesActivity extends Activity {
         }
         endSample();target=p;name=n;source=s;training=true;deadline=SystemClock.elapsedRealtime()+90000;
         page.removeAllViews();line("Teach "+name,25);line("Have one person speak a sentence for about five seconds, then pause. For better coverage, add two more phrases at your usual volume and distance.",16);
-        sampleText=line("Listening for a clear phrase…",19);confirm=action("Use this sample",()->{
+        sampleText=line("Listening for a clear phrase…",19);intended=null;
+        if(s.equals("Me")){
+            line("Say a phrase you use often, including a name or coined word. If the phone mishears it, edit the words below before saving. Future lines matched to your voice can use that correction.",15);
+            intended=new EditText(this);intended.setHint("What I actually said");intended.setContentDescription("What I actually said");
+            intended.setVisibility(View.GONE);page.addView(intended);
+        }
+        confirm=action("Use this sample",()->{
             VoiceProfiles.Example ex=VoiceProfiles.sample();if(ex==null)return;
-            try{profiles.enroll(target==null?null:target.id,name,source,ex.voice);home();toast("Voice remembered on this phone.");}
+            try{VoiceWording wording=intended==null?null:VoiceWording.difference(ex.text,intended.getText().toString());
+                profiles.enroll(target==null?null:target.id,name,source,ex.voice,wording);home();
+                toast(wording==null?"Voice remembered on this phone.":"Learned for your voice: "+wording.heard+" → "+wording.wanted);
+            }
             catch(RuntimeException err){toast(err.getMessage());}
         });confirm.setEnabled(false);
         action("Try another phrase",()->begin(target,name,source));action("Cancel",this::home);VoiceProfiles.listen();main.post(poll);

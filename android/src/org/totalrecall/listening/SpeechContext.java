@@ -62,7 +62,8 @@ final class SpeechContext {
         if(!p.edit().putString("spellings",rows.toString()).commit())throw new IllegalStateException("Could not save spellings");
     }
     static boolean valid(String s){return !s.trim().isEmpty() && s.length()<=80 && !Pattern.compile("\\p{Cntrl}").matcher(s).find();}
-    String apply(String previous,String words){
+    String apply(String previous,String words){return apply(previous,words,null);}
+    String apply(String previous,String words,VoiceProfiles.Profile speaker){
         if(words==null||words.isEmpty()||!prefs.getBoolean("contextSpelling",true))return words;
         String data=prefs.getString("spellings","[]");
         if(!data.equals(stored)){
@@ -71,7 +72,9 @@ final class SpeechContext {
             for(Entry e:entries)rules.add(new Rule(e.spelling,"(?<![\\p{L}\\p{N}'])("+Pattern.quote(e.heard)+")(?![\\p{L}\\p{N}'])"));
             custom=rules;stored=data;
         }
-        return correct(previous,words,generic,custom);
+        if(speaker==null || !speaker.source.equals("Me") || speaker.trainedRules.isEmpty())return correct(previous,words,generic,custom);
+        List<Rule> personal=new ArrayList<>(speaker.trainedRules);personal.addAll(custom);
+        return correct(previous,words,generic,personal);
     }
     static String correct(String previous,String words,List<Rule> rules,List<Rule> personal){
         String prefix=previous.isEmpty()?"":previous+" ";

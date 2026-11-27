@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-out=${1:-"$src/total-recall-desk_0.21.0_all.deb"}
+out=${1:-"$src/total-recall-desk_0.22.0_all.deb"}
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 install -d -m 755 "$stage/DEBIAN" "$stage/usr/share/total-recall-listening" "$stage/usr/share/applications" "$stage/usr/share/doc/total-recall-desk" "$stage/usr/bin"
@@ -17,7 +17,7 @@ LAUNCH
 chmod 755 "$stage/usr/bin/total-recall-desk"
 cat > "$stage/DEBIAN/control" <<'PKG'
 Package: total-recall-desk
-Version: 0.21.0
+Version: 0.22.0
 Architecture: all
 Maintainer: Total Recall project <maintainer@localhost>
 Section: utils
