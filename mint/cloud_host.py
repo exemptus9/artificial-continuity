@@ -35,10 +35,10 @@ RESUME_APK = ("TotalRecall-0.16.0.apk",56138026,"427cfca878e980e95e49b645957f4e6
 SPEAKER_APK = ("TotalRecall-0.17.0.apk",70027652,"da51ecdbb9ec9db9a67b0b4c98badfdaa594da884ff3839e42d5db545c6232dd")
 PASSAGE_APK = ("TotalRecall-0.18.0.apk",70035844,"734ae0915ee467b9e91b4867e6664bd15b7b5b1e029392d0f62b6617cddff2b0")
 VOICE_PROFILE_APK = ("TotalRecall-0.19.0.apk",70044036,"b69eb035739c0a84793857d7c585e124885ad0cd002ed305d6f8d7802df16cd7")
-OWNER_PREVIOUS_APK = ("TotalRecall-0.21.0.apk",70052309,"8dd90bb498a527bca5f2e286de2f9054c9ba2c4506186932f13cca587fa78c62")
-APK_NAME = "TotalRecall-0.22.0.apk"
-APK_SIZE = 70056405
-APK_SHA = "eed8e38f7e7a216992d828ad5a40a234c3d587155d134aa36de9b3c61f48cb60"
+OWNER_PREVIOUS_APK = ("TotalRecall-0.22.0.apk",70056405,"eed8e38f7e7a216992d828ad5a40a234c3d587155d134aa36de9b3c61f48cb60")
+APK_NAME = "TotalRecall-0.23.0.apk"
+APK_SIZE = 70072789
+APK_SHA = "4227d66588215e5a335007076af732c0e884726369ef8e2d2960d85c67d7a6b7"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
@@ -226,7 +226,7 @@ class HostedHandler(recall_web.OwnerHandler):
                     ContentType=APK_MIME,ContentDisposition='attachment; filename="'+APK_NAME+'"',Metadata={"sha256":APK_SHA})
         except recall_archive.Failure as err:return self.json(err.status,{"error":str(err)})
         except Exception:return self.json(503,{"error":"Could not store the installer."})
-        return self.json(200,{"path":"/downloads/android","version":"0.22.0"})
+        return self.json(200,{"path":"/downloads/android","version":"0.23.0"})
 
     def do_GET(self):
         path=urlsplit(self.path).path
@@ -247,7 +247,7 @@ class HostedHandler(recall_web.OwnerHandler):
             return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")
         if path=="/api/early-access":
             return self.json(200,{"signups":early_access.roster(self.server.archive.root)})
-        if path=="/api/android-installer":return self.json(200,{"path":"/downloads/android","version":"0.22.0"})
+        if path=="/api/android-installer":return self.json(200,{"path":"/downloads/android","version":"0.23.0"})
         if path=="/api/phone-pairing":return self.json(200,{"code":self.get_pair(),"origin":"https://"+self.server.public_host})
         if path=="/api/phone-qr.png":
             try:return self.emit(200,qr_png(self.get_pair()),"image/png")
