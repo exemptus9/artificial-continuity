@@ -21,14 +21,14 @@ public final class ArchiveStore extends SQLiteOpenHelper {
     private static final Object LOCK=new Object();
     private static final String COLS="id,start,end,duration,size,bitrate,sha,receipt,state,until_ms";
     private final Context app;
-    public ArchiveStore(Context c){super(c.getApplicationContext(),DB,null,2);app=c.getApplicationContext();}
+    public ArchiveStore(Context c){super(c.getApplicationContext(),DB,null,3);app=c.getApplicationContext();}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE segments(id TEXT PRIMARY KEY,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,duration INTEGER NOT NULL DEFAULT 0,size INTEGER NOT NULL DEFAULT 0,bitrate INTEGER NOT NULL,sha TEXT NOT NULL DEFAULT '',receipt TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,until_ms INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX segments_state_start ON segments(state,start)");
-        createOmissions(db);
+        createOmissions(db);LongRecording.schema(db);
         db.execSQL("CREATE TABLE gaps(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){if(from==1 && to==2){createOmissions(db);return;}throw new IllegalStateException("Unknown archive schema");}
+    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){if(from<1||to!=3)throw new IllegalStateException("Unknown archive schema");if(from<2)createOmissions(db);LongRecording.schema(db);}
     private static void createOmissions(SQLiteDatabase db){
         db.execSQL("CREATE TABLE IF NOT EXISTS quiet_blocks(id TEXT PRIMARY KEY,start INTEGER,end INTEGER,bytes INTEGER)");
     }
@@ -172,7 +172,7 @@ public final class ArchiveStore extends SQLiteOpenHelper {
     public boolean maintain(){synchronized(LOCK){
         long extra=SECONDS*(bitrate(app)/8L+500)+32768;
         long budget=budgetMiB(app)*MIB,reserve=reserveMiB(app)*MIB;
-        long used=localBytes();File volume=app.getFilesDir();
+        long used=localBytes()+LongRecording.bytes(app,this);File volume=app.getFilesDir();
         while(volume.getUsableSpace()-reserve<extra||budget-used<extra){
             if(!evictSynced(app))return false;
             Segment oldest;try(Cursor c=getWritableDatabase().rawQuery("SELECT "+COLS+" FROM segments WHERE state='synced' AND receipt<>'' ORDER BY start,id LIMIT 1",null)){

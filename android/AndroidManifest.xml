@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="27" android:versionName="0.26.0">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.continuity.recall.test" android:versionCode="28" android:versionName="0.27.0">
  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36"/>
  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
@@ -17,6 +17,7 @@
  <queries><intent><action android:name="android.speech.RecognitionService"/></intent><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
  <application android:extractNativeLibs="true" android:label="Total Recall" android:theme="@style/AppTheme" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:usesCleartextTraffic="false" android:debuggable="false" android:supportsRtl="true">
   <activity android:name="org.totalrecall.listening.CaptureReviewActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
+  <activity android:name="org.totalrecall.listening.LongSessionsActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
   <activity android:name="org.totalrecall.listening.VoiceTakeActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
   <activity android:name="org.totalrecall.listening.FullJournalActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"/>
   <activity android:name="org.totalrecall.listening.EndListeningActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.Dialog.Alert"/>

@@ -129,6 +129,7 @@ public final class RecallListenActivity extends Activity {
         latestCatch=text("",14,0xffd3e8d7,false);latestCatch.setPadding(0,dp(8),0,0);latestCatch.setMaxLines(3);
         latestCatch.setEllipsize(TextUtils.TruncateAt.END);controls.addView(latestCatch);header.addView(controls);
         Button recordWords=button("Record my words & edit",true);recordWords.setOnClickListener(v->startActivity(new Intent(this,VoiceTakeActivity.class).putExtra("begin",true)));header.addView(recordWords);
+        Button longSessions=button("Long sessions",true);longSessions.setOnClickListener(v->startActivity(new Intent(this,LongSessionsActivity.class)));header.addView(longSessions);
         Button reviewCapture=button("Live words & capture archive",true);
         reviewCapture.setOnClickListener(v->startActivity(new Intent(this,CaptureReviewActivity.class)));header.addView(reviewCapture);
         LinearLayout sessionTools=row();journalButton=link("Text journal");

@@ -216,6 +216,7 @@ public final class RecallOverlay {
             if(SystemClock.elapsedRealtime()<requestUntil)compact=requestLabel;
             showText(status,expanded?(take.recording?"Voice take · "+take.seconds+" / 60 s":headline+" · "+elapsed):compact);
             status.setTextColor(ready?0xffa6f5d5:0xffffd99a);
+            if(!LongRecording.active.isEmpty())showText(status,(expanded?"Long session · ":"REC ")+LongRecording.time(LongRecording.duration));
             if(contextCue!=null){
                 String pending=s.waiting || s.finalSequence<firstVisibleFinal?"":s.partial;
                 if(!pending.equals(partialSeen)){
@@ -369,6 +370,8 @@ public final class RecallOverlay {
                     contextCue.setOnClickListener(v->openScreen(CaptureReviewActivity.class,false));
                     contextCue.setTooltipText("Inspect the words behind these situation cues");
                 }
+                LinearLayout sessions=row(body);
+                control(sessions,"Long sessions","Start, mark, finish or play a long recording",v->openScreen(LongSessionsActivity.class,false));
                 LinearLayout browse=preview?actions:row(body);
                 if(!preview){
                     control(actions,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));

@@ -63,7 +63,8 @@ public final class RecallSmoke extends Instrumentation {
         Bundle b=new Bundle();
         try {
             target=getTargetContext();
-            if ("archive".equals(phase)) archive();
+            if ("longsession".equals(phase)) longSession();
+            else if ("archive".equals(phase)) archive();
             else if ("restart".equals(phase)) restart();
             else if ("asr".equals(phase)) speech();
             else if ("creative".equals(phase)) passed(CreativeSpeechSmoke.run(target,getContext()));
@@ -746,6 +747,43 @@ public final class RecallSmoke extends Instrumentation {
         Rect bounds=new Rect();item.getBoundsInScreen(bounds);
         require(!bounds.isEmpty(),"Empty System UI control");
         deviceShell("input tap "+bounds.centerX()+" "+bounds.centerY());
+    }
+    private void longSession()throws Exception{
+        try(ArchiveStore db=new ArchiveStore(target)){
+            Class<?> type=Class.forName("org.totalrecall.listening.LongRecording");
+            java.lang.reflect.Constructor<?> ctor=type.getDeclaredConstructor(Context.class,ArchiveStore.class);ctor.setAccessible(true);
+            Object recorder=ctor.newInstance(target,db);
+            Method begin=method(type,"begin"), accept=method(type,"accept",short[].class,int.class),mark=method(type,"mark"),finish=method(type,"finish",String.class);
+            java.lang.reflect.Field active=type.getDeclaredField("active");active.setAccessible(true);
+            begin.invoke(recorder);String id=(String)active.get(null);require(!id.isEmpty(),"Long recorder did not start");
+            short[] tone=new short[16000],quiet=new short[16000];
+            for(int i=0;i<tone.length;i++)tone[i]=(short)(4000*Math.sin(2*Math.PI*220*i/16000));
+            for(int sec=0;sec<3601;sec++){
+                accept.invoke(recorder,(sec/300)%2==0?tone:quiet,16000);
+                if(sec==137 || sec==3599)mark.invoke(recorder);
+            }
+            require((boolean)finish.invoke(recorder,"Finished"),"Hour-long recording was not finalized");
+            File audio=(File)method(type,"audio",Context.class,String.class,boolean.class).invoke(null,target,id,false);
+            try(android.database.Cursor c=db.getReadableDatabase().rawQuery("SELECT ms,bytes FROM long_sessions WHERE id=?",new String[]{id})){
+                require(c.moveToFirst() && c.getLong(0)==3601000 && c.getLong(1)==audio.length(),"Hour duration or byte count wrong");
+            }
+            try(android.database.Cursor c=db.getReadableDatabase().rawQuery("SELECT ms FROM long_marks WHERE session=? ORDER BY ms",new String[]{id})){
+                require(c.moveToFirst()&&c.getLong(0)==138000 && c.moveToNext()&&c.getLong(0)==3600000,"Marker position wrong");
+            }
+            long offset=(Long)method(type,"offset",File.class,long.class).invoke(null,audio,3600000L);
+            require(offset>0 && offset<audio.length(),"Late marker outside recording");
+            try(java.io.RandomAccessFile stream=new java.io.RandomAccessFile(audio,"r")){stream.seek(offset);require(stream.readUnsignedShort()==65521,"Marker did not land on ADTS frame");}
+            passed("Encoded 3,601 seconds of synthetic 16 kHz audio including five-minute quiet passages into one "+audio.length()+"-byte AAC file; both markers and the one-hour frame boundary verified.");
+            int budget=ArchiveStore.budgetMiB(target);
+            try{ArchiveStore.setBudgetMiB(target,1);begin.invoke(recorder);require(((String)active.get(null)).isEmpty(),"Storage limit allowed a new session");}
+            finally{ArchiveStore.setBudgetMiB(target,budget);}
+        }
+        Activity a=launch();click(waitText(a,"Long sessions",10000));readWindows();tapNode("Start long session");
+        android.app.PendingIntent marker=waitForButton("Mark point"),end=waitForButton("Finish session");
+        marker.send();SystemClock.sleep(900);end.send();
+        until(()->!RecallService.isListening(),20000,"Finishing from idle did not release microphone");
+        waitNode("Start long session");passed("Direct start from the recorder, lock-screen mark and finish, and microphone release verified.");
+        getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);runOnMainSync(a::finish);
     }
     private void lockedShade()throws Exception{
         readWindows();Activity activity=launch();

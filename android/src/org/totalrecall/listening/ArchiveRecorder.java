@@ -112,7 +112,7 @@ public final class ArchiveRecorder implements AutoCloseable {
     }
     @Override public void close(){boundary("Stopped");}
 
-    private static final class Encoder implements Closeable{
+    static final class Encoder implements Closeable{
         final ArchiveStore.Stage stage;
         final MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();
         final byte[] header=new byte[7],payload=new byte[8192];

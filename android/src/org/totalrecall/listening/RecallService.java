@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class RecallService extends Service {
     private static final String NS="org.totalrecall.listening.";
     public static final String BEGIN_TAKE=NS+"BEGIN_TAKE", END_TAKE=NS+"END_TAKE";
+    static final String BEGIN_LONG=NS+"BEGIN_LONG",FINISH_LONG=NS+"FINISH_LONG",MARK_LONG=NS+"MARK_LONG";
     public static final String REFRESH_NOTICE=NS+"REFRESH_NOTICE";
     public static final String LEARN_ROOM=NS+"LEARN_ROOM";
     public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",END=NS+"END",KEEP=NS+"KEEP",
@@ -36,13 +37,15 @@ public final class RecallService extends Service {
     private CaptureCues cues;
     private volatile String noticeSession="";
     private static final String RESUME_FROM_NOTICE=NS+"RESUME_FROM_NOTICE";
-    private void sound(CaptureCues.Cue cue){
+    private void sound(CaptureCues.Cue cue){sound(cue,false);}
+    private void sound(CaptureCues.Cue cue,boolean automatic){
         noticeHandler.post(()->{
             if(destroyed)return;
-            try{if(cues==null)cues=new CaptureCues(this);cues.play(cue);}catch(RuntimeException ignored){}
+            try{if(cues==null)cues=new CaptureCues(this);cues.play(cue,automatic);}catch(RuntimeException ignored){}
         });
     }
     private int lastStart;
+    private volatile boolean longOnly;
     private long startedElapsed;
     private volatile String inputRoute="";
     private final Handler noticeHandler=new Handler(Looper.getMainLooper());
@@ -109,7 +112,8 @@ public final class RecallService extends Service {
     }
     public static void command(Context c,String action){
         Intent i=new Intent(c,RecallService.class).setAction(action);
-        if(START.equals(action)&&Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);
+        if(FINISH_LONG.equals(action)||MARK_LONG.equals(action))i.putExtra("longId",LongRecording.active);
+        if((START.equals(action)||BEGIN_LONG.equals(action)&&!running)&&Build.VERSION.SDK_INT>=26)c.startForegroundService(i);else c.startService(i);
     }
     @Override public IBinder onBind(Intent intent){return null;}
     private void changed(){
@@ -130,6 +134,8 @@ public final class RecallService extends Service {
             !snapshot.event.isEmpty()?snapshot.event:receiving?(label!=null && label.startsWith("Keeping")?"Capturing selected clip":"Listening"):label;
         if(headline==null || headline.isEmpty())headline="Preparing microphone";
         if(snapshot.active && !receiving && !snapshot.waiting && snapshot.event.isEmpty())headline="Waiting for microphone input";
+        boolean longOpen=!LongRecording.active.isEmpty();
+        if(longOpen)headline="Long session · "+LongRecording.time(LongRecording.duration);
         String counts=snapshot.words+" words · "+snapshot.savedCount+" saved · "+snapshot.flags+" flagged";
         StringBuilder details=new StringBuilder(snapshot.waiting?snapshot.state:snapshot.registration(0));
         if(receiving){
@@ -141,6 +147,7 @@ public final class RecallService extends Service {
             if(!line.isEmpty())details.append(snapshot.partial.isEmpty()?"\nHeard · ":"\nIn progress · ").append(line.substring(0,Math.min(line.length(),120)));
             details.append("\n").append(snapshot.situationLines(0));
         }
+        if(longOpen)details.append("\nLong session · ").append(LongRecording.marks).append(" markers");
         details.append("\n").append(counts);
         if(!snapshot.lastSave.isEmpty())details.append(" · Latest: ").append(snapshot.lastSave).append(" at ").append(java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(new Date(snapshot.savedAt)));
         details.append("\n").append(captureSettings()).append("\n").append(backupStatus());
@@ -154,7 +161,10 @@ public final class RecallService extends Service {
         if(Build.VERSION.SDK_INT>=31)b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
         if(snapshot.active && startedElapsed>0)b.setWhen(System.currentTimeMillis()-(SystemClock.elapsedRealtime()-startedElapsed)).setUsesChronometer(true);
         if(take.recording && receiving)b.setProgress(60,Math.min(60,take.seconds),false);
-        if(receiving){
+        if(longOpen){
+            noticeAction(b,MARK_LONG,"Mark point",android.R.drawable.ic_menu_add);
+            noticeAction(b,FINISH_LONG,"Finish session",android.R.drawable.ic_menu_save);
+        }else if(receiving){
             noticeAction(b,KEEP,"Save last min",android.R.drawable.ic_menu_save);
             if(!take.recording && getSharedPreferences("recall-speech",0).getBoolean("noticeMissed",false))
                 noticeAction(b,MISSED,"Mark missed",android.R.drawable.ic_menu_recent_history);
@@ -169,6 +179,9 @@ public final class RecallService extends Service {
         Intent i=new Intent(this,RecallService.class).setAction(action)
             .setData(android.net.Uri.parse("recall:control/"+noticeSession+"/"+id))
             .putExtra("noticeSession",noticeSession).putExtra("takeGeneration",id);
+        if(FINISH_LONG.equals(action)||MARK_LONG.equals(action)){
+            i.putExtra("longId",LongRecording.active);i.setData(android.net.Uri.parse("recall:long/"+noticeSession+"/"+LongRecording.active));
+        }
         b.addAction(icon,title,PendingIntent.getService(this,0,i,PendingIntent.FLAG_IMMUTABLE));
     }
     private void progress(String message){
@@ -194,6 +207,8 @@ public final class RecallService extends Service {
                 (take && (intent.getLongExtra("takeGeneration",-1)!=SpokenTake.generation ||
                     BEGIN_TAKE.equals(action)==SpokenTake.status.recording)))return START_NOT_STICKY;
         }
+        boolean startLong=BEGIN_LONG.equals(action) && worker==null;
+        if(startLong)action=START;
         if(START.equals(action)){
             if(worker==null)noticeSession=UUID.randomUUID().toString();
             Notification n=notification(worker==null?"Preparing on-device listening":current);
@@ -207,6 +222,7 @@ public final class RecallService extends Service {
                 changed();stopSelf(startId);return START_NOT_STICKY;
             }
             if(worker==null){
+                longOnly=startLong;if(startLong)commands.offer(BEGIN_LONG);
                 try{if(cues==null)cues=new CaptureCues(this);}catch(RuntimeException ignored){}
                 notifications().cancel(RESUME_NOTIFICATION);userPaused=false;ending=false;stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
                 startedElapsed=SystemClock.elapsedRealtime();inputRoute="";worker=new Thread(this::listen,"Recall-Mic");worker.start();
@@ -221,6 +237,10 @@ public final class RecallService extends Service {
                 // stop() also unblocks a native read if the microphone route went away.
                 AudioRecord rec=liveRecorder;
                 if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
+            }else if(BEGIN_LONG.equals(action)){if(capturing && !stopping.get())commands.offer(action);else LongRecording.message="Wait for microphone input and tap Start again";}
+            else if(FINISH_LONG.equals(action)||MARK_LONG.equals(action)){
+                String id=intent.getStringExtra("longId");
+                if(id!=null && !id.isEmpty() && id.equals(LongRecording.active))commands.offer(action+id);
             }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action)||LEARN_ROOM.equals(action)||BEGIN_TAKE.equals(action)||END_TAKE.equals(action))commands.offer(action);
         }else stopSelf(startId);
         return START_NOT_STICKY;
@@ -383,8 +403,9 @@ public final class RecallService extends Service {
         String end="Paused";
         AudioRecord rec=null;
         try(Store store=new Store(app);JournalStore journal=new JournalStore(app);
-                ArchiveStore archiveStore=new ArchiveStore(app);ArchiveRecorder archive=new ArchiveRecorder(app,archiveStore)){
+                ArchiveStore archiveStore=new ArchiveStore(app);ArchiveRecorder archive=new ArchiveRecorder(app,archiveStore);LongRecording sessionAudio=new LongRecording(app,archiveStore)){
             try{
+                LongRecording.recover(app,archiveStore);
                 if(!ListenPolicy.allowed(app))throw new SessionIssue("Total Recall is paused; enable capture before starting.");
                 if(prefs.getBoolean("active",false))store.gap("Prior listening session was interrupted; coverage after its last update is unknown.");
                 prefs.edit().putBoolean("active",true).commit();store.recover();journal.recover();lock.acquire();
@@ -395,14 +416,21 @@ public final class RecallService extends Service {
                         LiveCapture.feedback("Writing clip to phone…");
                         try{lastSaved[0]=store.save(clip);LiveCapture.saved(lastSaved[0],clip.category,clip.reason,stopping.get() && userPaused);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
+                        boolean requested=clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED);
+                        if(!requested && getSharedPreferences("recall-speech",0).getBoolean("spokenAuto",false))sound(CaptureCues.category(clip.category),true);
                         if(clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
-                            sound(CaptureCues.Cue.CLIP);
+                            sound(CaptureCues.category(clip.category));
                             try {Vibrator h=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(h!=null&&h.hasVibrator())h.vibrate(45);}
                             catch(SecurityException ignored){}
                         }
                         try{MintSync.schedule(app);}catch(RuntimeException ignored){progress("Saved · Mint sync pending");}
                     }
-                    @Override public void onVoice(String message,boolean wake){LiveCapture.feedback(message);if(wake)sound(CaptureCues.Cue.WAKE);noticeSoon();}
+                    @Override public void onVoice(String message,boolean wake){LiveCapture.feedback(message);if(wake)sound(CaptureCues.Cue.WAKE);else if(message.startsWith("Command unclear"))sound(CaptureCues.Cue.UNCLEAR);noticeSoon();}
+                    @Override public void onSession(int action){
+                        if(action==5)commands.offer(BEGIN_LONG);
+                        else if(!LongRecording.active.isEmpty())commands.offer((action==6?FINISH_LONG:MARK_LONG)+LongRecording.active);
+                        else LiveCapture.feedback("No long session is recording");
+                    }
                     @Override public void onFlag(String category){LiveCapture.flag(category);noticeSoon();}
                     @Override public void onPauseRequested(){userPaused=true;stopping.set(true);}
                 };
@@ -447,6 +475,9 @@ public final class RecallService extends Service {
                             }
                             if(count>0 || unavailable!=null)zeroSince=0;
                             if(unavailable!=null){
+                                if(sessionAudio.finish("Microphone interrupted")){LiveCapture.feedback(LongRecording.message);sound(CaptureCues.Cue.ENDED);noticeSoon();}
+                                if(commands.remove(BEGIN_LONG))LongRecording.message="Microphone unavailable · tap Start when ready";
+                                if(longOnly)command(this,USER_PAUSE);
                                 archive.interrupted("Microphone unavailable · "+unavailable);
                                 if(continuity.lose(SystemClock.elapsedRealtime())){
                                     String waiting="Waiting for microphone · "+unavailable;
@@ -483,6 +514,9 @@ public final class RecallService extends Service {
                                 store.gap(pauseNote);resumeNote=resumeNote.isEmpty()?pauseNote:pauseNote+" · "+resumeNote;
                                 prefs.edit().remove("pausedAt").commit();priorPause=0;
                             }
+                            boolean wasLong=!LongRecording.active.isEmpty();
+                            sessionAudio.accept(frame,count);
+                            if(wasLong && LongRecording.active.isEmpty()){if(longOnly)command(this,USER_PAUSE);LiveCapture.feedback(LongRecording.message);noticeSoon();}
                             archive.accept(frame,count);
                             String next=route(rec);inputRoute=next;
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
@@ -491,7 +525,14 @@ public final class RecallService extends Service {
                             if(stopping.get())break;
                             String action;
                             while((action=commands.poll())!=null){
-                                if(BEGIN_TAKE.equals(action)||END_TAKE.equals(action))window.takeAction(BEGIN_TAKE.equals(action));
+                                if(BEGIN_LONG.equals(action)){
+                                    if(LongRecording.active.isEmpty()){sessionAudio.begin();LiveCapture.feedback(LongRecording.message);if(!LongRecording.active.isEmpty())sound(CaptureCues.Cue.STARTED);else if(longOnly)command(this,USER_PAUSE);noticeSoon();}
+                                }else if(action.startsWith(FINISH_LONG)||action.startsWith(MARK_LONG)){
+                                    String id=LongRecording.active;if(id.isEmpty())continue;
+                                    if(action.equals(FINISH_LONG+id)){if(sessionAudio.finish("Finished"))sound(CaptureCues.Cue.ENDED);if(longOnly)command(this,USER_PAUSE);}
+                                    else if(action.equals(MARK_LONG+id)){sessionAudio.mark();sound(CaptureCues.Cue.MARKED);}
+                                    LiveCapture.feedback(LongRecording.message);noticeSoon();
+                                }else if(BEGIN_TAKE.equals(action)||END_TAKE.equals(action))window.takeAction(BEGIN_TAKE.equals(action));
                                 else if(LEARN_ROOM.equals(action)){
                                     if(getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false)){
                                         window.reduceRoom=true;speech.learnRoom();
@@ -564,7 +605,7 @@ public final class RecallService extends Service {
         }return "input route unreported";
     }
     @Override public void onDestroy(){
-        noticeHandler.removeCallbacksAndMessages(null);destroyed=true;if(cues!=null){cues.close();cues=null;}stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);
+        noticeHandler.removeCallbacksAndMessages(null);destroyed=true;if(cues!=null){cues.finishPending();cues=null;}stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);
         AudioRecord rec=liveRecorder;
         if(rec!=null){try{rec.stop();}catch(IllegalStateException ignored){}}
         super.onDestroy();

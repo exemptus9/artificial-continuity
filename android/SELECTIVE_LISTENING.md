@@ -1,6 +1,12 @@
-# Live listening on Galaxy · 0.26.0
+# Live listening on Galaxy · 0.27.0
 
-Install `TotalRecall-0.26.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.27.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+
+## Record a long session
+
+Open **Long sessions → Start long session**, then speak when the timer advances. **Mark this point** places a bookmark at the audio position. **Finish & save session** keeps the complete audio, including pauses within your speech. A microphone interruption or storage limit finishes the available recording. Starting from idle releases the microphone after finishing. Starting during selective listening returns you to your existing listening session. The phone keeps this audio locally until you export or delete it. Separately enabled full-audio archiving follows its own backup settings.
+
+During listening, say **“Lexi, start a long session”**, **“Lexi, mark this point”**, or **“Lexi, finish the session”**. The active lock-screen card has Mark point and Finish session. The saved recording's menu opens playback, markers, renaming, audio export and marker-index export. In the private web archive choose **Long sessions** and open the two exports.
 
 ## Keep a moment
 

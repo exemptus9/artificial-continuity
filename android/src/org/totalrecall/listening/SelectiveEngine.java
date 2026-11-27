@@ -42,6 +42,7 @@ public final class SelectiveEngine {
         void onClip(Clip clip);
         void onPauseRequested();
         default void onVoice(String message,boolean wake) {}
+        default void onSession(int action) {}
         default void onFlag(String reason) {}
     }
 
@@ -51,7 +52,10 @@ public final class SelectiveEngine {
         {"Recover a missed moment","you missed one","you missed that"},
         {"Start a passage","start a passage","start a poem","start a story","start a draft"},
         {"Finish and save the passage","finish passage","finish the poem","finish the story","finish the draft"},
-        {"Pause the microphone","pause recall","pause recording","stop listening","stop recording"}
+        {"Pause the microphone","pause recall","pause recording","stop listening","stop recording"},
+        {"Start a long session","start a long session","start a special session"},
+        {"Finish a long session","finish the session","finish this session"},
+        {"Mark a point in a long session","mark this point","mark this line"}
     };
     static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
     private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
@@ -493,7 +497,8 @@ public final class SelectiveEngine {
                 }else if(action==3){
                     if(passage){passage=false;commit(true);listener.onVoice("Passage ended",false);}
                     else listener.onVoice("No passage is open",false);
-                }else{
+                }else if(action>=5){listener.onSession(action);}
+                else{
                     if(passage){passage=false;commit();}
                     listener.onVoice("Pause command heard",false);pause();listener.onPauseRequested();
                 }

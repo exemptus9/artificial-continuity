@@ -41,6 +41,7 @@ public final class CaptureReviewActivity extends Activity {
         TextView title=text(page,"Live & saved",28,true);if(Build.VERSION.SDK_INT>=28)title.setAccessibilityHeading(true);
         nav=row(page);liveTab=action(nav,"Live now",()->tab(false));savedTab=action(nav,"Saved on phone",()->tab(true));
         LinearLayout quick=row(page);
+        action(page,"Long sessions",()->startActivity(new Intent(this,LongSessionsActivity.class)));
         action(quick,"Full journal",()->startActivity(new Intent(this,FullJournalActivity.class)));
         action(quick,"Voice commands",this::guide);
         action(quick,"Lock screen & sound",this::feedbackSettings);
@@ -144,8 +145,11 @@ public final class CaptureReviewActivity extends Activity {
         text(options,"Sound feedback",18,true);
         Switch chime=new Switch(this);chime.setText("Play wake and save chimes");chime.setMinHeight(dp(48));chime.setChecked(prefs.getBoolean("chime",true));options.addView(chime);
         chime.setOnCheckedChangeListener((v,on)->prefs.edit().putBoolean("chime",on).apply());
-        Switch speech=new Switch(this);speech.setText("Say “Clip stored” or “Take stored” after a requested save");speech.setMinHeight(dp(48));speech.setChecked(prefs.getBoolean("spokenReceipts",false));options.addView(speech);
+        Switch speech=new Switch(this);speech.setText("Speak save confirmations and session actions");speech.setMinHeight(dp(48));speech.setChecked(prefs.getBoolean("spokenReceipts",false));options.addView(speech);
         speech.setOnCheckedChangeListener((v,on)->prefs.edit().putBoolean("spokenReceipts",on).apply());
+        cueSwitch(options,prefs,"spokenAuto","Announce automatically saved passages, word candidates and decisions");
+        cueSwitch(options,prefs,"spokenReady","Say “Ready” when the wake word registers");
+        cueSwitch(options,prefs,"spokenRetry","Say “Try that again” for an unclear command");
         String[] levels={"Soft","Clear","Prominent"};
         Button level=action(options,"Cue level · "+levels[cueLevel(prefs)],()->{});
         level.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setTitle("Cue level")
@@ -153,16 +157,27 @@ public final class CaptureReviewActivity extends Activity {
         text(options,"Two rising notes mean Recall heard the wake word. A falling chime confirms a save. Use your media volume buttons to adjust the actual loudness.",14,false);
         LinearLayout tests=row(options);
         action(tests,"Test wake",()->previewCue(CaptureCues.Cue.WAKE));action(tests,"Test save",()->previewCue(CaptureCues.Cue.CLIP));
+        action(options,"Hear announcement examples",()->{
+            CaptureCues.Cue[] cues=CaptureCues.Cue.values();
+            String[] names={"Ready","Moment saved","Take stored","Creative passage saved","Word candidate saved","Decision saved","Session started","Session saved","Point marked","Try that again"};
+            new android.app.AlertDialog.Builder(this).setTitle("Play a spoken example").setItems(names,(d,i)->{
+                if(preview==null)preview=new CaptureCues(this);preview.previewVoice(cues[i]);
+            }).show();
+        });
         ScrollView scroll=new ScrollView(this);scroll.addView(options);
         android.app.AlertDialog dialog=new android.app.AlertDialog.Builder(this).setTitle("Lock screen & sound").setView(scroll).setPositiveButton("Done",null).create();
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         dialog.setOnDismissListener(dialogInterface->{stopPreview();setVolumeControlStream(android.media.AudioManager.USE_DEFAULT_STREAM_TYPE);});dialog.show();
     }
+    private void cueSwitch(LinearLayout row,android.content.SharedPreferences p,String key,String title){
+        Switch toggle=new Switch(this);toggle.setMinHeight(dp(48));toggle.setText(title);toggle.setChecked(p.getBoolean(key,false));row.addView(toggle);
+        toggle.setOnCheckedChangeListener((v,on)->p.edit().putBoolean(key,on).apply());
+    }
     private int cueLevel(android.content.SharedPreferences p){return Math.max(0,Math.min(2,p.getInt("cueLevel",2)));}
     private void stopPreview(){if(preview!=null){preview.close();preview=null;}}
     private void previewCue(CaptureCues.Cue cue){
         android.content.SharedPreferences p=getSharedPreferences("recall-speech",0);
-        if(!p.getBoolean("chime",true) && (cue==CaptureCues.Cue.WAKE||!p.getBoolean("spokenReceipts",false))){
+        if(!p.getBoolean("chime",true) && !(cue==CaptureCues.Cue.WAKE?p.getBoolean("spokenReady",false):p.getBoolean("spokenReceipts",false))){
             Toast.makeText(this,"Enable a sound above to hear this preview.",Toast.LENGTH_SHORT).show();return;
         }
         try{if(preview==null)preview=new CaptureCues(this);preview.play(cue);}

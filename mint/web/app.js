@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 const KINDS = {clip:'Selected clip',segment:'Audio segment',journal:'Journal entry'};
 const viewInfo = {
+  sessions:['Long session player','Open an exported recording and jump to the lines you marked.'],
   overview:['Archive overview','Saved audio and writing from your listening sessions.'],
   review:['Review inbox','Listen to a moment and file it with one click.'],
   archive:['Your archive','Search saved clips, original audio segments and journal entries.'],
@@ -285,8 +286,60 @@ async function archive(ver){if(!$('results'))makeArchive();const response=await 
   const prev=button('Previous',()=>{state.offset=Math.max(0,state.offset-limit);refresh();}),next=button('Next',()=>{state.offset+=limit;refresh();});prev.disabled=state.offset===0;next.disabled=state.offset+limit>=response.total;
   const count=response.total?`${state.offset+1}–${Math.min(state.offset+response.items.length,response.total)} of ${plural(response.total,'item')}`:'0 items';const pager=add(e('div','pager'),e('span','',count),response.total>limit?add(e('div'),prev,next):null);
   $('results').replaceChildren(...nodes,pager);}
-async function refresh(){const ver=++state.version;notice();$('view').setAttribute('aria-busy','true');try{if(state.view==='overview')await dashboard(ver);else if(state.view==='activity')await activity(ver);else if(state.view==='review')await reviewPage(ver);else await archive(ver);}catch(err){if(ver===state.version){notice(err.message);if(state.view==='archive'&&$('results'))$('results').replaceChildren();else $('view').replaceChildren();}}finally{if(ver===state.version)$('view').setAttribute('aria-busy','false');}}
-function route(){let r=location.hash.slice(1);if(r==='content')return;if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
+async function refresh(){const ver=++state.version;notice();$('view').setAttribute('aria-busy','true');try{if(state.view==='sessions'){if(!$('session-audio'))sessionPlayer();}else if(state.view==='overview')await dashboard(ver);else if(state.view==='activity')await activity(ver);else if(state.view==='review')await reviewPage(ver);else await archive(ver);}catch(err){if(ver===state.version){notice(err.message);if(state.view==='archive'&&$('results'))$('results').replaceChildren();else $('view').replaceChildren();}}finally{if(ver===state.version)$('view').setAttribute('aria-busy','false');}}
+let sessionCleanup;
+function sessionPlayer(){
+  const view=$('view'), audio=e('audio'), files=e('input'), index=e('input'), list=e('div'), status=e('p','muted');
+  audio.id='session-audio';audio.controls=true;audio.preload='metadata';audio.style.width='100%';
+  files.type=index.type='file';files.accept='audio/*,.aac,.m4a';index.accept='.json,application/json';index.disabled=true;
+  let objectURL='',current=null,points=[],title='',generation=0;
+  const stamp=ms=>new Date(ms).toISOString().slice(11,19);
+  const render=()=>{
+    list.replaceChildren();
+    points.forEach(p=>list.append(button(stamp(p.ms)+' · '+p.label,()=>{
+      if(!Number.isFinite(audio.duration)){status.textContent='Wait for the recording to load before jumping to a marker.';return;}
+      audio.currentTime=Math.min(audio.duration,p.ms/1000);
+      audio.play().catch(()=>{status.textContent='Press Play to hear this marker.';});
+    },'btn')));
+    download.disabled=!current||!points.length; mark.disabled=!current;
+  };
+  const mark=button('Mark current position',()=>{
+    if(!current||audio.readyState<1)return;
+    const ms=Math.round(audio.currentTime*1000);
+    points.push({ms,label:'Marker '+(points.length+1)});points.sort((a,b)=>a.ms-b.ms);render();
+  });
+  const download=button('Save marker index',()=>{
+    const data=JSON.stringify({format:'total-recall-markers-1',title,audioBytes:current.size,markers:points},null,2);
+    const url=URL.createObjectURL(new Blob([data],{type:'application/json'})),link=e('a');
+    link.href=url;link.download=current.name+'.markers.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  });
+  files.onchange=()=>{
+    if(!files.files.length)return;
+    generation++;audio.pause();if(objectURL)URL.revokeObjectURL(objectURL);
+    current=files.files[0];title=current.name;points=[];index.value='';index.disabled=false;
+    objectURL=URL.createObjectURL(current);audio.src=objectURL;status.textContent=title;render();
+  };
+  audio.onerror=()=>{if(current)status.textContent='This browser could not play the audio. The original file remains available on your device.';};
+  index.onchange=async()=>{
+    const file=index.files[0],version=++generation;if(!file||!current)return;
+    try{
+      if(file.size>4*1024*1024)throw Error('Marker index is too large.');
+      const data=JSON.parse(await file.text());if(version!==generation)return;
+      if(data.format!=='total-recall-markers-1'||data.audioBytes!==current.size)throw Error('Choose the marker index exported for this recording.');
+      if(!Array.isArray(data.markers)||data.markers.length>20000||!data.markers.every(m=>m&&Number.isSafeInteger(m.ms)&&m.ms>=0&&m.ms<8640000000000000&&typeof m.label==='string'))throw Error('Invalid marker index.');
+      points=data.markers.map(m=>({ms:m.ms,label:m.label.slice(0,160)})).sort((a,b)=>a.ms-b.ms);title=String(data.title||current.name);
+      status.textContent=title+' · '+points.length+' markers';render();
+    }catch(err){if(version===generation)status.textContent=err.message;}
+  };
+  render();
+  view.replaceChildren(add(e('section','detail-block'),add(e('label'),'Open audio from device',files),audio,
+    add(e('label'),'Open matching marker index',index),status,mark,download,list),
+    contentBlock('Recording on Android','Long sessions → Start long session. The microphone records until you finish or capture is interrupted. Export the audio and optional marker index from the saved session. Files opened here play locally in your browser.'),
+    contentBlock('Hands-free commands','While listening, say “Lexi, start a long session,” “Lexi, mark this point,” or “Lexi, finish the session.” Two rising notes acknowledge the wake word. Spoken save confirmations and automatic creative announcements are optional in Lock screen & sound.'));
+  sessionCleanup=()=>{generation++;current=null;audio.pause();audio.removeAttribute('src');audio.load();if(objectURL)URL.revokeObjectURL(objectURL);};
+}
+
+function route(){let r=location.hash.slice(1);if(r==='content')return;if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';if(sessionCleanup){sessionCleanup();sessionCleanup=null;}state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review','sessions'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
   for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===r)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
   $('view').replaceChildren(e('p','empty','Loading…'));refresh();}
 function contentBlock(title,text,css=''){return add(e('section','detail-block'),e('h3','',title),e('p',css,text));}
