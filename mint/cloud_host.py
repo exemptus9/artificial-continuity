@@ -47,7 +47,7 @@ def login_page(failed=False):
     main{width:min(100%,27rem)}header{display:flex;align-items:center;gap:12px;font:bold 1.3rem Georgia,serif}svg{width:38px;height:38px}h1{font:normal clamp(2.5rem,9vw,4rem)/1 Georgia,serif;letter-spacing:-.04em;margin:48px 0 14px}p{color:#496459}
     label{display:block;font-weight:600;margin:26px 0 6px}input,button{width:100%;padding:14px;border-radius:10px;font:inherit}
     input{border:1px solid #80988b;background:white;color:#172d25}button{margin-top:12px;background:#164c3d;color:white;border:0;font-weight:650;cursor:pointer}
-    :focus-visible{outline:3px solid #b17728;outline-offset:3px}</style><main><header><svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="#196348" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M41 11 A23 23 0 1 0 54 37 M17 32h5l5-9 5 18 6-17 4 8h6"/><circle cx="50" cy="19" r="4" fill="#ac5b26" stroke="none"/></svg>Total Recall</header><h1>Your archive</h1><p>Listen to saved audio, find a clip, or connect your phone.</p><form method="post" action="/login"><label for="key">Owner key</label><input id="key" name="key" type="password" autocomplete="current-password" minlength="20" maxlength="160" required><p>"""+prompt+"""</p><button>Open private archive</button></form></main></html>""").encode()
+    :focus-visible{outline:3px solid #b17728;outline-offset:3px}</style><main><header><svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="#196348" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M41 11 A23 23 0 1 0 54 37 M17 32h5l5-9 5 18 6-17 4 8h6"/><circle cx="50" cy="19" r="4" fill="#ac5b26" stroke="none"/></svg>Total Recall</header><h1>Your archive</h1><p>Listen to saved audio, find a clip, or connect your phone.</p><form method="post" action="/login"><label for="key">Owner key</label><input id="key" name="key" type="password" autocomplete="current-password" minlength="20" maxlength="160" required><p>"""+prompt+"""</p><button>Open private archive</button></form><p><a href="/early-access">Explore Total Recall and join early access</a></p></main></html>""").encode()
 
 def qr_png(code):
     bits=recall_desk.qr_bits(code)
@@ -242,6 +242,8 @@ class HostedHandler(recall_web.OwnerHandler):
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
         if path=="/downloads/android":return self.download_apk()
+        if path=="/early-access/roster":
+            return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")
         if path=="/api/early-access":
             return self.json(200,{"signups":early_access.roster(self.server.archive.root)})
         if path=="/api/android-installer":return self.json(200,{"path":self.apk_path()})

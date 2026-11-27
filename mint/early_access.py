@@ -1,5 +1,6 @@
 """Public invitation signup and private owner roster on the archive's persistent volume."""
 from contextlib import closing
+from html import escape
 from pathlib import Path
 import re
 import sqlite3
@@ -34,3 +35,12 @@ def connect(root):
 def roster(root):
     with closing(connect(root)) as db:
         return [{"email":r[0],"joined":r[1]} for r in db.execute("SELECT email,joined FROM invites ORDER BY joined DESC,email")]
+
+
+def owner_page(assets, root):
+    entries=roster(root)
+    rows="".join("<tr><td>"+escape(item["email"])+"</td><td>"+escape(item["joined"])+"</td></tr>" for item in entries)
+    content=("<h2>Invitation requests</h2><p>"+str(len(entries))+" addresses on the early-access list.</p>"
+             '<div style="overflow:auto"><table><thead><tr><th>Email address</th><th>Joined (UTC)</th></tr></thead><tbody>'
+             +rows+"</tbody></table></div>")
+    return page(assets,content)

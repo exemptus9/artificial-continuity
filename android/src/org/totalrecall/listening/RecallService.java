@@ -250,7 +250,7 @@ public final class RecallService extends Service {
             if(clock>=nextSensitivity){
                 liftQuiet=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("liftQuiet",true);
                 skipMedia=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("skipMedia",true);
-                deferUntilSpeaker=skipMedia && speech.hasMediaProfiles();
+                deferUntilSpeaker=skipMedia && speech.groupsReady() && speech.hasMediaProfiles();
                 engine.setSensitivity(getSharedPreferences("recall-detector",MODE_PRIVATE).getInt("sensitivity",0));
                 nextSensitivity=clock+500;
             }

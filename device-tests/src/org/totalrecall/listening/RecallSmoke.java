@@ -184,6 +184,7 @@ public final class RecallSmoke extends Instrumentation {
                 InputStream input=getContext().getAssets().open("decision.pcm")){
             byte[] fixture=bytes(input);
             require(fixture.length%2==0 && fixture.length>0,"Invalid PCM fixture");
+            verifyQuietReview(fixture);
             java.util.List<Long> saves=new java.util.ArrayList<>();
             Method save=Store.class.getDeclaredMethod("save",SelectiveEngine.Clip.class);
             save.setAccessible(true);
@@ -254,6 +255,25 @@ public final class RecallSmoke extends Instrumentation {
                 require(liveCleared(),"Transient captions or microphone level survived the pause boundary");
                 for(Long id:saves)store.delete(id);
             }
+        }
+    }
+    private void verifyQuietReview(byte[] fixture)throws Exception{
+        java.lang.reflect.Constructor<OfflineSpeech> constructor=OfflineSpeech.class.getDeclaredConstructor(Context.class,boolean.class,boolean.class);
+        constructor.setAccessible(true);
+        try(OfflineSpeech review=constructor.newInstance(target,false,false)){
+            short[] frame=new short[1600];StringBuilder words=new StringBuilder();
+            for(int pos=0;pos<fixture.length/2+16000;){
+                int count=Math.min(frame.length,fixture.length/2+16000-pos);
+                for(int i=0;i<count;i++,pos++){
+                    int off=2*pos;
+                    frame[i]=off+1<fixture.length?(short)(((short)((fixture[off]&255)|(fixture[off+1]<<8)))/80):0;
+                }
+                String result=review.accept(frame,count);if(result!=null)words.append(result).append(' ');
+            }
+            String tail=review.finish();if(tail!=null)words.append(tail);
+            java.lang.reflect.Field compared=OfflineSpeech.class.getDeclaredField("compared");compared.setAccessible(true);
+            require(compared.getInt(review)>0,"A faint recording did not trigger additional decodes");
+            require(words.length()>0,"Quiet recording analysis lost the whole reference phrase");
         }
     }
     private static final class SpeechChecks {
