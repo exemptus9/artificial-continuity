@@ -4,7 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 from shutil import copyfileobj
 from tempfile import NamedTemporaryFile
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from zipfile import ZipFile
 import os
 import sys
@@ -41,20 +41,27 @@ def fetch(path, url, expected):
     if path.exists() and checksum(path) == expected:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    sources = [url]
+    if url.startswith(MAVEN):
+        artifact = url[len(MAVEN):]
+        sources.extend(root + artifact for root in (
+            "https://maven-central.storage-download.googleapis.com/maven2/",
+            "https://repo1.maven.org/maven2/"))
     for attempt in range(3):
+        source = sources[attempt % len(sources)]
         tmp = None
         try:
             with NamedTemporaryFile(dir=path.parent, delete=False) as target:
                 tmp = Path(target.name)
-                with urlopen(url, timeout=60) as stream:
+                with urlopen(Request(source, headers={"User-Agent": "TotalRecall-dependency-fetch/1"}), timeout=60) as stream:
                     copyfileobj(stream, target)
             if checksum(tmp) != expected:
                 raise ValueError("unexpected SHA-256 for " + path.name)
             os.replace(tmp, path)
             return
-        except OSError:
+        except OSError as error:
             if attempt == 2:
-                raise
+                raise OSError(f"Could not retrieve {path.name} from {source}: {error}") from error
             time.sleep(attempt + 1)
         finally:
             if tmp is not None and tmp.exists():

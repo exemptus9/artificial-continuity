@@ -77,7 +77,7 @@ Recall checks successive recognized lines for rhyming sounds, internal rhyme, re
 
 When you deliberately save a **Forge word**, **Poem line** or **Project decision**, the phone uses the most recent recognized phrase within 12 seconds of your marker as an example for future suggestions. The saved clip still includes the surrounding audio and available words. If there is no nearby phrase, the label still files the clip. Unreviewed automatic suggestions and older labeled saves with unknown marker wording supply no new examples. Choose **Worth keeping** or **Less like this** to give explicit feedback. The phone keeps this learning local.
 
-In **More → Capture sensitivity**, choose how readily Recall saves a candidate. **Worth keeping** and **Less like this** on a saved moment adjust future decisions. **Review today** opens recent clips. **More → Open phone vault** returns to the original capture and control screens.
+In **More → Capture sensitivity**, choose how readily Recall saves a candidate. Tap **Learning is on** or **Learning is off** to change whether Recall uses labeled saves and review feedback. **Worth keeping** and **Less like this** on a saved moment adjust future decisions. **Review today** opens recent clips. **More → Open phone vault** returns to the original capture and control screens.
 
 ## Earlier Mint clip connections
 
@@ -91,7 +91,9 @@ Automatic backup follows the paired destination, selected content, network, powe
 
 ## Calibrate your voice and room
 
-While the microphone is receiving audio, open **Live now → Remember voices → Teach my voice**. Speak a sentence on your own and pause. Check the speaker and edit **What I actually said** before you use the sample. Add two more samples from your usual microphone positions. The phone stores a speaker embedding and the short wording correction you confirmed. The wording applies to future finalized lines matched to **Me** while context correction is on. **My voice corrections** lets you forget individual entries.
+Open **Voices** on the large overlay or **Remember voices** in the live capture screen. Choose **Teach my voice**. If listening is paused, **Start listening and continue** brings you back to the phrase after the microphone is ready. Speak for about five seconds, pause, and check what the phone heard. Use **Add a sample of my voice** for a softer or faster delivery you actually use.
+
+For a name Recall keeps splitting or misspelling, choose **Practice a name or coined word**. Enter your preferred spelling once, say the displayed sentence, then tap the first and last words of the misheard part. Confirm the sample. You can practice a second sentence to teach another reading. When Recall matches your voice, it can use the confirmed spelling in the completed caption and when matching a saved highlight. The journal keeps the first reading for comparison. **My voice corrections** lets you forget an entry.
 
 Under **Microphone check**, choose **Learn room noise · 2 seconds** while only the background is audible. The live English decoder uses the resulting filter. Capture keeps the original audio. Learn again after a pause or a microphone change, or turn off reduction at any time.
 

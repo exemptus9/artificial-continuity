@@ -23,6 +23,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Cache checksum-verified Android build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/build/json.jar
+            android/build/speech/download
+            android/build/speech/zxing-core.jar
+            android/assets/offline-speech
+          key: recall-speech-${{ runner.os }}-${{ hashFiles('android/prepare-speech.py','android/tests/prepare-prosody.py') }}
       - name: Run retained native host suite, Continuity transfer suite and Mint tests
         id: host_suite
         continue-on-error: true
@@ -32,8 +41,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
           python3 -m pip install -r android/requirements-transfer.txt -r mint/requirements-cloud.txt 'moto[s3]==5.1.18' playwright==1.56.0
           mkdir -p android/build
-          curl -fsSL --max-time 60 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o android/build/json.jar
-          echo '3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed  android/build/json.jar' | sha256sum --check
+          python3 - <<'PYTESTJAR'
+          from pathlib import Path
+          from runpy import run_path
+          deps = run_path("android/prepare-speech.py")
+          deps["fetch"](Path("android/build/json.jar"), deps["MAVEN"]+"org/json/json/20240303/json-20240303.jar",
+                        "3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed")
+          PYTESTJAR
           RECALL_JSON_JAR="$PWD/android/build/json.jar" bash android/tests/run-host-tests.sh 2>&1 | tee android/build/host-tests.log
           bash device-tests/test-engine.sh
           python3 -c 'import boto3, moto, playwright'
