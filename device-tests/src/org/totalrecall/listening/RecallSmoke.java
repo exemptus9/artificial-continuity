@@ -401,7 +401,7 @@ public final class RecallSmoke extends Instrumentation {
     }
     private void click(View v){require(v!=null,"Missing clickable view");runOnMainSync(v::performClick);}
     private void startListening(Activity a){
-        click(waitText(a,"Start listening",10000));
+        click(waitText(a,RecallService.pausedAt(target)>0?"Resume listening":"Start listening",10000));
         until(()->RecallService.isListening() && RecallService.status(target).startsWith("Listening"),120000,
                 "Foreground microphone failed to start");
     }
@@ -440,6 +440,7 @@ public final class RecallSmoke extends Instrumentation {
         Rect r=new Rect();waitNode(label).getBoundsInScreen(r);
         until(()->{
             Bitmap screenshot=getUiAutomation().takeScreenshot();if(screenshot==null)return false;
+            if(screenshot.getConfig()==Bitmap.Config.HARDWARE){Bitmap hardware=screenshot;screenshot=hardware.copy(Bitmap.Config.ARGB_8888,false);hardware.recycle();}
             try{
                 for(int y=Math.max(0,r.top);y<Math.min(screenshot.getHeight(),r.bottom);y+=3)
                     for(int x=Math.max(0,r.left);x<Math.min(screenshot.getWidth(),r.right);x+=3){
@@ -586,7 +587,7 @@ public final class RecallSmoke extends Instrumentation {
         try(Store store=new Store(target)){
             for(Store.Moment row:store.search(""))previous.add(row.uid);
             render(a,"recall-v11-paused");
-            View start=waitText(a,"Start listening",8000);runOnMainSync(start::performClick);
+            View start=waitText(a,RecallService.pausedAt(target)>0?"Resume listening":"Start listening",8000);runOnMainSync(start::performClick);
             long end=SystemClock.elapsedRealtime()+120000;
             while(SystemClock.elapsedRealtime()<end&&!RecallService.status(target).startsWith("Listening"))SystemClock.sleep(250);
             require(RecallService.isListening()&&RecallService.status(target).startsWith("Listening"),"Foreground capture not active: "+RecallService.status(target));
@@ -620,7 +621,7 @@ public final class RecallSmoke extends Instrumentation {
                 +(kept.endMs-kept.startMs)+" ms of emulator PCM and verified WAV bytes against catalog SHA-256.");
             deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
             View pause=waitText(a,"Pause listening",10000);runOnMainSync(pause::performClick);
-            waitText(a,"Start listening",20000);
+            waitText(a,"Resume listening",20000);
             require(!RecallService.isListening(),"UI pause did not stop service");
             store.delete(kept.id);
             passed("UI start/pause and emulator microphone foreground service, real ASR model initialization and release.");
