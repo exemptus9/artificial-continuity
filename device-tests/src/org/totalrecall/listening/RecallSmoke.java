@@ -552,10 +552,30 @@ public final class RecallSmoke extends Instrumentation {
                 Object controller=active.get(null);if(controller==null)return;
                 java.lang.reflect.Field status=controller.getClass().getDeclaredField("status");status.setAccessible(true);
                 android.widget.TextView view=(android.widget.TextView)status.get(controller);
-                if(view!=null)label[0]=view.getText().toString();
+                if(view!=null && view.isShown())label[0]=view.getText().toString();
             }catch(ReflectiveOperationException e){throw new IllegalStateException(e);}
         });
         return label[0];
+    }
+    private static final java.util.regex.Pattern MINI_CLOCK=java.util.regex.Pattern.compile(
+            "(?:(\\d+):)?(\\d+):([0-5]\\d) · (?:↶(\\d{1,2})s|(Saved))");
+
+    private void waitForMiniClock(boolean receipt,long timeout){
+        int[] first={-1,-1};
+        until(()->{
+            java.util.regex.Matcher reading=MINI_CLOCK.matcher(miniStatus());
+            if(!reading.matches() || (reading.group(5)!=null)!=receipt)return false;
+            int hour=reading.group(1)==null?0:Integer.parseInt(reading.group(1));
+            int elapsed=hour*3600+60*Integer.parseInt(reading.group(2))+Integer.parseInt(reading.group(3));
+            int rewind=receipt?-1:Integer.parseInt(reading.group(4));
+            LiveCapture.Snapshot actual=LiveCapture.snapshot();
+            if(!actual.receiving || Math.abs(actual.sessionSeconds-elapsed)>2)return false;
+            if(!receipt && (rewind<1 || rewind>60))return false;
+            if(first[0]<0){first[0]=elapsed;first[1]=rewind;return false;}
+            // An idle label swap cannot satisfy this. A growing rewind must advance until its 60 s cap.
+            return elapsed>=first[0]+2 && (receipt || rewind>first[1] || (rewind==60 && first[1]==60));
+        },timeout,receipt?"Ultra mini must keep the clock advancing during the confirmed save receipt":
+                "Ultra mini must show the advancing session clock and growing or full rewind buffer");
     }
     private void overlay()throws Exception{
         String app=target.getPackageName(), handle="Expand panel";
@@ -587,12 +607,12 @@ public final class RecallSmoke extends Instrumentation {
             waitNode("Shrink panel");
             tapNode("More overlay actions");tapNode("Use the smallest panel with live status and words");
             assertOverlayInScreenshot("Open medium panel");
+            waitForMiniClock(false,20000);
             int beforeHold=LiveCapture.snapshot().savedCount;
             AccessibilityNodeInfo mini=waitNode("Open the complete transcript across saved sessions");
             require(mini.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK),"Small overlay rejected hold-to-save");
             until(()->LiveCapture.snapshot().savedCount>beforeHold,16000,"Holding the mini readout did not save audio");
-            String clock=miniStatus();
-            until(()->!clock.equals(miniStatus()),6500,"Ultra mini readout did not advance during capture");
+            waitForMiniClock(true,6500);
             tapNode("Stop listening and close Total Recall");waitNode("End & close");tapNode("Go back");
             waitNode("Open medium panel");require(RecallService.isListening(),"Canceling from ultra mini stopped capture");
             tapNode("Open medium panel");waitNode(handle);tapNode(handle);

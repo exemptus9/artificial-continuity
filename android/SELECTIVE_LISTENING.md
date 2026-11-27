@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.28.0
+# Live listening on Galaxy · 0.28.1
 
-Install `TotalRecall-0.28.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.28.1.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Teach a coined word from your own line
 

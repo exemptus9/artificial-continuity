@@ -281,6 +281,7 @@ public final class RecallOverlay {
             if(meter!=null)meter.setProgress(s.waiting?0:level);
             if(s.savedCount>requestedAtCount)requestUntil=0;
             String elapsed=LongRecording.time(s.sessionSeconds*1000);
+            String activeClock=recording?clock:elapsed;
             boolean savePending=SystemClock.elapsedRealtime()<requestUntil;
             boolean clipped=ready && LiveCapture.clipping();
             // Keep unavailable input and real service acknowledgments visible during long takes.
@@ -289,12 +290,21 @@ public final class RecallOverlay {
                 headline=s.waiting?"Waiting for microphone":"Waiting for input";
                 compact=s.waiting?"Mic busy":"No input";
             }else if(savePending){
-                headline=compact=requestLabel;
+                headline=requestLabel;
+                compact=activeClock+" · Saving";
             }else if(!s.event.isEmpty()){
                 headline=s.event;
-                compact=s.event.startsWith("Clip saved")?"Clip saved":s.event;
+                String cue=s.event;
+                if(cue.endsWith("session marker failed"))cue="Mark failed";
+                else if(cue.startsWith("Clip saved") || cue.startsWith(SelectiveEngine.FORGE+" saved") ||
+                    cue.startsWith(SelectiveEngine.POETRY+" saved") || cue.startsWith(SelectiveEngine.DECISION+" saved"))cue="Saved";
+                else if(cue.startsWith("Marker saved"))cue="Marked";
+                else if(cue.startsWith("Flagged ·"))cue="Flagged";
+                // Keep the clock moving for the entire acknowledgment window.
+                compact=activeClock+" · "+cue;
             }else if(clipped){
-                headline=compact="Mic clipping";
+                headline="Mic clipping";
+                compact=activeClock+" · Clipping";
             }else if(take.recording){
                 headline="Voice take · "+take.seconds+" / 60 s";
                 compact="Take "+take.seconds+"s";
@@ -375,7 +385,7 @@ public final class RecallOverlay {
                 showText(caption,line.isEmpty()?fallback:line);
                 if(ultra && Build.VERSION.SDK_INT>=30){
                     View readout=(View)status.getParent();
-                    String summary=status.getText()+". Listening session "+elapsed+", "+s.bufferLabel()+". "
+                    String summary=(ready && !savePending && !s.event.isEmpty()?s.event:status.getText())+". Listening session "+elapsed+", "+s.bufferLabel()+". "
                         +s.words+" words, "+s.savedCount+" saved, "+s.flags+" flagged. "+caption.getText();
                     if(!TextUtils.equals(summary,readout.getStateDescription()))readout.setStateDescription(summary);
                 }

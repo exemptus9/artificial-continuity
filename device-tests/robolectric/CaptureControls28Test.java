@@ -86,10 +86,11 @@ public class CaptureControls28Test {
         paint();
     }
     private void ready() { LiveCapture.samples(new short[1600],1600); }
-    private void paint() throws Exception {
+    private void paint() throws Exception { paint(LiveCapture.snapshot()); }
+    private void paint(LiveCapture.Snapshot snapshot) throws Exception {
         Method paint=overlay.getClass().getDeclaredMethod("paint",LiveCapture.Snapshot.class);
         paint.setAccessible(true);
-        paint.invoke(overlay,LiveCapture.snapshot());
+        paint.invoke(overlay,snapshot);
     }
     private TextView part(String name) throws Exception { return field(overlay,name,TextView.class); }
     private static String value(TextView v) {return v.getText().toString();}
@@ -176,6 +177,29 @@ public class CaptureControls28Test {
         options.edit().putInt("holdSave",0).commit();
         RecallOverlay.restoreWritingSetup(app);
         assertEquals(0,RecallOverlay.holdChoice(app));
+    }
+    @Test public void miniClockKeepsCountingDuringSaveThenReturnsToMeasuredRewind() throws Exception {
+        openOverlay(true,false);
+        LiveCapture.saved(13,"Recent audio","On request");
+        long t=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
+        long first=-1;
+        for(int i=1;i<=3;i+=2){
+            long at=t+i*1000L;
+            LiveCapture.meterAt(new short[1600],1600,at);
+            LiveCapture.Snapshot s=LiveCapture.at(at);
+            paint(s);
+            assertEquals(LongRecording.time(s.sessionSeconds*1000)+" · Saved",value(part("status")));
+            if(first<0)first=s.sessionSeconds;
+            else assertEquals(2,s.sessionSeconds-first);
+        }
+        for(int i=10;i<=12;i+=2){
+            long at=t+i*1000L;
+            LiveCapture.buffered(i);
+            LiveCapture.meterAt(new short[1600],1600,at);
+            LiveCapture.Snapshot s=LiveCapture.at(at);
+            paint(s);
+            assertEquals(LongRecording.time(s.sessionSeconds*1000)+" · ↶"+i+"s",value(part("status")));
+        }
     }
     @Test public void miniHoldUsesPersistedChoiceAndActualRewindSeconds() throws Exception {
         RecallOverlay.options(app).edit().putInt("holdSave",2).commit();
