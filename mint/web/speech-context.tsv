@@ -31,3 +31,7 @@ I'm	\b(i'm)\b
 I'll	\b(i'll)\b
 I've	\b(i've)\b
 I'd	\b(i'd)\b
+rhyme	\b(?:internal|slant|end|perfect) (rime)(?= (?:scheme|pattern|in this (?:poem|verse))\b)
+verse	\b(?:opening|closing|second|third) (versus)(?= (?:of (?:the|this|my) (?:poem|song)|begins with)\b)
+chord	\b(?:major|minor|diminished) (cord)(?= (?:progression|on (?:the|my) (?:guitar|piano))\b)
+chords	\b(?:guitar|piano) (cords)(?= (?:in|for) (?:this|the|my) song\b)

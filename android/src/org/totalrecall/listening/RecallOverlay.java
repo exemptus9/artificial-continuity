@@ -98,8 +98,9 @@ public final class RecallOverlay {
         final SharedPreferences prefs;
         final WindowManager.LayoutParams layout;
         LinearLayout root;
-        TextView caption, status, detail, keep, missed, words,takeControl,latest;
+        TextView caption, status, detail, keep, missed, words,takeControl,latest,contextCue;
         ProgressBar meter;
+        ScrollView panelScroll;
         boolean toolsOpen;
         boolean ultra,expanded,registered,visible,wasWaiting;
         long firstVisibleFinal,requestUntil;
@@ -149,7 +150,7 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
-            root=null;caption=null;status=null;detail=null;takeControl=null;latest=null;meter=null;keep=null;missed=null;words=null;visible=false;
+            root=null;caption=null;status=null;detail=null;takeControl=null;latest=null;contextCue=null;panelScroll=null;meter=null;keep=null;missed=null;words=null;visible=false;
         }
         int dp(int value){return (int)(value*app.getResources().getDisplayMetrics().density+0.5f);}
         int[] limits() {
@@ -173,6 +174,7 @@ public final class RecallOverlay {
         }
         void rebuild(){
             long boundary=firstVisibleFinal;detach();build();firstVisibleFinal=boundary;
+            if(visible && !preview)paint(LiveCapture.snapshot());
         }
         void showText(TextView view,String value){
             if(view==null||TextUtils.equals(view.getText(),value))return;
@@ -195,35 +197,42 @@ public final class RecallOverlay {
             }
             int level=Math.round(s.level*100);
             if(meter!=null)meter.setProgress(s.waiting?0:level);
-            String headline=s.waiting?"Waiting for microphone":!s.event.isEmpty()?s.event:s.state.startsWith("Keeping")?"Capturing clip":ready?"Listening":s.state;
+            String headline=s.waiting?"Waiting for microphone":!s.event.isEmpty()?s.event:s.state.startsWith("Keeping")?"Capturing clip":ready?"Listening":"Waiting for input";
             if(s.savedCount>requestedAtCount)requestUntil=0;
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
-            String compact=s.waiting?"Mic busy":!s.event.isEmpty()?s.event:ready?"Live "+elapsed:headline;
-            showText(status,expanded?(take.recording?"Voice take · "+take.seconds+" / 60 s":headline+" · "+elapsed):ultra && ready && s.event.isEmpty()?"● "+s.words+"w · "+s.savedCount+" saved":compact);
-            String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
-            if(detail!=null){
-                String state=s.waiting?s.state:s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
-                state=s.registration(firstVisibleFinal)+"\n"+state+"\nJournal "+(JournalStore.enabled(app)?"on":"off")+" · Full audio "+(ArchiveStore.enabled(app)?"on":"off");
-                if(!s.lastFlag.isEmpty())state+="\nLast flag · "+s.lastFlag;
-
-                if(LiveCapture.clipping())state+=" · Mic clipping: move farther away";
+            String compact=s.waiting?"Mic busy":!ready?"No input":take.recording?"Take "+take.seconds+"s":elapsed+" · "+s.words+"w";
+            if(ready && !s.event.isEmpty() && !take.recording){
+                String event=s.event.startsWith("Clip saved")?"Saved":s.event.startsWith("Flagged")?"Flagged":s.event;
+                compact=elapsed+" · "+event;
+            }
+            if(SystemClock.elapsedRealtime()<requestUntil)compact=requestLabel;
+            showText(status,expanded?(take.recording?"Voice take · "+take.seconds+" / 60 s":headline+" · "+elapsed):compact);
+            status.setTextColor(ready?0xffa6f5d5:0xffffd99a);
+            if(contextCue!=null){
                 String pending=s.waiting || s.finalSequence<firstVisibleFinal?"":s.partial;
                 if(!pending.equals(partialSeen)){
                     partialSeen=pending;tentativeCue="";
                     if(!pending.isEmpty())try{
-                        Situation provisional=new Situation(app);provisional.add(pending,"");
-                        tentativeCue=provisional.cue();
+                        Situation provisional=new Situation(app);provisional.add(pending,"");tentativeCue=provisional.cue();
                     }catch(java.io.IOException ignored){}
                 }
-                state+="\n"+s.situationLines(firstVisibleFinal);
-                if(!tentativeCue.isEmpty())state+="\nHearing · "+tentativeCue+" (tentative)";
-                showText(detail,state);
+                String cues=s.situationLines(firstVisibleFinal).replace("Now · ","Situation · ");
+                if(!tentativeCue.isEmpty())cues+="\nPossible · "+tentativeCue+" (live words)";
+                showText(contextCue,cues);
+            }
+            if(detail!=null){
+                String stats=s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
+                showText(detail,s.registration(firstVisibleFinal)+"\n"+stats
+                    +(LiveCapture.clipping()?" · Mic clipping":""));
             }
             if(caption!=null){
-                String line=visibleWords;
+                boolean showWords=prefs.getBoolean("captions",true);
+                String line=showWords?s.overlayWords(firstVisibleFinal):"";
                 if(!expanded && line.contains("\n"))line=line.substring(line.lastIndexOf('\n')+1);
-                showText(caption,s.waiting?"Mic busy":line.isEmpty()?(expanded?"Waiting for words…":"Journal"):line);
+                String fallback=s.waiting?"Waiting for mic":!ready?"Waiting for input":level<8?"Quiet · mic on":"Input "+level+"%";
+                if(expanded && showWords && line.isEmpty() && ready)fallback="Waiting for words…";
+                showText(caption,line.isEmpty()?fallback:expanded?"Heard · "+line:line);
             }
         }
         boolean resumePanel(){return preview && RecallService.pausedAt(app)>0;}
@@ -257,13 +266,25 @@ public final class RecallOverlay {
             readout.setOnClickListener(v->openScreen(FullJournalActivity.class,false));
             status=label(readout,resumePanel()?"Paused":preview?"Mic off":"Starting",expanded?14:12);
             status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setTextColor(0xffa6f5d5);status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+            LinearLayout body=root;
+            if(expanded){
+                Point display=new Point();wm.getDefaultDisplay().getSize(display);
+                int maxBody=Math.max(dp(80),display.y-dp(106));
+                panelScroll=new ScrollView(windowContext){
+                    @Override protected void onMeasure(int w,int h){
+                        super.onMeasure(w,MeasureSpec.makeMeasureSpec(maxBody,MeasureSpec.AT_MOST));
+                    }
+                };
+                body=new LinearLayout(windowContext);body.setOrientation(LinearLayout.VERTICAL);
+                panelScroll.addView(body);root.addView(panelScroll,new LinearLayout.LayoutParams(-1,-2));
+            }
             boolean showWords=prefs.getBoolean("captions",true);
             if(!preview && !toolsOpen){
                 meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);meter.setMax(100);
                 meter.setContentDescription("Live microphone level");meter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xff78e0c4));
-                readout.addView(meter,new LinearLayout.LayoutParams(-1,dp(2)));
-                if(showWords){
-                    caption=label(expanded?root:readout,"",expanded?14:11);
+                readout.addView(meter,new LinearLayout.LayoutParams(-1,dp(4)));
+                if(showWords || !expanded){
+                    caption=label(expanded?body:readout,"",expanded?14:11);
                     caption.setMaxLines(expanded?2:1);caption.setEllipsize(expanded?TextUtils.TruncateAt.END:TextUtils.TruncateAt.START);
                     if(!expanded)caption.setSingleLine(true);
                 }
@@ -275,12 +296,10 @@ public final class RecallOverlay {
             if(preview && !expanded && !ultra)key(header,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
             if(expanded)key(header,toolsOpen?"Back":"More",toolsOpen?"Back to live controls":"More overlay actions",v->{toolsOpen=!toolsOpen;rebuild();});
             TextView size=key(header,expanded?"↙":"↗",expanded?"Shrink panel":ultra?"Open medium panel":"Expand panel",v->resize());size.setTextSize(22);
+            TextView close=key(header,"×","Stop listening and close Total Recall",v->openScreen(EndListeningActivity.class,false));
+            close.setTextSize(22);close.setTextColor(0xffffc4b4);
             if(expanded && !toolsOpen){
-                if(!preview){
-                    detail=label(root,"",12);detail.setMaxLines(9);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setTextColor(0xffc0d5cd);
-                    detail.setOnClickListener(v->openScreen(CaptureReviewActivity.class,false));detail.setTooltipText("Inspect the words behind these situation cues");
-                }
-                LinearLayout actions=row(root);
+                LinearLayout actions=row(body);
                 if(preview)control(actions,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
                 else{
                     keep=control(actions,"Save 1 min","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Keep requested…"));
@@ -289,14 +308,21 @@ public final class RecallOverlay {
                         try{app.startActivity(intent);}catch(RuntimeException e){Toast.makeText(app,"Could not open voice take",Toast.LENGTH_SHORT).show();}
                     });
                 }
-                LinearLayout browse=preview?actions:row(root);
                 if(!preview){
-                    control(browse,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
+                    GradientDrawable actionBg=new GradientDrawable();actionBg.setColor(0xff24594e);actionBg.setCornerRadius(dp(8));actions.setBackground(actionBg);
+                    detail=label(body,"",12);detail.setTextColor(0xffc0d5cd);
+                    contextCue=label(body,"",13);contextCue.setTextColor(0xffd5eae1);
+                    contextCue.setOnClickListener(v->openScreen(CaptureReviewActivity.class,false));
+                    contextCue.setTooltipText("Inspect the words behind these situation cues");
+                }
+                LinearLayout browse=preview?actions:row(body);
+                if(!preview){
+                    control(actions,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
                     control(browse,"Journal","Read and correct individual journal lines",v->openScreen(FullJournalActivity.class,false));
                 }
                 control(browse,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
                 if(!preview){
-                    latest=control(row(root),"Open last save","Open the most recently saved clip",v->{
+                    latest=control(row(body),"Open last save","Open the most recently saved clip",v->{
                         if(!(v.getTag() instanceof Long))return;
                         try{app.startActivity(new Intent(app,RecallListenActivity.class).putExtra("moment_id",(long)(Long)v.getTag())
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|Intent.FLAG_ACTIVITY_SINGLE_TOP));}
@@ -304,23 +330,22 @@ public final class RecallOverlay {
                     });latest.setVisibility(View.GONE);
                 }
             }else if(expanded){
-                LinearLayout sizes=row(root);
+                LinearLayout sizes=row(body);
                 control(sizes,"Ultra mini","Use the smallest panel with live status and words",v->setSize(true,false));
-                control(sizes,"End & close","Stop listening and close Total Recall",v->openScreen(EndListeningActivity.class,false));
-                LinearLayout nav=row(root);
+                LinearLayout nav=row(body);
                 control(nav,"Voices","Teach or manage remembered voices",v->openScreen(VoiceProfilesActivity.class,false));
                 control(nav,"Journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
                 control(nav,"Recorder","Open the main listening screen",v->openApp(false));
                 control(sizes,"Hide","Dismiss the overlay and keep the current microphone state",v->stop());
                 if(!preview){
-                    LinearLayout extra=row(root);
+                    LinearLayout extra=row(body);
                     missed=control(extra,"Missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Keep requested…"));
                     words=control(extra,showWords?"Words off":"Words on",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));
                     control(extra,"Commands","Show wake words and available commands",v->newGuide());
                 }
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
-            int width=expanded?300:ultra?148:preview?160:212;
+            int width=expanded?320:ultra?192:preview?210:276;
             float font=windowContext.getResources().getConfiguration().fontScale;
             width+=Math.round(Math.max(0,Math.min(font-1,1))*60);
             layout.width=Math.min(dp(width),Math.max(dp(100),screenWidth-dp(8)));
@@ -381,7 +406,7 @@ public final class RecallOverlay {
         /** Observe the whole window before child dispatch. A drag cancels the original button press. */
         final class DragSurface extends LinearLayout {
             float downX,downY;int oldX,oldY;
-            boolean moving,blocked;
+            boolean moving,blocked,bodyTouch,scrolling;
             final int slop=ViewConfiguration.get(windowContext).getScaledTouchSlop();
             DragSurface(){super(windowContext);}
             void cancelChild(MotionEvent e){
@@ -392,12 +417,16 @@ public final class RecallOverlay {
                 int action=e.getActionMasked();
                 if(!onFilterTouchEventForSecurity(e)){cancelChild(e);blocked=true;return true;}
                 if(action==MotionEvent.ACTION_DOWN){
+                    scrolling=false;bodyTouch=panelScroll!=null && e.getY()>=panelScroll.getTop()
+                        && (panelScroll.canScrollVertically(1)||panelScroll.canScrollVertically(-1));
                     moving=false;blocked=false;downX=e.getRawX();downY=e.getRawY();oldX=layout.x;oldY=layout.y;
                 }
                 if(action==MotionEvent.ACTION_POINTER_DOWN){cancelChild(e);blocked=true;}
                 if(blocked)return true;
                 float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
                 if(action==MotionEvent.ACTION_MOVE || action==MotionEvent.ACTION_UP){
+                    if(bodyTouch && !moving && Math.abs(dy)>slop && Math.abs(dy)>Math.abs(dx))scrolling=true;
+                    if(scrolling){super.dispatchTouchEvent(e);return true;}
                     if(!moving && Math.hypot(dx,dy)>slop){cancelChild(e);moving=true;}
                     if(moving){
                         position(oldX+Math.round(dx),oldY+Math.round(dy));

@@ -13,7 +13,7 @@ public final class EndListeningActivity extends Activity {
         super.onCreate(state);
         new AlertDialog.Builder(this)
             .setTitle("End recording and close Total Recall?")
-            .setMessage("The microphone, live captions and journal capture will stop. Saved recordings and journal entries stay on this phone.")
+            .setMessage("Total Recall will close and recording will stop. The microphone will turn off, and live captions and journal capture will end. Your saved recordings and journal entries stay on this phone.")
             .setNegativeButton("Go back", (dialog, which) -> finish())
             .setPositiveButton("End & close", (dialog, which) -> endSession())
             .setOnCancelListener(dialog -> finish()).show();

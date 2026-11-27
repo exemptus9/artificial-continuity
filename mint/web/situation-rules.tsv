@@ -2,11 +2,11 @@ Question	(?:^|[.!?] +)(?:how (?:can|could|do|does|should|are|would)|what (?:if|i
 Possible decision	\b(?:i decided|we decided|we agreed|i chose|we chose|the decision is|let(?:'s| us) (?:go with|use|keep))\b
 Possible next step	\b(?:i(?:'ll| will| need to| plan to| have to)|we(?:'ll| will| need to| plan to)|remind me to|follow up (?:on|with)|next step|to[- ]do)\b
 Possible obstacle	\b(?:blocked by|waiting (?:on|for)|the problem is|the issue is|could(?:n't| not)|can(?:not|'t) (?:open|finish|find|start|access))\b
-Creative idea	\b(?:what if|idea for|line for|a poem about|wordplay|here (?:is|comes) (?:a poem|a story|a stanza)|once upon a time|start a passage|the story begins|the opening line|coined (?:a|the)|working title|possible title)\b
+Creative idea	\b(?:what if|idea for|line for|a poem about|wordplay|here (?:is|comes) (?:a poem|a story|a stanza)|once upon a time|start a passage|the story begins|the opening line|coined (?:a|the)|working title|possible title|the next (?:stanza|verse) goes|here(?:'s| is) the refrain)\b
 Time reference	\b(?:tomorrow|tonight|next (?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at (?:[0-1]?\d(?::[0-5]\d)? ?(?:am|pm)|noon|midnight))\b
 Needs checking	\b(?:i(?:'m| am) not sure|we(?:'re| are) not sure|need to (?:verify|confirm|check)|might have|as far as i (?:know|remember))\b
 Playback mentioned	\b(?:on (?:the )?(?:television|tv|radio|podcast)|watching (?:a|the) (?:show|movie|film)|listening to (?:a|the) podcast)\b
-Draft revision	\b(?:scratch that|let me rephrase|a better (?:line|word|ending)|change that line|another way to say|rewrite (?:that|the) line)\b
+Draft revision	\b(?:scratch that|let me rephrase|a better (?:line|word|ending)|change that line|another way to say|rewrite (?:that|the) line|let me (?:try|say) that (?:line )?again|keep the first line|replace the last (?:line|word))\b
 Personal recollection	\b(?:i remember when|when i was (?:little|younger|a child)|that summer|years later i|it takes me back)\b
 Sensory detail	\b(?:i could (?:smell|hear|feel|taste)|the (?:smell|sound) of|it smelled like)\b
 Media sign-off	\b(?:thanks for watching|like and subscribe|after (?:this|the) commercial break|back after the break|this episode is sponsored by)\b

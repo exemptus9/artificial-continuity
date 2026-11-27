@@ -10,6 +10,7 @@ import org.json.*;
 /** Local spelling choices. Each generic edit needs a matching phrase around the replaced word. */
 final class SpeechContext {
     private static final Pattern LITERAL = Pattern.compile("\\b(?:spell(?:ed|ing)?|homophone|pun intended|rhymes? with|play on words|wordplay|the word|put in quotes|quote unquote)\\b",Pattern.CASE_INSENSITIVE);
+    static boolean literal(String words){return LITERAL.matcher(words).find();}
     static final class Rule {
         final Pattern when;
         final String replacement;

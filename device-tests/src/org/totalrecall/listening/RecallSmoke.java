@@ -273,6 +273,9 @@ public final class RecallSmoke extends Instrumentation {
             require("aloud".equals(apply.invoke(corrector,"please read it","allowed")),"Nearby speech failed to disambiguate a homophone");
             require("she was allowed to read".equals(apply.invoke(corrector,"","she was allowed to read")),"Literal spelling was damaged");
             require("pun intended peace of paper".equals(apply.invoke(corrector,"","pun intended peace of paper")),"Explicit wordplay was rewritten");
+            require("internal rhyme scheme".equals(apply.invoke(corrector,"","internal rime scheme")),"Poetry context lost");
+            require("rime on the trees".equals(apply.invoke(corrector,"","rime on the trees")),"Frost spelling overwritten");
+            verifyWeakWordRepair();
             require("for RhymeMosaic".equals(apply.invoke(corrector,"","for rhyme mosaic")),"Personal spelling was lost");
             Class<?> profileType=Class.forName("org.totalrecall.listening.VoiceProfiles$Profile");
             java.lang.reflect.Constructor<?> profile=profileType.getDeclaredConstructor(String.class,String.class,String.class);profile.setAccessible(true);
@@ -291,6 +294,16 @@ public final class RecallSmoke extends Instrumentation {
             prefs.edit().putBoolean("contextSpelling",false).commit();
             require("read it allowed".equals(apply.invoke(corrector,"","read it allowed")),"Original wording unavailable with corrections off");
         }finally{prefs.edit().putBoolean("contextSpelling",enabled).putString("spellings",oldEntries).commit();}
+    }
+    private void verifyWeakWordRepair()throws Exception{
+        org.json.JSONArray[] rows={new org.json.JSONArray(),new org.json.JSONArray(),new org.json.JSONArray()};
+        String[] readings={"keep this lion for tomorrow","keep this line for tomorrow","keep this line for tonight"};
+        for(int n=0;n<3;n++)for(String word:readings[n].split(" "))
+            rows[n].put(new org.json.JSONObject().put("word",word).put("conf",word.equals("lion")?.34:.96));
+        Method repair=method(OfflineSpeech.class,"repairWeakWord",String.class,org.json.JSONArray.class,org.json.JSONArray.class,org.json.JSONArray.class);
+        require("keep this line for tomorrow".equals(repair.invoke(null,readings[0],rows[0],rows[1],rows[2])),"Anchored weak word not repaired");
+        rows[2].getJSONObject(2).put("conf",.6);
+        require(repair.invoke(null,readings[0],rows[0],rows[1],rows[2])==null,"Weak alternative adopted");
     }
     private void verifyQuietReview(byte[] fixture)throws Exception{
         java.lang.reflect.Constructor<OfflineSpeech> constructor=OfflineSpeech.class.getDeclaredConstructor(Context.class,boolean.class,boolean.class);
@@ -529,6 +542,19 @@ public final class RecallSmoke extends Instrumentation {
             }finally{screenshot.recycle();}
         },8000,"Screenshot did not include the floating panel");
     }
+    private String miniStatus(){
+        final String[] label={""};
+        runOnMainSync(()->{
+            try{
+                java.lang.reflect.Field active=RecallOverlay.class.getDeclaredField("active");active.setAccessible(true);
+                Object controller=active.get(null);if(controller==null)return;
+                java.lang.reflect.Field status=controller.getClass().getDeclaredField("status");status.setAccessible(true);
+                android.widget.TextView view=(android.widget.TextView)status.get(controller);
+                if(view!=null)label[0]=view.getText().toString();
+            }catch(ReflectiveOperationException e){throw new IllegalStateException(e);}
+        });
+        return label[0];
+    }
     private void overlay()throws Exception{
         String app=target.getPackageName(), handle="Expand panel";
         Activity a=launch();
@@ -558,7 +584,12 @@ public final class RecallSmoke extends Instrumentation {
             getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
             waitNode("Shrink panel");
             tapNode("More overlay actions");tapNode("Use the smallest panel with live status and words");
-            assertOverlayInScreenshot("Open medium panel");tapNode("Open medium panel");waitNode(handle);tapNode(handle);
+            assertOverlayInScreenshot("Open medium panel");
+            String clock=miniStatus();
+            until(()->!clock.equals(miniStatus()),6500,"Ultra mini readout did not advance during capture");
+            tapNode("Stop listening and close Total Recall");waitNode("End & close");tapNode("Go back");
+            waitNode("Open medium panel");require(RecallService.isListening(),"Canceling from ultra mini stopped capture");
+            tapNode("Open medium panel");waitNode(handle);tapNode(handle);
             tapNode("More overlay actions");tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");
             tapNode("Show live captions as speech is recognized");waitNode("Hide live captions; transcription continues");
             deviceShell("input keyevent KEYCODE_HOME");tapNode("Open the main listening screen");

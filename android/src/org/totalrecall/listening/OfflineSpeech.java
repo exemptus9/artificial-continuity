@@ -89,6 +89,7 @@ public final class OfflineSpeech implements AutoCloseable {
             compared++;
             if(retry==null){retry=new Recognizer(model,16000f);retry.setWords(true);}
             String[] alternatives=new String[2];double[] scores=new double[2];
+            JSONArray[] detail={new JSONArray(),new JSONArray()};
             for(int pass=0;pass<2;pass++){
                 retry.reset();reviewGain.reset();
                 StringBuilder text=new StringBuilder();double total=0;int words=0;
@@ -102,11 +103,11 @@ public final class OfflineSpeech implements AutoCloseable {
                     }
                     short[] boosted=reviewGain.apply(input,n);
                     if(retry.acceptWaveForm(boosted,n)){
-                        JSONObject part=new JSONObject(retry.getResult());int count=appendRetry(text,part);
+                        JSONObject part=new JSONObject(retry.getResult());int count=appendRetry(text,part,detail[pass]);
                         total+=count*confidence(part);words+=count;
                     }
                 }
-                JSONObject part=new JSONObject(retry.getFinalResult());int count=appendRetry(text,part);
+                JSONObject part=new JSONObject(retry.getFinalResult());int count=appendRetry(text,part,detail[pass]);
                 alternatives[pass]=text.toString().trim();
                 scores[pass]=(total+count*confidence(part))/Math.max(1,words+count);
             }
@@ -114,11 +115,39 @@ public final class OfflineSpeech implements AutoCloseable {
                 Math.min(scores[0],scores[1])>=Math.max(.78,(weakWord||faint)?Math.min(.90,confidence):confidence)){
                 agreed++;return alternatives[0];
             }
+            String repaired=repairWeakWord(original,new JSONObject(json).optJSONArray("result"),detail[0],detail[1]);
+            if(repaired!=null){agreed++;return repaired;}
             uncertain++;return original;
         }catch(IOException|JSONException|RuntimeException failed){uncertain++;return original;}
         finally{used=0;overflow=false;energy=0;}
     }
-    private static int appendRetry(StringBuilder text,JSONObject part){
+    // When two full readings differ, accept one weak interior word only if both retries
+    // independently support it, anchored by identical neighbors at the same positions.
+    static String repairWeakWord(String original,JSONArray first,JSONArray a,JSONArray b){
+        if(original==null || first==null || SpeechContext.literal(original))return null;
+        String[] words=original.split(" +");
+        if(words.length<3 || words.length!=first.length() || words.length!=a.length() || words.length!=b.length())return null;
+        String[] left=new String[words.length],right=new String[words.length];
+        for(int i=0;i<words.length;i++){
+            JSONObject one=first.optJSONObject(i),two=a.optJSONObject(i),three=b.optJSONObject(i);
+            if(one==null||two==null||three==null||!words[i].equals(one.optString("word")))return null;
+            left[i]=two.optString("word");right[i]=three.optString("word");
+        }
+        for(int i=1;i<words.length-1;i++){
+            if(first.optJSONObject(i).optDouble("conf",1)>.55 || Math.min(a.optJSONObject(i).optDouble("conf",0),
+                b.optJSONObject(i).optDouble("conf",0))<.92)continue;
+            String next=left[i];
+            if(next.isEmpty() || next.equals(words[i]) || !next.equals(right[i]))continue;
+            if(words[i-1].equals(left[i-1]) && words[i-1].equals(right[i-1])
+                && words[i+1].equals(left[i+1]) && words[i+1].equals(right[i+1])){
+                words[i]=next;return String.join(" ",words);
+            }
+        }
+        return null;
+    }
+    private static int appendRetry(StringBuilder text,JSONObject part,JSONArray detail){
+        JSONArray result=part.optJSONArray("result");
+        if(result!=null)for(int i=0;i<result.length();i++)detail.put(result.optJSONObject(i));
         String words=part.optString("text","").trim();
         if(words.isEmpty())return 0;
         text.append(words).append(' ');return words.split(" +").length;

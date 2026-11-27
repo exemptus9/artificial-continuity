@@ -67,13 +67,24 @@ public final class Situation {
             Situation newest=new Situation(c);newest.add(words,"");
             LiveCapture.Snapshot snapshot=LiveCapture.snapshot();
             String label=newest.interpretation();
-            if(!label.isEmpty() && snapshot.finals.size()>1){
+            if(!label.isEmpty() && !newest.recent("Media sign-off") && snapshot.finals.size()>1){
                 int i=snapshot.finals.size()-1;
-                if(snapshot.recognizedAt.get(i)-snapshot.recognizedAt.get(i-1)<=18000){
-                    Situation pair=new Situation(c);pair.add(snapshot.finals.get(i-1),"");pair.add(words,"");
-                    String combined=pair.interpretation();
-                    if(!combined.startsWith("Words suggest") && !combined.equals("Possible media playback · a broadcast-style phrase was heard."))label=combined;
+                // A brief neutral line can separate an idea from its revision. Stop at a known speaker change.
+                Situation earlier=new Situation(c);
+                int first=i, speaker=snapshot.voices.get(i);
+                while(first>0 && i-first<2 &&
+                      snapshot.recognizedAt.get(i)-snapshot.recognizedAt.get(first-1)<=18000){
+                    int prior=snapshot.voices.get(first-1);
+                    if(prior>0 && speaker>0 && prior!=speaker)break;
+                    if(prior>0)speaker=prior;
+                    first--;
                 }
+                for(int n=first;n<i;n++)earlier.add(snapshot.finals.get(n),"");
+                String before=earlier.interpretation();
+                earlier.add(words,"");
+                String combined=earlier.interpretation();
+                if(combined.startsWith("Possible ") && !combined.equals(before)
+                    && !combined.startsWith("Possible media playback"))label=combined;
             }else if(label.isEmpty() && snapshot.finals.size()>=3){
                 int i=snapshot.finals.size()-1;
                 if(snapshot.recognizedAt.get(i)-snapshot.recognizedAt.get(i-2)<18000 &&

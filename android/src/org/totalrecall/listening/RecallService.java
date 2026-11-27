@@ -511,6 +511,7 @@ public final class RecallService extends Service {
                 if(userPaused && ListenPolicy.allowed(this))prefs.edit().putLong("pausedAt",System.currentTimeMillis())
                     .putLong("pausedSeconds",Math.max(0,SystemClock.elapsedRealtime()-startedElapsed)/1000).putInt("pausedClips",LiveCapture.snapshot().savedCount).putLong("pausedWords",LiveCapture.snapshot().words).putInt("pausedFlags",LiveCapture.snapshot().flags).commit();
                 current=result;running=false;
+                if(ending)android.widget.Toast.makeText(this,"Recording stopped · Total Recall closed",android.widget.Toast.LENGTH_SHORT).show();
                 if(!destroyed){stopForeground(true);if(pausedAt(this)>0)showResume(pausedAt(this),false);changed();stopSelf(lastStart);}
             });
         }
