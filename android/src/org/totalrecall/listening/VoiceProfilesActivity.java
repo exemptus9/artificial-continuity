@@ -10,6 +10,8 @@ import android.widget.*;
 /** The same foreground recorder supplies enrollment audio. Saving a sample requires a reviewed phrase. */
 public final class VoiceProfilesActivity extends Activity {
     private VoiceProfiles profiles;
+    private SpokenChoices guidance;
+    private Button repeatChoice;
     private LinearLayout page;
     private final Handler main=new Handler(Looper.getMainLooper());
     private VoiceProfiles.Profile target;
@@ -51,7 +53,13 @@ public final class VoiceProfilesActivity extends Activity {
                 intended.setText(practiceTerm==null?example.text:VoiceWording.practiceFragment(example.text));
                 intended.setVisibility(View.VISIBLE);
             }
-            confirm.setEnabled(true);return;
+            boolean other=match.profile!=null && (target==null?!("Me".equals(source) && "Me".equals(match.profile.source)):
+                !target.id.equals(match.profile.id));
+            confirm.setEnabled(!other);
+            if(other)line("This sample matches another remembered voice. Try another phrase with only the intended speaker.",16);
+            choices(other?SpokenChoices.Prompt.OTHER:match.uncertain?SpokenChoices.Prompt.UNCERTAIN:
+                practiceTerm==null?SpokenChoices.Prompt.SAMPLE:SpokenChoices.Prompt.WORD);
+            return;
         }
         String attempt=VoiceProfiles.attempt();
         if(!attempt.isEmpty() && !attempt.contentEquals(sampleText.getText()))sampleText.setText(attempt);
@@ -81,7 +89,7 @@ public final class VoiceProfilesActivity extends Activity {
         sampleText.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
     }
     @Override public void onCreate(Bundle state){
-        super.onCreate(state);if(state==null){suggestedName=getIntent().getStringExtra("suggestName");suggestedSource=getIntent().getStringExtra("suggestSource");}profiles=new VoiceProfiles(this);setTitle("Remember voices");
+        super.onCreate(state);if(state==null){suggestedName=getIntent().getStringExtra("suggestName");suggestedSource=getIntent().getStringExtra("suggestSource");}profiles=new VoiceProfiles(this);guidance=new SpokenChoices(this);setTitle("Remember voices");
         if(state!=null && state.getBoolean("pendingVoice")){
             String id=state.getString("profileId");
             if(id!=null)for(VoiceProfiles.Profile p:profiles.list())if(id.equals(p.id))target=p;
@@ -124,11 +132,38 @@ public final class VoiceProfilesActivity extends Activity {
             out.putBoolean("deniedMic",deniedMic);
         }
     }
-    private void endSample(){training=false;main.removeCallbacks(poll);VoiceProfiles.cancel();}
+    private void endSample(){training=false;main.removeCallbacks(poll);VoiceProfiles.cancel();guidance.close();}
+    private void choices(SpokenChoices.Prompt prompt){
+        if(repeatChoice!=null && repeatChoice.getParent()==page)page.removeView(repeatChoice);
+        repeatChoice=null;
+        if(!visible || !guidance.enabled())return;
+        guidance.play(prompt,false);
+        repeatChoice=action("Hear choices again",()->preview(prompt));
+    }
+    private void preview(SpokenChoices.Prompt prompt){
+        if(!guidance.play(prompt,true))toast("Audio unavailable. "+prompt.words);
+    }
+    private void guidanceSettings(){
+        android.content.SharedPreferences prefs=getSharedPreferences("recall-speech",0);
+        Switch spoken=new Switch(this);spoken.setText("Speak choices during practice and when closing");spoken.setMinHeight(dp(48));
+        spoken.setChecked(guidance.enabled());page.addView(spoken);
+        spoken.setOnCheckedChangeListener((v,on)->{prefs.edit().putBoolean(SpokenChoices.PREF,on).apply();if(!on)guidance.close();});
+        action("Preview spoken choices",()->{
+            SpokenChoices.Prompt[] prompts=SpokenChoices.Prompt.values();
+            String[] names=new String[prompts.length];for(int i=0;i<names.length;i++)names[i]=prompts[i].label;
+            new AlertDialog.Builder(this).setTitle("Spoken choice examples").setItems(names,(dialog,which)->{
+                SpokenChoices.Prompt prompt=prompts[which];
+                AlertDialog example=new AlertDialog.Builder(this).setTitle(prompt.label).setMessage(prompt.words)
+                    .setPositiveButton("Play example",null).setNegativeButton("Done",null).create();
+                example.setOnDismissListener(d->guidance.close());
+                example.show();example.getButton(-1).setOnClickListener(v->preview(prompt));
+            }).setNegativeButton("Cancel",null).show();
+        });
+    }
     private int dp(int n){return Math.round(getResources().getDisplayMetrics().density*n);}
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     private TextView line(String words,int size){TextView t=new TextView(this);t.setText(words);t.setTextSize(size);t.setPadding(0,dp(6),0,dp(6));page.addView(t);return t;}
-    private Button action(String label,Runnable r){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setMinHeight(dp(48));page.addView(b);b.setOnClickListener(v->r.run());return b;}
+    private Button action(String label,Runnable r){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setMinHeight(dp(48));page.addView(b);b.setOnClickListener(v->{guidance.close();r.run();});return b;}
     private void home(){
         endSample();pending=false;startIssued=false;startAfterPermission=false;main.removeCallbacks(awaitReady);practiceTerm=null;page.removeAllViews();line("Remember voices",26);
         line("Teach the phone with a few clear phrases. Confirm only the speaker you want to remember. Saved voiceprints stay on this phone.",16);
@@ -139,6 +174,7 @@ public final class VoiceProfilesActivity extends Activity {
         if(me!=null && !me.wordings.isEmpty())action("My voice corrections · "+me.wordings.size(),()->wordings(me));
         action("Add another person or media voice",()->create(false));
         for(VoiceProfiles.Profile p:profiles.list())action(p.description()+" · "+p.examples.size()+" samples",()->options(p));
+        guidanceSettings();
     }
     private void chooseTerm(VoiceProfiles.Profile p){
         EditText term=new EditText(this);
@@ -214,9 +250,11 @@ public final class VoiceProfilesActivity extends Activity {
                 }else correction=intended==null?null:VoiceWording.difference(ex.text,intended.getText().toString());
                 String existing=target==null || correction==null?null:target.wordings.get(correction.heard.toLowerCase(java.util.Locale.ROOT));
                 if(existing!=null && !existing.equals(correction.wanted)){
-                    new AlertDialog.Builder(this).setTitle("Replace the earlier spelling?")
+                    AlertDialog conflict=new AlertDialog.Builder(this).setTitle("Replace the earlier spelling?")
                         .setMessage("“"+correction.heard+"” currently uses “"+existing+"”. Use “"+correction.wanted+"” instead?")
-                        .setPositiveButton("Replace",(d,w)->save(ex,correction)).setNegativeButton("Go back",null).show();
+                        .setPositiveButton("Replace",(d,w)->{guidance.close();save(ex,correction);}).setNegativeButton("Go back",(d,w)->guidance.close()).create();
+                    conflict.setOnCancelListener(d->guidance.close());conflict.show();
+                    if(visible && guidance.enabled())guidance.play(SpokenChoices.Prompt.REPLACE,false);
                 }else save(ex,correction);
             }catch(IllegalArgumentException err){toast(err.getMessage());}
         });confirm.setEnabled(false);
@@ -226,10 +264,13 @@ public final class VoiceProfilesActivity extends Activity {
         main.removeCallbacks(awaitReady);page.removeAllViews();
         line(practiceTerm==null?"Teach "+name:"Practice “"+practiceTerm+"”",25);
         readiness=line(message,17);
+        SpokenChoices.Prompt prompt=null;
         if(!org.continuity.recall.ListenPolicy.allowed(this)){
+            prompt=SpokenChoices.Prompt.VAULT;
             line("Enable capture in your phone vault, then return to this phrase.",15);
             action("Open phone vault",()->startActivity(new Intent(this,org.continuity.recall.MainActivity.class)));
         }else if(!getSharedPreferences("recall-speech",0).getBoolean("voices",true)){
+            prompt=SpokenChoices.Prompt.GROUP;
             line("Voice grouping must be on to compare an example with your saved voice.",15);
             action("Enable voice grouping",()->{
                 getSharedPreferences("recall-speech",0).edit().putBoolean("voices",true).apply();
@@ -238,14 +279,16 @@ public final class VoiceProfilesActivity extends Activity {
                 else begin(target,name,source);
             });
         }else if(!RecallService.isListening() && !startIssued){
+            prompt=deniedMic?SpokenChoices.Prompt.PERMISSION:SpokenChoices.Prompt.MIC;
             line("Starting uses your usual listening and archive settings. This phrase stays ready here.",15);
             action("Start listening and continue",this::startForEnrollment);
-        }else if(!watch)action("Check again",()->begin(target,name,source));
+        }else if(!watch){prompt=SpokenChoices.Prompt.RETRY;action("Check again",()->begin(target,name,source));}
         if(deniedMic && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
             action("App permissions",()->startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 android.net.Uri.parse("package:"+getPackageName()))));
         if(!watch || RecallService.isListening())action("Open recorder",()->startActivity(new Intent(this,RecallListenActivity.class)));
         action("Cancel",this::home);
+        if(prompt!=null)choices(prompt);
         if(watch && (startIssued || RecallService.isListening())){
             readinessDeadline=SystemClock.elapsedRealtime()+30000;main.postDelayed(awaitReady,400);
         }
@@ -297,5 +340,6 @@ public final class VoiceProfilesActivity extends Activity {
             action("Try another delivery",()->{practiceTurn++;begin(updated,updated.name,updated.source);});
         }
         action("Done",this::home);
+        choices(SpokenChoices.Prompt.SAVED);
     }
 }

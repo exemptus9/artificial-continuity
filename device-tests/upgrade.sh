@@ -22,7 +22,7 @@ version_code() {
   "${device[@]}" shell dumpsys package "$target" | sed -nE 's/^ *versionCode=([0-9]+).*/\1/p' | head -n1
 }
 phase() {
-  "${device[@]}" shell am instrument -w -e phase "$1" "$probe" | tee "build/receipts/upgrade-$prior_code-$1.txt"
+  "${device[@]}" shell am instrument -w -e phase "$1" -e sourceVersion "$prior_code" "$probe" | tee "build/receipts/upgrade-$prior_code-$1.txt"
   grep -q "outcome=PASS_upgrade_$1" "build/receipts/upgrade-$prior_code-$1.txt"
 }
 "${device[@]}" install --no-incremental -g "$prior"

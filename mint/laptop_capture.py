@@ -7,6 +7,7 @@ import hashlib
 import http.client
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -26,6 +27,7 @@ import zipfile
 
 import situation
 import live_words
+import voice_feedback
 import mic_input
 import speech_context
 import recall_archive as storage
@@ -74,25 +76,8 @@ class CreativeTail:
         self.file.flush();os.fsync(self.file.fileno());self.file.close()
         self.path.rename(self.path.with_suffix(""))
 
-SOUND_MODES = ("Wake chime only", "Wake and save tones", "Wake and spoken saves", "Visual only")
-SPOKEN_RECEIPTS = {"line":"Line captured","coinage":"Word captured","resume":"Place marked","passage":"Passage saved","mark":"Moment saved"}
-
-def sound_cue(root, event):
-    mode=read(root/"sound.json",SOUND_MODES[0])
-    if mode not in SOUND_MODES or mode=="Visual only" or (event!="wake" and mode==SOUND_MODES[0]):
-        return
-    if event!="wake" and mode=="Wake and spoken saves":
-        speaker=shutil.which("espeak-ng") or shutil.which("espeak")
-        command=[speaker,SPOKEN_RECEIPTS.get(event,"Creative candidate saved")] if speaker else None
-    else:command=None
-    if not command:
-        pattern=("aevalsrc=0.10*sin(2*PI*(660+330*gte(t\\,0.08))*t):d=0.17" if event=="wake"
-                 else "aevalsrc=0.10*sin(2*PI*(950-350*gte(t\\,0.10))*t):d=0.21")
-        command=["ffplay","-v","quiet","-nodisp","-autoexit","-f","lavfi","-i",pattern]
-    try:
-        subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    except OSError:
-        pass
+SOUND_MODES=voice_feedback.MODES
+sound_cue=voice_feedback.emit
 
 def request_keep(root, kind):
     if kind not in ("mark","line","coinage","resume"):
@@ -137,6 +122,7 @@ def collect_keeps(root, stream_id, ring, end_ms, lookback):
             else:
                 missed = "No buffered audio was available at this moment"
         if missed:
+            sound_cue(root,"missed")
             write(root/"missed-keep.json", {"at": storage.now(), "text": missed})
         request.unlink(missing_ok=True)
 
@@ -323,7 +309,11 @@ def finish(arc,path,cfg):
             write(receipt_file, receipt)
     write(path.parent/"last.json", receipt)
     path.unlink()
-    if mark:sound_cue(path.parent,prefix)
+    if mark:
+        event="creative" if prefix in CREATIVE_CUES else prefix
+        detailed=read(path.parent/"sound.json",SOUND_MODES[0])==SOUND_MODES[4]
+        text=f"{voice_feedback.REPLIES[event]}. {ms/1000:.1f} seconds on this laptop." if detailed else None
+        sound_cue(path.parent,event,text)
 def room(arc,root):
     reserved=sum(x.stat().st_size for x in root.glob("*.pcm*") if x.is_file())
     capacity=arc.status()
@@ -339,6 +329,7 @@ def ingest(arc,root,done):
             (root/"save-error.json").unlink(missing_ok=True)
         except Exception as e:
             write(root/"save-error.json","Waiting to save · "+str(e)[:100])
+            sound_cue(root,"pending")
             if done.wait(4):return
 def capture(arc,root,cfg,input_args):
     """Capture one uninterrupted stream; rollover never reopens the microphone."""
@@ -358,7 +349,7 @@ def capture(arc,root,cfg,input_args):
         passage=None
     def heard(words):
         nonlocal counter,awake,event,event_at,cue,cue_at,last_cue,last_candidate
-        if not (root/"enabled").exists():return
+        if not (root/"enabled").exists() or voice_feedback.guarded(root):return
         counter+=len(words.split());cmd=words.lower().strip()
         if cfg.get("creativeCatches") and time.monotonic()-last_candidate>=90:
             kind=creative_cue(words)
@@ -375,11 +366,24 @@ def capture(arc,root,cfg,input_args):
             elif cmd in ("finish passage","finish the poem","finish the story","finish the draft"):
                 requests.put("finish");awake=0
             elif cmd and time.monotonic()<awake:
-                if cmd in ("pause recall","pause recording","stop listening"):
-                    (root/"enabled").unlink(missing_ok=True);event="Pause heard"
+                if cmd in voice_feedback.TYPED:
+                    requests.put(voice_feedback.TYPED[cmd]);event="Bookmark requested"
+                elif cmd in ("what can i say","help","help me"):
+                    event=sound_cue(root,"help")
+                elif cmd in ("status","how much can i save"):
+                    recent=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)
+                    event=sound_cue(root,"status",f"Laptop microphone active. {recent} seconds available to keep.")
+                elif cmd in ("what did you save","last save"):
+                    saved=read(root/"last-keep.json",{})
+                    label=saved.get("title","")
+                    duration=saved.get("duration",0)
+                    if label not in (t for t,_ in KEEP_TYPES.values()):label="Bookmark"
+                    event=sound_cue(root,"last",f"{label} saved on this laptop, {duration/1000:.1f} seconds." if saved else None)
+                elif cmd in ("pause recall","pause recording","stop listening"):
+                    (root/"enabled").unlink(missing_ok=True);event=sound_cue(root,"paused")
                 elif cmd in ("start a passage","start a poem","start a story","start a draft"):
                     requests.put("start");event="Passage requested"
-                else:event="Command unclear · try save that"
+                else:event=sound_cue(root,"unclear")
                 awake=0;event_at=time.monotonic()
         if cmd:
             found=situation.interpret([(speech_context.correct(words),"",None)])
@@ -387,11 +391,13 @@ def capture(arc,root,cfg,input_args):
                 label=found[0]["label"]
                 if label!=cue:last_cue, cue=cue,label
                 cue_at=time.monotonic()
+    heard.command_open=lambda: time.monotonic()<awake
     voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) or cfg.get("creativeCatches") else None
     stream_id=secrets.token_hex(12)
     stream_pos=secrets.randbits(61)
     began=time.monotonic()
     levels=mic_input.LevelWindow()
+    reported_recognition_error=False
     def seal():
         nonlocal segment,seg_bytes
         if segment:
@@ -422,8 +428,10 @@ def capture(arc,root,cfg,input_args):
                     segment=(root/f"{prefix}-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
                 levels.add(block)
                 recognized = mic_input.recognition_pcm(block,cfg.get("recognitionGain",0))
-                if voice:voice_feed.send(stream_pos,recognized)
-                feed.send(stream_pos,recognized)
+                if not voice_feedback.guarded(root):
+                    if voice:voice_feed.send(stream_pos,recognized)
+                    feed.send(stream_pos,recognized)
+                # A skipped position restarts the recognition phrase after our speaker is quiet.
                 stream_pos+=len(block)
                 segment.write(block);seg_bytes+=len(block);ring.extend(block)
                 # Leave room for the block that arrives immediately after a click.
@@ -435,15 +443,29 @@ def capture(arc,root,cfg,input_args):
                         flush_passage();passage=bytearray();passage_start=now
                 if candidate and candidate.add(block):
                     candidate.finish();candidate=None
+                if awake and time.monotonic()>=awake:
+                    awake=0;event=sound_cue(root,"timeout");event_at=time.monotonic()
                 while not requests.empty():
                     cmd=requests.get()
+                    if cmd in ("line","coinage","resume"):
+                        recent=ring[-cfg["keep"]*BYTES_PER_SECOND:]
+                        path=root/f"{cmd}-{now-round(len(recent)*1000/BYTES_PER_SECOND)}-{secrets.token_hex(8)}.pcm.part"
+                        with path.open("xb") as out:
+                            out.write(recent);out.flush();os.fsync(out.fileno())
+                        path.rename(path.with_suffix(""))
+                        continue
                     if cmd in CREATIVE_CUES and candidate is None:
                         candidate=CreativeTail(root,cmd,ring[-cfg["keep"]*BYTES_PER_SECOND:],now)
                         event="Possible creative phrase · keeping five more seconds";event_at=time.monotonic()
                     elif cmd=="start" and passage is None:
                         passage=bytearray(ring[-4*BYTES_PER_SECOND:]);passage_start=now-round(len(passage)*1000/BYTES_PER_SECOND)
+                        event=sound_cue(root,"started");event_at=time.monotonic()
+                    elif cmd=="start":
+                        event=sound_cue(root,"already-started");event_at=time.monotonic()
+                    elif cmd=="finish" and passage is None:
+                        event=sound_cue(root,"no-passage");event_at=time.monotonic()
                     elif cmd=="finish" and passage is not None:
-                        flush_passage();event="Passage sent for saving";event_at=time.monotonic()
+                        flush_passage();event=sound_cue(root,"finishing");event_at=time.monotonic()
                 if (root/"bookmark").exists():
                     (root/"bookmark").unlink(missing_ok=True)
                     recent=ring[-cfg["keep"]*BYTES_PER_SECOND:]
@@ -453,7 +475,9 @@ def capture(arc,root,cfg,input_args):
                     measured=levels.snapshot()
                     recognition_error=getattr(voice,"line","")
                     if not recognition_error.startswith("Live words unavailable"):recognition_error=""
-                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,system=cfg["source"],device=cfg.get("device","default"),recognitionGain=cfg.get("recognitionGain",0),recognitionError=recognition_error,**measured,seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
+                    if recognition_error and not reported_recognition_error:
+                        sound_cue(root,"decoder");reported_recognition_error=True
+                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,system=cfg["source"],device=cfg.get("device","default"),recognitionGain=cfg.get("recognitionGain",0),recognitionError=recognition_error,promptSpeaking=voice_feedback.guarded(root),commandWindow=max(0,math.ceil(awake-time.monotonic())),**measured,seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
@@ -488,6 +512,7 @@ def worker(arc):
                     limit_notice(root,"capture","")
                     capture(arc,root,cfg,mic_input.arguments(source,cfg["device"]))
                 except (OSError,subprocess.SubprocessError) as e:
+                    sound_cue(root,"storage" if "Storage low" in str(e) else "mic")
                     if "Storage low" in str(e):limit_notice(root,"capture","Recording paused at the storage limit. Review free space in the archive.")
                     write(root/"status.json",dict(state=str(e)[:90],level=0,system=source,device=cfg["device"],at=storage.now()));time.sleep(2)
         finally:
@@ -586,8 +611,8 @@ def panel(arc):
     def settings():
         dlg=tk.Toplevel(window);dlg.title("Laptop capture settings");dlg.transient(window)
         tabs=ttk.Notebook(dlg);tabs.pack(fill="both",expand=True,padx=8,pady=8)
-        capture_settings,voice_settings,panel_settings,backup_settings=[ttk.Frame(tabs,padding=10) for _ in range(4)]
-        for tab,name in ((capture_settings,"Capture"),(voice_settings,"Voice"),(panel_settings,"Panel"),(backup_settings,"Backup")):
+        capture_settings,voice_settings,feedback_settings,panel_settings,backup_settings=[ttk.Frame(tabs,padding=10) for _ in range(5)]
+        for tab,name in ((capture_settings,"Capture"),(voice_settings,"Voice"),(feedback_settings,"Feedback"),(panel_settings,"Panel"),(backup_settings,"Backup")):
             tabs.add(tab,text=name)
         p=capture_settings
         c=config(root);vars={}
@@ -684,7 +709,7 @@ def panel(arc):
         journal=tk.BooleanVar(value=c["journal"]);commands=tk.BooleanVar(value=c["commands"])
         ttk.Checkbutton(p,text="Save a text journal for new microphone segments",variable=journal).pack(anchor="w")
         ttk.Checkbutton(p,text="Listen for voice commands while recording",variable=commands).pack(anchor="w")
-        ttk.Label(p,text="Say Hey Recall or Total Recall for the wake chime. Say save that, keep that, remember that, or you missed one to bookmark recent audio. Say Hey Recall, start a passage before a poem or story. Say finish passage at the end, or Hey Recall, pause recording to release the mic.",wraplength=370).pack(anchor="w")
+        ttk.Label(p,text="Say “Hey Recall” or “Lexi,” then “save a line,” “save a word,” “mark my place,” “status,” “last save,” or “what can I say.” You have eight seconds after the wake acknowledgement. Say “start a passage” after waking, then “finish passage” at the end. “Save that” also works directly.",wraplength=370).pack(anchor="w")
         automatic=tk.BooleanVar(value=c["creativeCatches"])
         ttk.Checkbutton(p,text="Keep possible creative phrases automatically",variable=automatic).pack(anchor="w")
         ttk.Label(p,text="Offline speech cues such as “I coined a word” or “let me try that line again” save recent audio and up to five seconds after recognition. Review these in the archive.",wraplength=370).pack(anchor="w")
@@ -692,10 +717,27 @@ def panel(arc):
         ttk.Label(p,text="Input gain for live words and voice commands").pack(anchor="w")
         ttk.Combobox(p,textvariable=gain,values=tuple(mic_input.GAIN_CHOICES),state="readonly").pack(fill="x")
         ttk.Label(p,text="The microphone meter and saved audio use the original level.",wraplength=370).pack(anchor="w")
+        p=feedback_settings
         sounds=tk.StringVar(value=read(root/"sound.json",SOUND_MODES[0]))
-        ttk.Label(p,text="Wake and confirmed saves").pack(anchor="w")
+        ttk.Label(p,text="Feedback mode").pack(anchor="w")
         ttk.Combobox(p,textvariable=sounds,values=SOUND_MODES,state="readonly").pack(fill="x")
-        ttk.Label(p,text="Spoken receipts use local speech when available, with a tone as fallback. Headphones keep confirmations out of the microphone.",wraplength=370).pack(anchor="w")
+        rate_value,volume_value=voice_feedback.preferences(root)
+        rate=tk.StringVar(value=str(rate_value));volume=tk.StringVar(value=str(volume_value))
+        for label,v,opts in (("Speech pace (words per minute)",rate,voice_feedback.RATES),("Cue volume (%)",volume,voice_feedback.VOLUMES)):
+            ttk.Label(p,text=label).pack(anchor="w")
+            ttk.Combobox(p,textvariable=v,values=opts,state="readonly").pack(fill="x")
+        ttk.Label(p,text="Spoken guidance adds status, command choices and errors. Only the live recognizer pauses during spoken prompts. Headphones keep prompts out of the original audio.",wraplength=360).pack(anchor="w",pady=3)
+        preview_kind=tk.StringVar(value="Saved word")
+        choices={"Wake acknowledgement":"wake","Saved word":"coinage","Unclear command":"unclear"}
+        ttk.Label(p,text="Try the selected settings").pack(anchor="w")
+        ttk.Combobox(p,textvariable=preview_kind,values=tuple(choices),state="readonly").pack(fill="x")
+        preview_result=tk.StringVar()
+        def preview():
+            sample=choices[preview_kind.get()]
+            result=sound_cue(root,sample,"Sample. "+voice_feedback.REPLIES[sample],preview=(sounds.get(),int(rate.get()),int(volume.get())))
+            preview_result.set(result+" · "+voice_feedback.REPLIES[sample])
+        ttk.Button(p,text="Preview feedback",command=preview).pack(anchor="w",pady=3)
+        ttk.Label(p,textvariable=preview_result,wraplength=360).pack(anchor="w")
         p=capture_settings
         prune=tk.BooleanVar(value=c["prune"])
         ttk.Checkbutton(p,text="Skip near-silent blocks in new recordings",variable=prune).pack(anchor="w")
@@ -728,6 +770,7 @@ def panel(arc):
                     elif not paired:raise ValueError("Enter the hosted pairing code.")
                 else:(root/"pair.json").unlink(missing_ok=True)
                 write(root/"sound.json",sounds.get())
+                write(root/"speech-options.json",dict(rate=int(rate.get()),volume=int(volume.get())))
                 write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get(),ultra=ultra.get() and compact.get(),words=show_words.get()))
                 if at_login.get():
                     login.parent.mkdir(parents=True,exist_ok=True)
@@ -747,6 +790,16 @@ def panel(arc):
     menu.add_command(label="Open last kept audio",command=reopen_keep)
     menu.add_command(label="Review saved moments",command=lambda:archive("review"))
     menu.add_checkbutton(label="Show live words",variable=show_words,command=lambda:(layout(),tick(False)))
+    def recent_feedback():
+        dlg=tk.Toplevel(window);dlg.title("Recent recorder feedback");dlg.transient(window)
+        pane=ttk.Frame(dlg,padding=10);pane.pack(fill="both")
+        entries=voice_feedback.history(root)
+        for entry in entries:
+            stamp=time.strftime("%H:%M:%S",time.localtime(entry["at"]/1000))
+            ttk.Label(pane,text=stamp+"  "+entry["text"],wraplength=400).pack(anchor="w",pady=2)
+        if not entries:ttk.Label(pane,text="No recorder feedback yet").pack(anchor="w")
+        ttk.Button(pane,text="Close",command=dlg.destroy).pack(anchor="e",pady=(4,0))
+    menu.add_command(label="Recent recorder feedback",command=recent_feedback)
     menu.add_command(label="Settings",command=settings)
     def smallest():
         ultra.set(True);compact.set(True);layout();tick(False)
@@ -865,6 +918,10 @@ def panel(arc):
         candidate=read(root/"last-candidate.json",{})
         if candidate and storage.now()-candidate.get("savedAt",0)<8000 and not feedback:
             feedback="Candidate saved · "+candidate["title"]
+        if ready and s.get("promptSpeaking"):
+            info.set("Speaking · live recognition paused; original recording continues\n"+info.get())
+        elif ready and s.get("commandWindow"):
+            info.set(f"Command window · {s['commandWindow']} s left\n"+info.get())
         if feedback:info.set(feedback+"\n"+info.get())
         if ready and "stream" not in s:
             info.set(info.get()+"\nSign out and back in once to enable Poem line, Coined word and Pick up here on the updated recorder.")
@@ -875,7 +932,9 @@ def panel(arc):
         detail=next((alert for alert in alerts if alert), "")
         if not detail:detail=read(root/"save-error.json","") or feedback or (s.get("voice","") if ready else "")
         if not detail and active and not ready:detail=status
-        if not detail and ready:detail=s.get("inputHint","") or s.get("recognitionError","")
+        if not detail and ready:
+            detail=(f"Command · {s['commandWindow']} s left" if s.get("commandWindow") else
+                    "Speaking · recording continues" if s.get("promptSpeaking") else s.get("inputHint","") or s.get("recognitionError",""))
         if not detail and ready and show_words.get() and reader:detail=reader.line
         if not detail:detail=(s.get("cue") if ready else "") or ("Last · "+receipt["title"] if receipt else "No kept moments")
         compact_facts.set((f"Mic {s.get('level',0)}% · Keep {duration} · " if ready else "")+detail)

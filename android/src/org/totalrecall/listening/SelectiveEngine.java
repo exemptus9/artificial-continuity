@@ -43,6 +43,7 @@ public final class SelectiveEngine {
         void onPauseRequested();
         default void onVoice(String message,boolean wake) {}
         default void onSession(int action) {}
+        default void onSpokenRequest(String request) {}
         default void onFlag(String reason) {}
     }
 
@@ -58,9 +59,25 @@ public final class SelectiveEngine {
         {"Mark a point in a long session","mark this point","mark this line"},
         {"Save a Forge word","keep that word","save that word"},
         {"Save a poem line","keep that line","keep that rhyme","save that line","save that poem"},
-        {"Save a project decision","keep that decision","save that decision"}
+        {"Save a project decision","keep that decision","save that decision"},
+        {"Choose a save category","save as","save this as","save that as"},
+        {"Hear current status","status","what is the status"},
+        {"Hear available commands","help","what can i say"},
+        {"Repeat the last receipt","repeat","repeat that"}
     };
-    private static final int KEEP_WORD=8, KEEP_LINE=9, KEEP_DECISION=10;
+    private static final int KEEP_WORD=8, KEEP_LINE=9, KEEP_DECISION=10, CHOOSE=11, STATUS=12, HELP=13, REPEAT=14;
+    static final String[] CHOICE_WORDS={"word","line","decision","cancel"};
+    static boolean choiceWord(String words){
+        for(String label:CHOICE_WORDS)if(label.equals(words))return true;
+        return false;
+    }
+    static boolean shortChoiceReading(String label,String general){
+        if(general==null || general.isEmpty())return true;
+        String reading=normalize(general);
+        if(choiceWord(reading))return label.equals(reading);
+        if(label.equals("cancel") && reading.equals("can sell"))return true;
+        return !reading.contains(" ") && !reading.equals("no") && !reading.equals("never");
+    }
     static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
     private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
     private static final Pattern SPOKEN_SAVE_TAIL=Pattern.compile("^(.*?)(?:^| )(?:hey |total )?(recall|lexi|lexie|lexy) (.+)$");
@@ -94,22 +111,28 @@ public final class SelectiveEngine {
     /** Reconcile only nearby final endpoints. Prefer ordinary exact commands immediately. */
     static final class CommandEndpoints {
         private String tail,dictation;
-        private long tailAt,dictationAt;
+        private long tailAt,dictationAt,reportedUntil=-1;
+        // A reporting verb often precedes a quoted command but disappears from a later guess.
+        // Hold that evidence only through this short utterance, even if the other decoder endpoints first.
+        private static final Pattern REPORTING=Pattern.compile("(?:^(?:[a-z]+|(?:the|a|my|our|your|his|her|their|this|that) [a-z]+) (?:said|says|told|quoted)|(?:^| )(?:to say|never|not|dont|don't))(?: |$)");
         String observe(String constrained,String original,String partial,long samples){
+            if(partial!=null && REPORTING.matcher(partial).find())reportedUntil=samples+4L*RATE;
+            boolean reported=samples<=reportedUntil || (original!=null && REPORTING.matcher(original).find());
             if(constrained==null && original==null)return null;
             if(constrained!=null && grammarMatch(constrained)){
-                boolean quoted=reportedAddress(original!=null?original:partial);
+                boolean quoted=reported || reportedAddress(original!=null?original:partial);
                 clear();return quoted?null:constrained;
             }
             if(constrained!=null){tail=constrained;tailAt=samples;}
             if(original!=null){dictation=original;dictationAt=samples;}
             if(samples-tailAt>RATE*3/2)tail=null;
             if(samples-dictationAt>RATE*3/2)dictation=null;
-            String command=corroboratedSave(tail,dictation);
+            String command=reported?null:corroboratedSave(tail,dictation);
+            if(original!=null)reportedUntil=-1;
             if(command!=null)clear();
             return command;
         }
-        void clear(){tail=null;dictation=null;}
+        void clear(){tail=null;dictation=null;reportedUntil=-1;}
     }
     static int actionFor(String words){
         String command=words.replaceFirst("^(?:(?:could|can|would) you |i want (?:you )?to )?(?:please )?","").replaceFirst(" (?:please|for me)$","");
@@ -128,14 +151,14 @@ public final class SelectiveEngine {
     static String guide(){
         StringBuilder guide=new StringBuilder("Say Hey Recall, Total Recall, or Lexi. The panel acknowledges the wake word. Chime and spoken feedback follow your sound settings. Speak the command immediately or within eight seconds.\n");
         for(String[] row:COMMANDS)guide.append("\n").append(row[0]).append(" · ").append(String.join(", ",Arrays.copyOfRange(row,1,row.length)));
-        return guide.append("\n\nWord, line and decision saves keep up to the last minute, even mid-passage. In a long session they also add a marker with an eight-second lead-in. Save and missed-moment commands also work alone. Resume from the panel or notification while the microphone is off.").toString();
+        return guide.append("\n\nSay “save as”, then word, line, decision or cancel within eight seconds. The rewind ends when you ask. Word, line and decision saves keep up to the last minute, even mid-passage. In a long session they also add a marker with an eight-second lead-in. Save and missed-moment commands also work alone. Resume from the panel or notification while the microphone is off.").toString();
     }
 
     public static final class Clip {
         public final short[] audio;
         public final String transcript, category, reason;
         public final long startedAtMillis;
-        final boolean finishedByVoice, labeledRewind;
+        final boolean finishedByVoice, labeledRewind, fromSpokenChoice;
         // Null for ordinary clips, empty when a deliberate marker has no nearby recognized words.
         final String cueText;
 
@@ -143,6 +166,10 @@ public final class SelectiveEngine {
             this(audio,transcript,category,reason,startedAtMillis,false,null);
         }
         private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice,String cueText){
+            this(audio,transcript,category,reason,startedAtMillis,byVoice,cueText,false);
+        }
+        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice,String cueText,boolean fromSpokenChoice){
+            this.fromSpokenChoice=fromSpokenChoice;
             this.cueText=cueText;
             this.labeledRewind=cueText!=null;
             finishedByVoice=byVoice;
@@ -448,7 +475,9 @@ public final class SelectiveEngine {
     private long lastVoiceCommand = -10L * RATE;
     private boolean active, stopped, heldVoiceCommand,passage,wakeAnnounced;
     private int lastAction=-1;
-    private long awakeUntil=-1;
+    private long awakeUntil=-1, readyAt=-10L*RATE, choiceUntil=-1;
+    private Clip pendingRewind;
+    private int choiceCueSamples,wakeCueSamples;
     private String interim = "";
     private long interimAt = -1, scoredPartialAt = -3L * RATE;
     private int lastPartialLength;
@@ -510,6 +539,7 @@ public final class SelectiveEngine {
                 }
             }
         }
+        if(pendingRewind!=null && at>choiceUntil)closeChoice("Save choice expired");
         if(awakeUntil>=0 && at>awakeUntil){
             awakeUntil=-1;wakeAnnounced=false;
             listener.onVoice("Wake window ended · say Hey Recall again",false);
@@ -532,6 +562,20 @@ public final class SelectiveEngine {
         String n = normalize(body);
         if (n.isEmpty()) {
             if (isFinal) clearInterim();
+            return;
+        }
+        if(choicePending() && choiceWord(n)){
+            if(isFinal){
+                clearInterim();
+                if(n.equals("cancel"))closeChoice("Choice canceled");
+                else{
+                    Clip frozen=pendingRewind;
+                    pendingRewind=null;
+                    try{
+                        publishRewind(frozen,n.equals("word")?FORGE:n.equals("line")?POETRY:DECISION,true);
+                    }finally{listener.onSpokenRequest("choiceClosed");}
+                }
+            }
             return;
         }
         if(isFinal){
@@ -557,10 +601,13 @@ public final class SelectiveEngine {
             (request.contains("save that line") || request.contains("save that poem")))action=0;
         if(addressed && !wakeAnnounced && !(action>=0 && action==lastAction && at-lastVoiceCommand<RATE*2)){
             listener.onVoice("Wake heard · ready for a command",true);
-            awakeUntil=at+RATE*8;wakeAnnounced=true;
+            awakeUntil=at+RATE*8;wakeCueSamples=0;wakeAnnounced=true;
         }
         if(addressed && request.isEmpty()){
-            if(isFinal)wakeAnnounced=false;
+            if(isFinal){
+                if(at-readyAt>=2L*RATE){listener.onSpokenRequest("ready");readyAt=at;}
+                wakeAnnounced=false;
+            }
             return;
         }
         if(action>=0 && (addressed || at<=awakeUntil || action<=1 || (action==3 && passage))){
@@ -581,6 +628,16 @@ public final class SelectiveEngine {
                     else listener.onVoice("No passage is open",false);
                 }else if(action==KEEP_WORD || action==KEEP_LINE || action==KEEP_DECISION){
                     keepAs(action==KEEP_WORD?FORGE:action==KEEP_LINE?POETRY:DECISION);
+                }else if(action==CHOOSE){
+                    closeChoice(null);
+                    pendingRewind=rewindSnapshot();
+                    if(pendingRewind!=null){
+                        choiceUntil=at+8L*RATE;choiceCueSamples=0;
+                        listener.onSpokenRequest("choose");
+                        listener.onVoice("Choose a save category",false);
+                    }
+                }else if(action==STATUS || action==HELP || action==REPEAT){
+                    listener.onSpokenRequest(action==STATUS?"status":action==HELP?"help":"repeat");
                 }else if(action>=5){listener.onSession(action);}
                 else{
                     if(passage){passage=false;commit();}
@@ -641,9 +698,37 @@ public final class SelectiveEngine {
     synchronized void keepAs(String category) {
         if (!FORGE.equals(category) && !POETRY.equals(category) && !DECISION.equals(category))
             throw new IllegalArgumentException("Unknown rewind category");
+        Clip snapshot=rewindSnapshot();
+        if(snapshot!=null)publishRewind(snapshot,category,false);
+    }
+
+    synchronized boolean choicePending(){return pendingRewind!=null;}
+
+    /** Continue recording through our prompt while giving the user time to answer it. */
+    synchronized void cueAudio(int count){
+        if(count<=0)return;
+        if(pendingRewind!=null){
+            int extend=Math.min(count,3*RATE-choiceCueSamples);
+            choiceCueSamples+=extend;choiceUntil+=extend;
+        }
+        if(awakeUntil>=at){
+            int extend=Math.min(count,3*RATE-wakeCueSamples);
+            wakeCueSamples+=extend;awakeUntil+=extend;
+        }
+    }
+
+    synchronized void closeChoice(String message){
+        if(pendingRewind==null)return;
+        Arrays.fill(pendingRewind.audio,(short)0);
+        pendingRewind=null;
+        listener.onSpokenRequest("choiceClosed");
+        if(message!=null)listener.onVoice(message,false);
+    }
+
+    private Clip rewindSnapshot(){
         if (stopped || at == 0) {
             listener.onVoice("No audio buffered yet", false);
-            return;
+            return null;
         }
         int count = (int)Math.min(at, 60L * RATE);
         long first = at - count;
@@ -661,8 +746,12 @@ public final class SelectiveEngine {
             if (!words.endsWith(interim)) words = (words + " " + interim).trim();
             if (interimAt >= cueStart) cue = interim;
         }
-        listener.onClip(new Clip(audio, words, category, "You chose to keep this as " + category + ".",
-            origin + first * 1000 / RATE, false, cueTail(cue)));
+        return new Clip(audio,words,null,null,origin+first*1000/RATE,false,cueTail(cue));
+    }
+
+    private void publishRewind(Clip snapshot,String category,boolean spokenChoice){
+        listener.onClip(new Clip(snapshot.audio,snapshot.transcript,category,"You chose to keep this as "+category+".",
+            snapshot.startedAtMillis,false,snapshot.cueText,spokenChoice));
     }
 
     // A single uninterrupted hypothesis can be long. Keep the words nearest the mark.
@@ -696,6 +785,7 @@ public final class SelectiveEngine {
     /** Immediately abandon transient data; create a new engine when resuming. */
     public synchronized void pause() {
         stopped = true;
+        closeChoice(null);
         active = false;
         Arrays.fill(ring, (short) 0);
         if (selected != null) Arrays.fill(selected, (short) 0);

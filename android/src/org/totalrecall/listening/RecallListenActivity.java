@@ -70,7 +70,7 @@ public final class RecallListenActivity extends Activity {
     private TextView archiveStatus;
     private long archiveRefresh;
     private int generation;
-    private long exportId=-1, requestedMoment=-1;
+    private long exportId=-1, requestedMoment=-1, requestedPlayhead=-1;
     private boolean registered, voicePermissionRequest, commandPending;
     private boolean exporting, importing;
 
@@ -194,6 +194,7 @@ public final class RecallListenActivity extends Activity {
         String q=intent==null?null:intent.getStringExtra("query");
         if(q!=null)search.setText(q);
         requestedMoment=intent==null?-1:intent.getLongExtra("moment_id",-1);
+        requestedPlayhead=intent==null?-1:intent.getLongExtra("clip_offset_ms",-1);
         if(requestedMoment>=0){reviewToday=false;search.setText("");scheduleRead(0);}
     }
     private boolean overlayRequested;
@@ -267,7 +268,12 @@ public final class RecallListenActivity extends Activity {
 
                     if(requestedMoment>=0){
                         long id=requestedMoment;requestedMoment=-1;boolean found=false;
-                        for(Store.Moment row:rows)if(row.id==id){showMoment(row);found=true;break;}
+                        for(Store.Moment row:rows)if(row.id==id){
+                            if(requestedPlayhead>=0){
+                                stopPlayer();studio=new ClipStudio(this,row,worker,this::refresh);studio.show(requestedPlayhead);requestedPlayhead=-1;
+                            }else showMoment(row);
+                            found=true;break;
+                        }
                         if(!found)Toast.makeText(this,"This moment is no longer available.",Toast.LENGTH_SHORT).show();
                     }
                 });

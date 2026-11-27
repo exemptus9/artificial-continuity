@@ -63,6 +63,9 @@ public final class OfflineSpeech implements AutoCloseable {
     int compared, agreed, uncertain;
     private double confidence;
     private boolean weakWord;
+    private String checkWords="",reviewHint="";
+    String takeReviewHint(){String hint=reviewHint;reviewHint="";return hint;}
+    String checkWords(){return checkWords;}
     private static double confidence(JSONObject json){
         JSONArray a=json.optJSONArray("result");
         if(a==null||a.length()==0)return 0;
@@ -84,6 +87,7 @@ public final class OfflineSpeech implements AutoCloseable {
     }
     private String verified(String json){
         String original=finalized(json);rawWords=original==null?"":original;
+        reviewHint="";
         if(!archiveReview)return original;
         try{
             long meanSquare=energy/Math.max(1,used);
@@ -115,39 +119,24 @@ public final class OfflineSpeech implements AutoCloseable {
                 alternatives[pass]=text.toString().trim();
                 scores[pass]=(total+count*confidence(part))/Math.max(1,words+count);
             }
+            JSONArray first=new JSONObject(json).optJSONArray("result");
             if(!alternatives[0].isEmpty() && spellings.apply("",alternatives[0]).equals(spellings.apply("",alternatives[1])) &&
-                Math.min(scores[0],scores[1])>=Math.max(.78,(weakWord||faint)?Math.min(.90,confidence):confidence)){
+                Math.min(scores[0],scores[1])>=Math.max(.78,(weakWord||faint)?Math.min(.90,confidence):confidence) &&
+                RecognitionReview.supportedRewrite(original,first,alternatives[0],detail[0]) &&
+                RecognitionReview.supportedRewrite(original,first,alternatives[1],detail[1])){
                 agreed++;return alternatives[0];
             }
-            String repaired=repairWeakWord(original,new JSONObject(json).optJSONArray("result"),detail[0],detail[1]);
+            String repaired=repairWeakWord(original,first,detail[0],detail[1]);
             if(repaired!=null){agreed++;return repaired;}
+            if(!alternatives[0].isEmpty() && alternatives[0].equals(alternatives[1]) && !alternatives[0].equals(original))
+                reviewHint="Other reading to check · "+alternatives[0].substring(0,Math.min(200,alternatives[0].length()));
+            else if(!checkWords.isEmpty())reviewHint="Check wording · "+checkWords;
             uncertain++;return original;
         }catch(IOException|JSONException|RuntimeException failed){uncertain++;return original;}
         finally{used=0;overflow=false;energy=0;}
     }
-    // When two full readings differ, accept one weak interior word only if both retries
-    // independently support it, anchored by identical neighbors at the same positions.
     static String repairWeakWord(String original,JSONArray first,JSONArray a,JSONArray b){
-        if(original==null || first==null || SpeechContext.literal(original))return null;
-        String[] words=original.split(" +");
-        if(words.length<3 || words.length!=first.length() || words.length!=a.length() || words.length!=b.length())return null;
-        String[] left=new String[words.length],right=new String[words.length];
-        for(int i=0;i<words.length;i++){
-            JSONObject one=first.optJSONObject(i),two=a.optJSONObject(i),three=b.optJSONObject(i);
-            if(one==null||two==null||three==null||!words[i].equals(one.optString("word")))return null;
-            left[i]=two.optString("word");right[i]=three.optString("word");
-        }
-        for(int i=1;i<words.length-1;i++){
-            if(first.optJSONObject(i).optDouble("conf",1)>.55 || Math.min(a.optJSONObject(i).optDouble("conf",0),
-                b.optJSONObject(i).optDouble("conf",0))<.92)continue;
-            String next=left[i];
-            if(next.isEmpty() || next.equals(words[i]) || !next.equals(right[i]))continue;
-            if(words[i-1].equals(left[i-1]) && words[i-1].equals(right[i-1])
-                && words[i+1].equals(left[i+1]) && words[i+1].equals(right[i+1])){
-                words[i]=next;return String.join(" ",words);
-            }
-        }
-        return null;
+        return RecognitionReview.repair(original,first,a,b);
     }
     private static int appendRetry(StringBuilder text,JSONObject part,JSONArray detail){
         JSONArray result=part.optJSONArray("result");
@@ -161,6 +150,9 @@ public final class OfflineSpeech implements AutoCloseable {
     private Recognizer recognizer;
     private Recognizer commandRecognizer;
     private String pendingCommand;
+    boolean filterCommands;
+    private boolean commandFilterActive;
+    private CommandNoise commandNoise;
     private final SelectiveEngine.CommandEndpoints commandEndpoints=new SelectiveEngine.CommandEndpoints();
     public OfflineSpeech(Context context) throws IOException {
         this(context,true);
@@ -175,7 +167,8 @@ public final class OfflineSpeech implements AutoCloseable {
             model = new Model(dir.getAbsolutePath());
             recognizer = new Recognizer(model, 16000f);
             archiveReview=!commands;
-            if(archiveReview){recognizer.setWords(true);passage=new short[16*16000];}
+            recognizer.setWords(true);
+            if(archiveReview)passage=new short[16*16000];
             if(groupVoices)try{
                 File path=unpack(context.getApplicationContext(),"vosk-model-spk-0.4");
                 speakerModel=new org.vosk.SpeakerModel(path.getAbsolutePath());recognizer.setSpeakerModel(speakerModel);
@@ -189,6 +182,7 @@ public final class OfflineSpeech implements AutoCloseable {
                 for(String[] group:SelectiveEngine.COMMANDS)for(int i=1;i<group.length;i++)grammar.put(wake+" "+group[i]);
             }
             for(String[] group:SelectiveEngine.COMMANDS)for(int i=1;i<group.length;i++)grammar.put(group[i]);
+            for(String label:SelectiveEngine.CHOICE_WORDS)grammar.put(label);
             grammar.put("[unk]");
             commandRecognizer = new Recognizer(model, 16000f, grammar.toString());
         } catch (IOException | RuntimeException | LinkageError e) {
@@ -222,8 +216,14 @@ public final class OfflineSpeech implements AutoCloseable {
             nextReading=streamSamples+4000;
         }
         String constrained=null;
-        if(commandRecognizer!=null && commandRecognizer.acceptWaveForm(input,count)){
-            constrained=text(commandRecognizer.getResult(),"text");
+        if(commandRecognizer!=null){
+            if(commandFilterActive!=filterCommands){
+                commandRecognizer.reset();commandEndpoints.clear();pendingCommand=null;
+                commandNoise=filterCommands?new CommandNoise():null;
+                commandFilterActive=filterCommands;
+            }
+            short[] narrow=commandNoise==null?input:commandNoise.apply(pcm,input,count);
+            if(commandRecognizer.acceptWaveForm(narrow,count))constrained=text(commandRecognizer.getResult(),"text");
         }
         streamSamples+=count;
         if(archiveReview)rememberPcm(input,count);
@@ -231,22 +231,25 @@ public final class OfflineSpeech implements AutoCloseable {
         if(commandRecognizer!=null){
             String matched=commandEndpoints.observe(constrained,display==null?null:rawWords,rawPartial,streamSamples);
             if(matched!=null)pendingCommand=matched;
+            else if(SelectiveEngine.choiceWord(constrained) && SelectiveEngine.shortChoiceReading(constrained,display==null?rawPartial:rawWords))
+                pendingCommand=constrained;
         }
         return display;
     }
 
     /** A whole command or a trailing named save confirmed by both local decoders. */
-    public String pollCommand() {
+    public String pollCommand(){return pollCommand(false);}
+    String pollCommand(boolean choosing) {
         String heard = pendingCommand;
         pendingCommand = null;
-        return heard;
+        return !choosing && SelectiveEngine.choiceWord(heard)?null:heard;
     }
 
     /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
     public void resetStream() {
         clearRoom();priorContext="";rawPartial="";rawWords="";priorSpeaker=0;priorAt=0;streamSamples=0;used=0;energy=0;overflow=false;quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
         if(commandRecognizer!=null)commandRecognizer.reset();
-        pendingCommand = null;commandEndpoints.clear();
+        pendingCommand = null;commandEndpoints.clear();if(commandNoise!=null)commandNoise.reset();
     }
 
     public String partial() {
@@ -257,17 +260,18 @@ public final class OfflineSpeech implements AutoCloseable {
 
     void newUtterance(){
         recognizer.reset();if(commandRecognizer!=null)commandRecognizer.reset();
-        pendingCommand=null;commandEndpoints.clear();rawPartial="";priorContext="";priorSpeaker=0;
+        pendingCommand=null;commandEndpoints.clear();if(commandNoise!=null)commandNoise.reset();rawPartial="";priorContext="";priorSpeaker=0;
     }
     public String finish() {
         return displayFinal(recognizer.getFinalResult());
     }
 
     private String finalized(String json){
-        voice=speakerModel==null?0:-1;known=null;latestVector=null;frames=0;
+        voice=speakerModel==null?0:-1;known=null;latestVector=null;frames=0;checkWords="";
         try{
             JSONObject words=new JSONObject(json);confidence=confidence(words);weakWord=false;
             JSONArray detail=words.optJSONArray("result");
+            checkWords=RecognitionReview.toCheck(detail);
             if(detail!=null)for(int i=0;i<detail.length();i++){
                 JSONObject word=detail.optJSONObject(i);
                 if(word!=null && word.optDouble("conf",1)<.60){weakWord=true;break;}

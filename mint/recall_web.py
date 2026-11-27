@@ -53,14 +53,22 @@ def matched_excerpt(value,terms):
 JOURNAL_LINE=re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$")
 
 def journal_match(value,terms):
+    at=None
     for line in value.splitlines():
         parsed=JOURNAL_LINE.match(line)
-        if not parsed or parsed[4].startswith("[capture status]"):continue
-        excerpt=matched_excerpt(parsed[4],terms)
-        if excerpt:
+        if parsed:
+            at=None
+            if parsed[4].startswith("[capture status]"):continue
             try:at=int(datetime.fromisoformat(parsed[1]+"T"+parsed[2]+parsed[3].replace("Z","+00:00")).timestamp()*1000)
             except (ValueError,OverflowError,OSError):continue
-            if at>0:return dict(field="Transcript",text=excerpt,at=at)
+            label,text="Transcript",parsed[4]
+        elif at and line.startswith("  Originally heard · "):
+            label,text="Originally heard",line.removeprefix("  Originally heard · ")
+        else:
+            at=None
+            continue
+        excerpt=matched_excerpt(text,terms)
+        if excerpt and at>0:return dict(field=label,text=excerpt,at=at)
     return None
 
 def search_preview(db,row,terms,recognized):

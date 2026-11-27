@@ -8,7 +8,9 @@ public class SelectiveEngineTest {
     static class Fixture implements SelectiveEngine.Listener {
         final SelectiveEngine engine = new SelectiveEngine(this, 1770000000000L);
         final List<SelectiveEngine.Clip> clips = new ArrayList<>();
+        final List<String> spoken=new ArrayList<>();
         int pauses;
+        public void onSpokenRequest(String request){spoken.add(request);}
         public void onClip(SelectiveEngine.Clip c) { clips.add(c); }
         public void onPauseRequested() { pauses++; }
         void sound(int seconds, int sample) {
@@ -148,6 +150,55 @@ public class SelectiveEngineTest {
         System.out.println("Conversational saves passed: split wake, category synonyms, both decoder orders, stale and quoted anchors.");
     }
 
+    private static void handsFreeChoices(){
+        Fixture f=new Fixture();
+        f.engine.text("hey recall save as",true);
+        check(!f.engine.choicePending() && f.spoken.isEmpty());
+        for(int i=1;i<=65;i++)f.sound(1,i);
+        f.engine.text("lantern in the rain",true,true,"Lantern in the Rain");
+        f.engine.text("hey recall save as",false);
+        check(!f.engine.choicePending());
+        f.engine.text("hey recall save as",true);
+        check(f.engine.choicePending() && f.spoken.equals(Arrays.asList("choose")) && f.clips.isEmpty());
+        f.sound(4,25000);
+        f.engine.text("line",false);f.engine.text("do not choose line",true);
+        check(f.clips.isEmpty() && f.engine.choicePending());
+        f.engine.text("line",true);f.engine.text("line",true);
+        check(f.clips.size()==1 && !f.engine.choicePending());
+        SelectiveEngine.Clip saved=f.clips.get(0);
+        check(saved.fromSpokenChoice && saved.labeledRewind && saved.category.equals(SelectiveEngine.POETRY));
+        check(saved.audio.length==60*SelectiveEngine.RATE && saved.audio[0]==6 && saved.audio[saved.audio.length-1]==65);
+        check(saved.startedAtMillis==1770000005000L && saved.transcript.equals("lantern in the rain") && saved.cueText.equals("Lantern in the Rain"));
+        check(f.spoken.equals(Arrays.asList("choose","choiceClosed")));
+        for(String end:new String[]{"cancel","timeout","gap","pause","finish"}){
+            f=new Fixture();f.say("hey recall save this as");
+            if(end.equals("cancel"))f.engine.text("cancel",true);
+            if(end.equals("gap"))f.engine.closeChoice(null);
+            if(end.equals("pause"))f.engine.pause();
+            if(end.equals("finish"))f.engine.finish();
+            if(end.equals("timeout")){
+                for(int i=0;i<12;i++){f.engine.cueAudio(SelectiveEngine.RATE);f.sound(1,0);}
+            }
+            f.engine.text("decision",true);
+            check(f.clips.isEmpty() && !f.engine.choicePending() && f.spoken.equals(Arrays.asList("choose","choiceClosed")));
+        }
+        f=new Fixture();f.say("hey recall save as");
+        f.engine.cueAudio(2*SelectiveEngine.RATE);f.sound(9,0);f.engine.text("word",true);
+        check(f.clips.size()==1 && f.clips.get(0).category.equals(SelectiveEngine.FORGE));
+        f=new Fixture();f.say("help");f.say("status");f.say("word");f.say("repeat");
+        check(f.spoken.isEmpty() && f.clips.isEmpty());
+        f.engine.text("hey recall",false);check(f.spoken.isEmpty());
+        f.say("hey recall what can i say");f.say("lexi status");f.say("hey recall repeat");
+        f.say("hey recall");f.engine.text("hey recall",true);f.say("help");
+        check(f.spoken.equals(Arrays.asList("help","status","repeat","ready","help")) && f.clips.isEmpty());
+        SelectiveEngine.CommandEndpoints pair=new SelectiveEngine.CommandEndpoints();
+        check(pair.observe(null,null,"the instructor said",16000)==null);
+        check(pair.observe("[unk]",null,"the instructor",17000)==null);
+        check(pair.observe("hey recall keep that word",null,"the instructor read a strange word",26000)==null);
+        check(pair.observe("hey recall keep that word","hey recall keep that word",null,100000)!=null);
+        System.out.println("Hands-free choices passed: frozen audio, cue, origin, deduplication, final labels, cancellation, bounded prompt time, pause, status, help and repeat.");
+    }
+
     private static void prosody() {
         retain(SelectiveEngine.POETRY,"I fold the corners of the night","my palms disclose a stolen light","my knuckles close around the bright");
         retain(SelectiveEngine.POETRY,"I wore a valley painted blue","the ancient glass that I fell through","my broken window knows me too");
@@ -274,6 +325,7 @@ public class SelectiveEngineTest {
         ignore("we went shopping by the road","i had a sandwich for lunch");
         labeledRewinds();
         conversationalSaves();
+        handsFreeChoices();
         learningFromLabeledSaves();
         System.out.println("Natural save requests, wake expiry, poetry and prose cues, and uninterrupted passage capture verified.");
         System.out.println("Selective engine passed: ephemeral ring, four cues, feedback, lookbacks, overlap, command dedup, pause, finalization, clip bound.");

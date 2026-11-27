@@ -65,9 +65,19 @@ final class LongRecording implements AutoCloseable {
             encoder.write(pcm,0,count);duration=encoder.samples*1000/ArchiveStore.RATE;
         }catch(IOException|RuntimeException error){finish("Audio write interrupted");}
     }
-    boolean mark(String category,long leadIn){
-        if(encoder==null)return false;
-        long at=Math.max(0,duration-leadIn);
+    boolean mark(String category,long leadIn){return markAt(active,Math.max(0,duration-leadIn),category);}
+    boolean markAt(String target,long position,String category){
+        if(target==null || target.isEmpty())return false;
+        if(!target.equals(active) || encoder==null){
+            // A spoken choice may finish after its original long session was sealed. Bind to that recording only.
+            if(category.isEmpty())return false;
+            try(android.database.sqlite.SQLiteStatement insert=db.getWritableDatabase().compileStatement(
+                "INSERT INTO long_marks(session,ms,label) SELECT id,min(ms,?),? FROM long_sessions WHERE id=? AND status<>'Recording' AND ms>0")){
+                insert.bindLong(1,Math.max(0,position));insert.bindString(2,category);insert.bindString(3,target);
+                return insert.executeInsert()!=-1;
+            }catch(android.database.SQLException failure){return false;}
+        }
+        long at=Math.max(0,Math.min(duration,position));
         String label=category.isEmpty()?"Marker "+(marks+1):category;
         try{
             addMark(db,active,at,label);

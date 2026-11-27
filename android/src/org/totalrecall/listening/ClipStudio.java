@@ -53,14 +53,15 @@ final class ClipStudio {
         return new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build();
     }
-    void show(){
+    void show(){show(0);}
+    void show(long offsetMs){
         LinearLayout sheet=owner.column();
         ScrollView scroll=new ScrollView(owner);scroll.addView(sheet);owner.pad(sheet,18,10);
         TextView title=owner.text(moment.title,21,0xff192c28,true);title.setTypeface(Typeface.SERIF,Typeface.BOLD);sheet.addView(title);
         clock=owner.text("Opening waveform…",16,0xff435955,false);sheet.addView(clock);
         wave=new Wave(owner);wave.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         sheet.addView(wave,new LinearLayout.LayoutParams(-1,owner.dp(75)));
-        seek=new SeekBar(owner);seek.setEnabled(false);seek.setMinHeight(owner.dp(48));seek.setContentDescription("Clip playhead");
+        seek=new SeekBar(owner);seek.setEnabled(false);seek.setMinimumHeight(owner.dp(48));seek.setContentDescription("Clip playhead");
         sheet.addView(seek);
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
             public void onStartTrackingTouch(SeekBar v){scrubbing=true;}
@@ -107,7 +108,7 @@ final class ClipStudio {
         worker.execute(()->{
             try{
                 int count=PcmExcerpt.count(moment.audio);int[] peaks=PcmExcerpt.peaks(moment.audio,280);
-                main.post(()->{if(closed)return;samples=count;a=0;b=count;ready=true;
+                main.post(()->{if(closed)return;samples=count;a=0;b=count;cursor=(int)(Math.min(Math.max(0,offsetMs),count/16)*16);ready=true;
                     wave.peaks=peaks;seek.setMax(count);seek.setEnabled(true);save.setEnabled(true);transport.setEnabled(true);paint();});
             }catch(Exception e){main.post(()->{if(!closed)note("Couldn’t read clip audio. "+e.getMessage());});}
         });

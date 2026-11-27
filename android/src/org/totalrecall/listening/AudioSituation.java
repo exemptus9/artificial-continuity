@@ -126,8 +126,10 @@ public final class AudioSituation {
             gain=Math.min(target,.65*gain+.35*target);
             for(int i=0;i<used;i++)window[i]=(short)Math.max(-32768,Math.min(32767,Math.round(frame[i]*gain)));
         }
-        final java.util.ArrayList<String> turns=new java.util.ArrayList<>();
+        final java.util.ArrayList<String> turns=new java.util.ArrayList<>(),toCheck=new java.util.ArrayList<>();
         void addTurn(String text){
+            String hint=speech.takeReviewHint();
+            if(!hint.isEmpty() && toCheck.size()<12)toCheck.add(time(start/16000)+"–"+time(samples/16000)+"  "+hint);
             if(text==null||text.trim().isEmpty())return;
             String who=speech.attributedVoice();
             String at=time(start/16000)+"–"+time(samples/16000)+(who.isEmpty()?"":" · "+who);
@@ -145,10 +147,17 @@ public final class AudioSituation {
         String finish(){
             flush();addTurn(speech.finish());
             if(samples==0)return "No audio samples were decoded.";
-            return "Audio decoded  "+time(samples/16000)+"\nAbove −50 dBFS  "+Math.round(active*100d/samples)+"% of decoded time"+
+            String levels="Audio decoded  "+time(samples/16000)+"\nAbove −50 dBFS  "+Math.round(active*100d/samples)+"% of decoded time"+
                 "\nLongest quiet stretch  "+String.format(Locale.ROOT,"%.1f s",longest/16000d)+"\nPeak level  "+
-                (peak==0?"silence":String.format(Locale.ROOT,"%.1f dBFS",20*Math.log10(peak/32768d)))+
-                "\nDifficult passages checked across three decodes  "+speech.compared+" · matching enhanced readings "+speech.agreed+" · unresolved "+speech.uncertain+"\n\nFrom offline speech recognition\n"+context.result()+(turns.isEmpty()?"":"\n\nRecognized passages (first 40)\n"+String.join("\n",turns))+"\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
+                (peak==0?"silence":String.format(Locale.ROOT,"%.1f dBFS",20*Math.log10(peak/32768d)));
+            String checks="Difficult passages checked across three decodes  "+speech.compared+" · matching enhanced readings "+speech.agreed+" · unresolved "+speech.uncertain+
+                (toCheck.isEmpty()?"":"\n\nWording to check (up to 12 passages)\n"+String.join("\n",toCheck));
+            if(turns.isEmpty()){
+                String signal=peak==0?"All decoded samples were silent.":active>0?"Sound was measured above −50 dBFS.":"The measured level stayed below −50 dBFS in every analysis window.";
+                return signal+" No words were recognized. Listen to the original recording to check what you can hear.\n\n"+levels+"\n"+checks;
+            }
+            return levels+"\n"+checks+"\n\nFrom offline speech recognition\n"+context.result()+"\n\nRecognized passages (first 40)\n"+String.join("\n",turns)+
+                "\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
         }
     }
 }

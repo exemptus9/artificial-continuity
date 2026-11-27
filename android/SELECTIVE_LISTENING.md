@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.29.0
+# Live listening on Galaxy · 0.30.0
 
-Install `TotalRecall-0.29.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.30.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Teach a coined word from your own line
 
@@ -32,6 +32,12 @@ On the listening screen, open **Floating controls**, grant display-over-other-ap
 ## Check a quiet voice or external microphone
 
 Open **More → Microphone check** on the recorder, or **More → Mic check** on the large overlay. Start listening first to see the actual input route. Plug in your mic and check whether the route changes. Speak at your usual distance. The input and room values use the same speech-band dBFS scale. A rise from −70 to −50 dBFS is a 20 dB rise above background. When they stay close together, move the microphone closer or reduce nearby noise.
+
+For a wrist transmitter, open **Wearable mic check** while listening. Read the routed input, sample rate and channel count. With the phone stationary, take the quiet-room reading. Unmute only the first transmitter and run **Measure wrist A**. After the half-second settling interval, say “violet lantern” from your normal position. For two transmitters, mute A, unmute B, repeat with **Measure wrist B** and compare the average level above the room. Digital silence and peaks near full scale are shown explicitly. Recheck after a route change or reconnection. The check holds measurements only while open. Any recording you already enabled continues under its existing settings.
+
+A dual-transmitter USB receiver may appear as one input. Recall’s phone recorder requests 16 kHz mono. On a receiver that offers a merged two-transmitter output, use it when both wrists should feed that track. Test each transmitter on its own and listen to a saved short recording. A clip fastened to a snug fabric cuff is one way to try wrist placement with hardware you already own. Keep the capsule clear of the sleeve and compare the same spoken line with the mic clipped near your collar.
+
+DJI lists the Galaxy S22+ with its original Mic Mini. RØDE documents USB-C connections for its supported Android receiver kits and the Wireless GO II’s merged and split modes. Check your exact receiver when choosing the cable and output. [DJI phone compatibility](https://dl.djicdn.com/downloads/DJI_Mic_Mini/20241120/compatibilitylist/DJI_Mic_Mini_Mobile_Phone_Compatibility_List-EN.pdf) · [RØDE phone connections](https://help.rode.com/hc/en-us/articles/15968469334159) · [RØDE receiver modes](https://help.rode.com/hc/en-us/articles/6989824468495)
 
 **Learn room noise · 2 seconds** measures the current room while you stay quiet. A sample that varies widely prompts you to try again. Relearn it after changing rooms or microphones. **Boost quiet speech for transcription** allows up to 12× decoder gain. **Extended reach for very quiet speech** raises the ceiling to 32× when the input rises above the background. The live readout shows the applied gain. Both captions and wake commands use this signal. Clips, full audio and long sessions keep the original input samples before encoding. When boost is enabled, a faint passage that remains above the room level can keep an already-selected clip open. Recognition and device routing still depend on the microphone, distance and background.
 
@@ -103,10 +109,18 @@ The expanded overlay shows **Now** and **Last**. These are interpretations of re
 
 Choose **Record my words** on the large panel or **Record my words & edit** on the recorder. Speak after the timer starts. **Finish & edit** opens the saved take. A take also closes at one minute or when usable microphone input ends. **Listen to original** offers to pause the live microphone for playback. Edit **What I actually said**, then **Save corrected words**. You can copy or share the wording or share the original WAV separately. Takes appear in **Saved on phone → Recent saved clips** even with the journal switched off.
 
-Tap a passage in **Full journal** to correct, copy or share its wording. **Compare with original recognition** and session text exports retain the earlier reading.
+In **Full journal**, **Check uncertain wording** lists passages flagged by the recognizer’s word-level confidence. Tap one to see which words to check. **Find audio at this time** opens a saved clip that covers its recognition timestamp with up to six seconds of lead-in. Tap **Play** to listen. If there is no covering clip, the journal tells you.
+
+Choose **Wording is right** to clear the flag, or edit the line and choose **Save correction**. **Show all journal lines** returns to the full journal, where you can also correct, copy or share unflagged passages. **Compare with original recognition** and session text exports preserve the earlier reading.
 
 ## Listen with the phone locked
 
 Expand Total Recall’s ongoing notification to see microphone reception, registration of words, saves, flags, capture settings, and backup status. **Save last min** keeps recent audio. **Start take** begins a new one-minute recording and becomes **Finish take**. **Pause** releases the microphone. The paused notification offers **Resume** and a tap-through to the recorder. Android and your lock-screen settings determine the controls you see and whether authentication is required.
 
-Open **Live & saved → Lock screen & sound** for transcript and situation previews, Android notification settings, and sound controls. The rising wake sound means Recall is ready for your command. The falling save sound follows a requested clip or voice take reaching local storage. Optional spoken receipts say “Clip stored” or “Take stored.” Use **Test wake** and **Test save** to set your cue level. Audio follows media volume and output routing.
+Open **Live & saved → Lock screen & sound** for transcript and situation previews and sound controls. Two rising notes acknowledge a wake. A falling chime confirms a requested local save. **Hands-free voice setup** enables spoken wake, receipts, retries, recovery and answers. Each has its own switch. Automatic-save announcements and spoken guidance during practice and closing are separate choices. Try **Hear announcement examples** at your normal media volume. Android routes these sounds to the active media output.
+
+While listening, say your wake word followed by **status**, **help**, or **repeat**. Status reports whether the microphone is receiving audio and what is being recorded. Repeat replays the last result from this listening session. The expanded overlay also has **Hear status**, **Last result** and **Spoken help** under **More**.
+
+For a labeled rewind, say your wake word and **save as**. Recall holds up to the preceding minute in memory. When “Word, line, or decision?” finishes, answer **word**, **line**, **decision**, or **cancel**. The choice lasts eight seconds of input, with up to three extra seconds allowed for a spoken cue. A timeout or cancellation discards the held copy. If a long session was running when you asked, its marker points eight seconds before the request, even if that session finished before your reply.
+
+Recall plays short fixed phrases such as “Microphone back. Listening.” For an unclear command, it says “Say the wake word, then help or save that.” A save failure has its own message. The recorder and journal skip recognition during the app’s spoken prompts so the prompts cannot issue commands or enter voice practice. Audio recordings preserve the microphone signal, which can pick up a loudspeaker. Wait until a prompt finishes before replying.

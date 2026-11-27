@@ -48,7 +48,7 @@ class WordFeed:
 WAKE_GRAMMAR = """#JSGF V1.0;
 grammar recall;
 <wake> = hey recall | total recall | lexi | hey lexi;
-<command> = save that | save this | keep that | remember that | save the last minute | keep the last minute | you missed one | start a passage | start a poem | start a story | start a draft | finish passage | finish the poem | finish the story | finish the draft | pause recall | pause recording | stop listening;
+<command> = save that | save this | keep that | remember that | save the last minute | keep the last minute | you missed one | start a passage | start a poem | start a story | start a draft | finish passage | finish the poem | finish the story | finish the draft | pause recall | pause recording | stop listening | save a line | save a poem line | save a word | save a coined word | mark my place | bookmark my place | status | how much can i save | what can i say | help | last save | what did you save;
 public <request> = <wake> [<command>];
 """
 
@@ -57,23 +57,35 @@ def configure_wake(decoder):
     try:
         if not decoder.lookup_word("lexi"):decoder.add_word("lexi","L EH K S IY",True)
         decoder.set_jsgf_string("recall-wake",WAKE_GRAMMAR)
+        commands=WAKE_GRAMMAR.replace("grammar recall;","grammar command;").replace("= <wake> [<command>];","= <command>;")
+        decoder.set_jsgf_string("recall-command",commands)
+        decoder.set_search(original)
         return original
     except (RuntimeError,ValueError,AttributeError):
         return None
 
-def checked_wake(decoder,original,pcm,heard):
+def checked_wake(decoder,original,pcm,heard,command_window=False):
     """Rescore a short utterance with a wake grammar, retaining ordinary dictation on ambiguity."""
     if not original or not pcm or len(pcm)>32000*6 or not heard:return heard
     tokens=heard.casefold().split()
     if any(t in ("not","never","don't","didn't") for t in tokens):return heard
     try:
-        decoder.set_search("recall-wake");decoder.start_utt()
+        decoder.set_search("recall-command" if command_window else "recall-wake");decoder.start_utt()
         decoder.process_raw(bytes(pcm),False,True);decoder.end_utt()
         hyp=decoder.hyp();candidate=hyp.hypstr.strip() if hyp else ""
         if not candidate:return heard
         same_length=abs(len(candidate.split())-len(tokens))<=1
         similarity=SequenceMatcher(None,heard,candidate).ratio()
-        if same_length and similarity>=0.55:return candidate
+        threshold=.8 if candidate.endswith(("pause recording","pause recall","stop listening")) else .55
+        if same_length and similarity>=threshold and (not command_window or candidate==heard or hyp.best_score>=.55):return candidate
+        # After an explicit wake, the small grammar can recognize a command when
+        # dictation substitutes a similar-sounding last word. Never rescue pause.
+        if command_window and same_length:
+            info=candidate in ("what can i say","last save","what did you save","status","how much can i save","help")
+            typed=candidate in ("save a line","save a poem line","save a word","save a coined word","mark my place","bookmark my place")
+            ending=SequenceMatcher(None,tokens[-1],candidate.split()[-1]).ratio()
+            if hyp.best_score>=.68 and hyp.prob>=.37 and (info or typed and ending>=.75):
+                return candidate
         return heard
     finally:
         decoder.set_search(original)
@@ -156,7 +168,9 @@ class LiveWords:
                     if hyp and hyp.hypstr.strip():
                         self.line = " ".join(speech_context.correct(hyp.hypstr).split()[-22:])
                         last_text = now
-                        if end and self.on_final and not self.done.is_set():self.on_final(checked_wake(decoder,original,phrase,hyp.hypstr.strip()))
+                        if end and self.on_final and not self.done.is_set():
+                            command_window=getattr(self.on_final,"command_open",lambda:False)()
+                            self.on_final(checked_wake(decoder,original,phrase,hyp.hypstr.strip(),command_window))
                     elif now - last_text > 5:
                         self.line = "Listening for words…"
                     last_result = now

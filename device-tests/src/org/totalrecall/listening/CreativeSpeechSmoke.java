@@ -25,7 +25,9 @@ public final class CreativeSpeechSmoke {
             asr.resetStream();
             String coin=replay(test, store, asr, "coin", SelectiveEngine.FORGE, "invented");
             asr.resetStream();
-            return verse+"\n"+coin+"\n"+replay(test, store, asr, "address", SelectiveEngine.POETRY, "you chose");
+            String address=replay(test, store, asr, "address", SelectiveEngine.POETRY, "you chose");
+            asr.resetStream();
+            return verse+"\n"+coin+"\n"+address+"\n"+new SpokenChoiceSmoke().run(target,test,store,asr);
         }
     }
 

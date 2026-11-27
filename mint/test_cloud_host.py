@@ -146,7 +146,7 @@ class HostedArchiveTests(unittest.TestCase):
         self.assertEqual((status, headers["Location"]), (303, "/"))
 
     def test_mint_installer_requires_sign_in_and_returns_the_package(self):
-        package = self.root / "total-recall-desk_0.29.0_all.deb"
+        package = self.root / "total-recall-desk_0.30.0_all.deb"
         package.write_bytes(b"!<arch>\nfixture")
         with patch.object(cloud_host, "MINT_INSTALLER", package):
             path = "/downloads/mint"

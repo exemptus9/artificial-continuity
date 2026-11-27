@@ -31,3 +31,53 @@ Each of the two sets uses eight synthesized phrases and three voices, with two s
 | Holdout, faint with steady noise | 60 | 53 | 20 | 21 | 7 |
 
 Standard and previous processing produced identical normal-level PCM on all sixteen sentences. Extended reach reduced errors under both very faint conditions and introduced two at normal levels. These figures describe the fixtures. Real voices, distances, rooms and microphones can give different results. The separate `MicSignalTest` in `test-engine.sh` checks unity gain on stationary room sound, quiet clip tails, exact source samples, and rejection of a varying calibration sample.
+
+## Archived dictation replay
+
+Twelve held-out sentences include names, unfamiliar words, times, counts and negations. Three Flite voices read each sentence at normal level, very faint level, and with simulated fan noise. The 108 recordings contain 981 reference words. Each build received identical 16 kHz PCM through its production archive decoder on Robolectric API 28 with desktop Vosk 0.3.45, the bundled small English 0.15 model, standard gain and no enrolled voice.
+
+| Word errors | First reading | 0.29 archive | 0.30 archive |
+| --- | ---: | ---: | ---: |
+| Normal | 128 | 125 | 127 |
+| Very faint | 144 | 145 | 144 |
+| Simulated fan | 261 | 255 | 261 |
+| Total | 533 | 525 | 532 |
+| Word error rate | 54.33% | 53.52% | 54.23% |
+
+The first readings matched across versions. 0.30 prevented two harmful rewrites, including one that lost the name “Marisol.” It also withheld four helpful rewrites and displayed each as an alternative, including one that recovered the correct time “six fifteen.” Overall word error rate rose by 0.71 percentage points.
+
+0.30 flagged 66 recordings, all of which contained errors. It provided a distinct alternative in 21 and identified one to three words in the displayed transcript in 45. Another 34 failed to match the script and received no flag, including three noisy recordings on which neither version returned any words. No 0.30 automatic rewrite changed a protected number or negation in this replay. These case-level counts do not identify which flagged words were wrong. Synthetic speech from three voices and a simulated fan cannot establish accuracy for a person or a phone microphone.
+
+To reproduce, build both Android revisions (0.29 baseline `781611e`) and keep their separate class directories. Run from the 0.30 tree with Python 3, FFmpeg with Flite, JDK 17 and Android SDK platform 36. Set `ANDROID_SDK_ROOT`, `RECALL_ROBO_JARS` (offline Robolectric 4.14.1, JUnit 4 and API 28 jars), `RECALL_HOST_SPEECH_CP` (desktop Vosk and JNA classpath) and `RECALL_VOSK_MODEL` (unpacked model directory).
+
+```bash
+python3 device-tests/archive-dictation-holdout.py generate /tmp/recall-dictation
+RECALL_APP_CLASSES=/path/to/0.29/classes device-tests/run-archive-dictation.sh /tmp/recall-dictation /tmp/recall-029.jsonl
+RECALL_APP_CLASSES=/path/to/0.30/classes device-tests/run-archive-dictation.sh /tmp/recall-dictation /tmp/recall-030.jsonl
+python3 device-tests/archive-dictation-holdout.py compare /tmp/recall-029.jsonl /tmp/recall-030.jsonl
+```
+
+### Addressed command replay
+
+The Android 16 creative phase also plays “Hey Recall save as” and the replies “line” and “cancel” through the service window. It compares the original microphone samples at the instant of the request with the retained WAV, verifies its catalog SHA-256, and checks that cancellation and timeout write no clip. The guarded-playback case feeds the packaged spoken retry hint back through the microphone path and then retries the request. The synthetic input comes from `make-creative-fixtures.py`.
+
+The following benchmark scores named saves and unwanted actions through both local speech decoders and the checkout's actual command parser. It uses Python 3 with NumPy, FFmpeg with Flite, a JDK, Linux/macOS, Vosk 0.3.45 and the small English 0.15 model. Append `--holdout` for reserved phrases, two different voices and a different noise mix. Append `--noise-filter` for the microphone-check option **Voice commands in heavy noise**. Point `--source` at a v0.29 checkout’s `android/src/org/totalrecall/listening` directory to reproduce the baseline. Add `--json results.json` for each file's free and restricted readings and resulting actions.
+
+```sh
+OPENBLAS_NUM_THREADS=1 python3 device-tests/check-command-recognition.py --libvosk "$LIBVOSK" --model "$VOSK_MODEL"
+```
+
+| Synthetic recording set | v0.29 | v0.30 default | v0.30 noise filter on |
+| --- | ---: | ---: | ---: |
+| Original, clear | 11/12 | 11/12 | 11/12 |
+| Original, quiet | 11/12 | 11/12 | 11/12 |
+| Original, +12 dB SNR | 11/12 | 11/12 | 9/12 |
+| Original, +3 dB SNR | 4/12 | 4/12 | 6/12 |
+| Original, unwanted actions across conditions | 2/48 | 0/48 | 0/48 |
+| Held-out, clear | 6/10 | 6/10 | 7/10 |
+| Held-out, quiet | 6/10 | 6/10 | 7/10 |
+| Held-out, +10 dB SNR | 7/10 | 5/10 | 5/10 |
+| Held-out, +4 dB SNR | 7/10 | 7/10 | 8/10 |
+| Held-out, unwanted actions across conditions | 4/40 | 3/40 | 2/40 |
+
+A positive requires exactly one clip in the intended category. Negatives include quoted requests, negation, a reference to the film and ordinary conversation. The held-out heavy-noise set still produced false saves for a quoted instruction and a negation. The optional filter affects the restricted recognizer only. The microphone recording and ordinary dictation keep their established path. These fixtures measure synthesized speech, not a particular phone, room or person.

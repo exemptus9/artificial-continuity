@@ -590,7 +590,7 @@ def install_runtime():
     if MODULES!=ROOT:
         known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
         pending={};accepted={}
-        for name in ("recall_archive.py","recall_web.py","situation.py","recall_review.py","laptop_capture.py","mic_input.py","live_words.py","speech_context.py","archive_backup.py","web/situation-rules.tsv","web/speech-context.tsv","web/index.html","web/app.css","web/app.js"):
+        for name in ("recall_archive.py","recall_web.py","situation.py","recall_review.py","laptop_capture.py","mic_input.py","voice_feedback.py","live_words.py","speech_context.py","archive_backup.py","web/situation-rules.tsv","web/speech-context.tsv","web/index.html","web/app.css","web/app.js"):
             origin=MODULES/name;dest=ROOT/name
             if not origin.is_file():continue
             if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")

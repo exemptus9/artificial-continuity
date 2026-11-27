@@ -22,19 +22,29 @@ public final class JournalStore extends SQLiteOpenHelper {
     private static final DateTimeFormatter FORMAT=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX");
     private final Context app;
     public JournalStore(Context context){
-        super(context.getApplicationContext(),DB,null,3);app=context.getApplicationContext();
+        super(context.getApplicationContext(),DB,null,4);app=context.getApplicationContext();
     }
     @Override public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL DEFAULT '')");
-        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL,voice INTEGER NOT NULL DEFAULT 0,original TEXT)");
+        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL,voice INTEGER NOT NULL DEFAULT 0,original TEXT,check_words TEXT NOT NULL DEFAULT '')");
         createVoices(db);
+        createReviewIndex(db);
         db.execSQL("CREATE INDEX lines_session ON lines(session,id)");
     }
     @Override public void onUpgrade(SQLiteDatabase db,int from,int to){
-        if(from<1||to>3)throw new IllegalStateException("Unsupported journal schema");
+        if(from<1||to>4)throw new IllegalStateException("Unsupported journal schema");
         if(from<2){db.execSQL("ALTER TABLE lines ADD COLUMN voice INTEGER NOT NULL DEFAULT 0");createVoices(db);}
         if(from<3)db.execSQL("ALTER TABLE lines ADD COLUMN original TEXT");
+        if(from<4){db.execSQL("ALTER TABLE lines ADD COLUMN check_words TEXT NOT NULL DEFAULT ''");createReviewIndex(db);}
+    }
+    private static void createReviewIndex(SQLiteDatabase db){
+        db.execSQL("CREATE INDEX lines_to_check ON lines(id) WHERE check_words<>''");
+    }
+    void confirmWording(long id,String expected){
+        ContentValues clear=new ContentValues();clear.put("check_words","");
+        if(getWritableDatabase().update("lines",clear,"id=? AND text=? AND check_words<>''",new String[]{String.valueOf(id),expected})!=1)
+            throw new IllegalStateException("This passage changed or was already checked. Reopen the journal.");
     }
     private static void createVoices(SQLiteDatabase db){
         db.execSQL("CREATE TABLE journal_voices(session INTEGER REFERENCES sessions(id) ON DELETE CASCADE,voice INTEGER,name TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(session,voice))");
@@ -77,7 +87,7 @@ public final class JournalStore extends SQLiteOpenHelper {
         if(words.isEmpty() || words.length()>6000 || words.contains("\n") || words.contains("\r"))throw new IllegalArgumentException("Enter one line of up to 6,000 characters.");
         synchronized(GUARD){
             try(android.database.sqlite.SQLiteStatement update=getWritableDatabase().compileStatement(
-                "UPDATE lines SET original=COALESCE(original,text),text=? WHERE id=? AND text=? AND is_partial<>2")){
+                "UPDATE lines SET original=COALESCE(original,text),text=?,check_words='' WHERE id=? AND text=? AND is_partial<>2")){
                 update.bindString(1,words);update.bindLong(2,id);update.bindString(3,before);
                 if(update.executeUpdateDelete()!=1)throw new IllegalStateException("This line changed or expired. Open it again.");
             }
@@ -161,6 +171,9 @@ public final class JournalStore extends SQLiteOpenHelper {
         return append(session,expectedEpoch,value,partial,voice,null);
     }
     boolean append(long session,long expectedEpoch,String value,boolean partial,int voice,String original){
+        return append(session,expectedEpoch,value,partial,voice,original,"");
+    }
+    boolean append(long session,long expectedEpoch,String value,boolean partial,int voice,String original,String checkWords){
         if(value==null||value.trim().isEmpty()||session<0)return false;
         synchronized(GUARD){
             if(!enabled(app)||epoch(app)!=expectedEpoch)return false;
@@ -170,6 +183,7 @@ public final class JournalStore extends SQLiteOpenHelper {
             }
             ContentValues v=new ContentValues();v.put("session",session);v.put("at",System.currentTimeMillis());
             if(original!=null && !original.equals(value))v.put("original",original);
+            if(!partial && checkWords!=null && !checkWords.isEmpty())v.put("check_words",checkWords);
             v.put("voice",voice);v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);return true;
         }
     }

@@ -2,6 +2,7 @@
 """Generate anonymous speech fixtures with FFmpeg/Flite, mono 16 kHz PCM."""
 import gzip
 from pathlib import Path
+import struct
 import subprocess
 import tempfile
 
@@ -13,9 +14,27 @@ SCRIPTS = {
     'coin': ['I call it glimbershine.', 'That is a word I made up for the light that stays after dark.'],
 }
 
+def choice_fixture(source):
+    # Each turn is independently playable for save, cancel and timeout checks.
+    with (ASSETS / 'creative-choice.pcm.gz').open('wb') as out:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=out, mtime=0) as archive:
+            for phrase in ('The room has a paper lantern.', 'Hey Recall save as.', 'Line.', 'Cancel.'):
+                source.write_text(phrase)
+                audio = subprocess.check_output(['ffmpeg', '-hide_banner', '-loglevel', 'error',
+                    '-f', 'lavfi', '-i', f'flite=textfile={source}:voice=slt', '-ar', '16000',
+                    '-ac', '1', '-f', 's16le', '-'])
+                archive.write(struct.pack('>I', len(audio)))
+                archive.write(audio)
+            unclear = ASSETS.parents[1] / 'android/res/raw/recall_unclear.ogg'
+            cue = subprocess.check_output(['ffmpeg', '-hide_banner', '-loglevel', 'error',
+                '-i', str(unclear), '-ar', '16000', '-ac', '1', '-f', 's16le', '-'])
+            archive.write(struct.pack('>I', len(cue)))
+            archive.write(cue)
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / 'line.txt'
+        choice_fixture(source)
         for name, lines in SCRIPTS.items():
             result = bytearray()
             for line in lines:

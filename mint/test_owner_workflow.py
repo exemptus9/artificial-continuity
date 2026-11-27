@@ -114,6 +114,11 @@ class OwnerWorkflow(unittest.TestCase):
             capped=web.items(self.arc,"clip","suffralchmey",10,0,similar=True)["similar"]
             self.assertTrue(capped["limited"]);self.assertEqual(capped["checked"],0)
         self.assertIsNone(web.journal_match("2026-12-12 10:03:20 -05:00  [capture status] blue clock",["clock"]))
+        revised="2026-12-12 10:03:20 -05:00  Blue flame\n  Originally heard · blue frame"
+        first=web.journal_match(revised,["frame"])
+        self.assertEqual(first["field"],"Originally heard")
+        self.assertEqual(first["at"],web.journal_match(revised,["flame"])["at"])
+        self.assertIsNone(web.journal_match("Header\n  Originally heard · hidden",["hidden"]))
         stamp=web.journal_match("2026-12-12 10:03:20 -05:00  Blue clock",["clock"])
         self.assertEqual(stamp["at"],1797087800000)
 

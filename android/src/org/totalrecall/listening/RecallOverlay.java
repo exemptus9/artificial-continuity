@@ -338,6 +338,7 @@ public final class RecallOverlay {
                     String route=ready?RecallService.activeInputRoute():"";
                     if(!route.isEmpty())diagnostics+="\nMic · "+route;
                     if(ready && !LiveCapture.micSignal.isEmpty())diagnostics+="\n"+LiveCapture.micSignal;
+                    if(CuePlaybackGate.active())diagnostics+="\nVoice prompt playing · respond when it finishes";
                     if(clipped)diagnostics+=" · Clipping";
                     long now=SystemClock.elapsedRealtime();
                     if(now>=nextBackupCheck){
@@ -564,6 +565,10 @@ public final class RecallOverlay {
                 });
                 control(sizes,"Hide","Dismiss the overlay and keep the current microphone state",v->stop());
                 if(!preview){
+                    LinearLayout spoken=row(body);
+                    control(spoken,"Hear status","Hear current recording status",v->command(RecallService.SPEAK_STATUS));
+                    control(spoken,"Last result","Hear the most recent capture or recovery result",v->command(RecallService.REPEAT_RESULT));
+                    control(spoken,"Spoken help","Hear how to use voice commands",v->command(RecallService.SPEAK_HELP));
                     LinearLayout extra=row(body);
                     missed=control(extra,"Missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Keep requested…"));
                     words=control(extra,showWords?"Words off":"Words on",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));

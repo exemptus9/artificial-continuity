@@ -42,7 +42,7 @@ def seed(arc, desk):
     aac = arc.root/'synthesis.aac'
     subprocess.run(['ffmpeg','-nostdin','-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=356:sample_rate=16000:duration=2','-af','apad=pad_dur=118','-c:a','aac','-f','adts','-y',str(aac)],check=True)
     line=datetime.fromtimestamp((stamp-40000)/1000,timezone.utc).strftime('%Y-%m-%d %H:%M:%S Z')
-    journal=(line+'  An anonymous test transcript.\n').encode()
+    journal=(line+'  An anonymous test transcript.\n  Originally heard · An anemone test transcript.\n').encode()
     data=aac.read_bytes();sig=hashlib.sha256(data).hexdigest()
     for uid,kind,title,body,time_offset,media in [('synthetic-segment','segment','Morning audio',data,60000,'audio/aac'),('synthetic-journal','journal','Morning journal',journal,40000,'text/plain')]:
         arc.begin(dict(id=uid,title=title,kind=kind,mediaType=media,sha256=hashlib.sha256(body).hexdigest(),bytes=len(body),startedAtMillis=stamp-time_offset,durationMs=120000 if kind=='segment' else 3000));arc.put(uid,0,body)
@@ -131,12 +131,16 @@ def main():
             if not external:
                 page.get_by_label('Item type',exact=True).select_option('all');page.get_by_role('searchbox').fill('returning');expect(page.get_by_text('A new word for returning',exact=True)).to_be_visible();expect(page.get_by_text('A line for the morning',exact=True)).to_have_count(0)
                 page.get_by_role('searchbox').fill('unmatched-zebra');expect(page.get_by_text('No matches.')).to_be_visible();page.get_by_role('searchbox').fill('');expect(page.get_by_text('Morning journal',exact=True)).to_be_visible();page.get_by_text('Morning journal',exact=True).click();expect(page.get_by_text('An anonymous test transcript.')).to_be_visible();page.get_by_label('Find words in this journal').fill('anonymous')
+                page.get_by_role('button',name='Compare changed wording').click()
+                page.get_by_label('Find words in this journal').fill('anemone')
+                expect(page.get_by_text('An anemone test transcript.', exact=True)).to_be_visible()
                 page.get_by_role('button',name='Find audio here').click()
                 page.get_by_role('button',name='Open session audio').click()
                 audio=page.get_by_label('Original recording')
                 wait_audio(audio,'a=>a.readyState>=1 && a.currentTime>=15 && a.currentTime<=18')
                 page.get_by_role('button',name='Back to journal').click()
-                expect(page.get_by_label('Find words in this journal')).to_have_value('anonymous')
+                expect(page.get_by_label('Find words in this journal')).to_have_value('anemone')
+                expect(page.get_by_role('button',name='Show all lines')).to_have_attribute('aria-pressed','true')
                 page.keyboard.press('Escape');nav('Overview')
                 page.get_by_role('button',name='Coined words',exact=True).click()
                 expect(page.get_by_label('Clip label')).to_have_value('coined')

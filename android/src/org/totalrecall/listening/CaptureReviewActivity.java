@@ -19,6 +19,7 @@ public final class CaptureReviewActivity extends Activity {
     private LinearLayout page,body,nav,results;
     private TextView status,words,draft,context,scope,voiceState,micCheck;
     private CaptureCues preview;
+    private android.app.AlertDialog wearable;
     private Button liveTab,savedTab;
     private Switch journal;
     private boolean saved,visible,reading;
@@ -59,7 +60,7 @@ public final class CaptureReviewActivity extends Activity {
     }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("saved",saved);}
     @Override protected void onStart(){super.onStart();RecallOverlay.reviewVisible(this,true);}
-    @Override protected void onStop(){RecallOverlay.reviewVisible(this,false);super.onStop();}
+    @Override protected void onStop(){if(wearable!=null){wearable.dismiss();wearable=null;}RecallOverlay.reviewVisible(this,false);super.onStop();}
     @Override protected void onResume(){super.onResume();visible=true;nextRead=0;main.removeCallbacks(pulse);pulse.run();}
     @Override protected void onPause(){visible=false;stopPreview();main.removeCallbacks(pulse);super.onPause();}
     @Override protected void onDestroy(){io.shutdownNow();super.onDestroy();}
@@ -102,6 +103,7 @@ public final class CaptureReviewActivity extends Activity {
             });
             LinearLayout microphone=card("Microphone check");
             micCheck=text(microphone,"",15,true);
+            action(microphone,"Wearable mic check",()->wearable=WearableMicDialog.show(this));
             text(microphone,"Speak a short line after two quiet seconds. Compare the speech-band input with the room floor. If the levels stay close, move the microphone nearer or try a quieter spot. Decoder gain applies to captions and wake commands.",14,false);
             Switch quiet=new Switch(this);quiet.setText("Boost quiet speech for transcription");quiet.setMinHeight(dp(48));
             quiet.setChecked(getSharedPreferences("recall-speech",0).getBoolean("liftQuiet",true));microphone.addView(quiet);
@@ -112,6 +114,10 @@ public final class CaptureReviewActivity extends Activity {
             });
             reach.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("extendedReach",on).apply());
             text(microphone,"Standard boost allows up to 12×. Extended reach allows up to 32× when the input rises above the room. The saved audio stays at its original level.",14,false);
+            Switch noisyCommands=new Switch(this);noisyCommands.setText("Voice commands in heavy noise");noisyCommands.setMinHeight(dp(48));
+            noisyCommands.setChecked(getSharedPreferences("recall-speech",0).getBoolean("commandNoise",false));microphone.addView(noisyCommands);
+            noisyCommands.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("commandNoise",on).apply());
+            text(microphone,"Try this if commands are missed in heavy, steady noise. Switch it off if more commands are missed in ordinary room noise. This adjusts command recognition only.",14,false);
             action(microphone,"Learn room noise · 2 seconds",()->{
                 if(!LiveCapture.snapshot().receiving){Toast.makeText(this,"Start listening and wait for an active microphone first.",Toast.LENGTH_LONG).show();return;}
                 getSharedPreferences("recall-speech",0).edit().putBoolean("reduceRoom",true).apply();
@@ -166,17 +172,35 @@ public final class CaptureReviewActivity extends Activity {
         speech.setOnCheckedChangeListener((v,on)->prefs.edit().putBoolean("spokenReceipts",on).apply());
         cueSwitch(options,prefs,"spokenAuto","Announce automatically saved passages, word candidates and decisions");
         cueSwitch(options,prefs,"spokenReady","Say “Ready” when the wake word registers");
-        cueSwitch(options,prefs,"spokenRetry","Say “Try that again” for an unclear command");
+        cueSwitch(options,prefs,"spokenRetry","Suggest a next command when spoken words are unclear");
+        cueSwitch(options,prefs,SpokenChoices.PREF,"Speak choices during practice and when closing");
+        cueSwitch(options,prefs,"spokenRecovery","Announce microphone gaps, recovery and actions that need attention");
+        cueSwitch(options,prefs,"spokenAnswers","Answer spoken questions and ask which category to save");
+        action(options,"Hands-free voice setup",()->new android.app.AlertDialog.Builder(this)
+            .setTitle("Hands-free voice setup")
+            .setMessage("Enable spoken wake and save receipts, help with missed commands, microphone recovery and answers to status questions. Existing chime, automatic-save and training choices stay under their individual switches.")
+            .setNegativeButton("Keep my settings",null).setPositiveButton("Enable spoken guide",(d,w)->{
+                prefs.edit().putBoolean("spokenReady",true).putBoolean("spokenReceipts",true).putBoolean("spokenRetry",true)
+                    .putBoolean("spokenRecovery",true).putBoolean("spokenAnswers",true).apply();
+                for(int i=0;i<options.getChildCount();i++){
+                    View view=options.getChildAt(i);
+                    if(view instanceof Switch && view.getTag() instanceof String)
+                        ((Switch)view).setChecked(CaptureCues.enabled(prefs,(String)view.getTag()));
+                }
+                speech.setChecked(true);
+            }).show());
         String[] levels={"Soft","Clear","Prominent"};
         Button level=action(options,"Cue level · "+levels[cueLevel(prefs)],()->{});
         level.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setTitle("Cue level")
             .setSingleChoiceItems(levels,cueLevel(prefs),(dialog,i)->{prefs.edit().putInt("cueLevel",i).apply();level.setText("Cue level · "+levels[i]);dialog.dismiss();}).setNegativeButton("Cancel",null).show());
+        text(options,"After your wake word, say “status”, “help”, or “repeat” to hear the last result. For a category choice, ask to save as, wait for the question to finish, then answer word, line, decision, or cancel. Recordings keep the original sound while recognition waits for the app to finish speaking.",14,false);
         text(options,"Two rising notes mean Recall heard the wake word. A falling chime confirms a save. Use your media volume buttons to adjust the actual loudness.",14,false);
         LinearLayout tests=row(options);
         action(tests,"Test wake",()->previewCue(CaptureCues.Cue.WAKE));action(tests,"Test save",()->previewCue(CaptureCues.Cue.CLIP));
         action(options,"Hear announcement examples",()->{
             CaptureCues.Cue[] cues=CaptureCues.Cue.values();
-            String[] names={"Ready","Moment saved","Take stored","Creative passage saved","Word candidate saved","Decision saved","Session started","Session saved","Point marked","Try that again"};
+            String[] names=new String[cues.length];
+            for(int i=0;i<cues.length;i++)names[i]=cues[i].words;
             new android.app.AlertDialog.Builder(this).setTitle("Play a spoken example").setItems(names,(d,i)->{
                 if(preview==null)preview=new CaptureCues(this);preview.previewVoice(cues[i]);
             }).show();
@@ -187,7 +211,7 @@ public final class CaptureReviewActivity extends Activity {
         dialog.setOnDismissListener(dialogInterface->{stopPreview();setVolumeControlStream(android.media.AudioManager.USE_DEFAULT_STREAM_TYPE);});dialog.show();
     }
     private void cueSwitch(LinearLayout row,android.content.SharedPreferences p,String key,String title){
-        Switch toggle=new Switch(this);toggle.setMinHeight(dp(48));toggle.setText(title);toggle.setChecked(p.getBoolean(key,false));row.addView(toggle);
+        Switch toggle=new Switch(this);toggle.setMinHeight(dp(48));toggle.setText(title);toggle.setTag(key);toggle.setChecked(CaptureCues.enabled(p,key));row.addView(toggle);
         toggle.setOnCheckedChangeListener((v,on)->p.edit().putBoolean(key,on).apply());
     }
     private int cueLevel(android.content.SharedPreferences p){return Math.max(0,Math.min(2,p.getInt("cueLevel",2)));}

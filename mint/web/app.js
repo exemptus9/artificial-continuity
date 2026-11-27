@@ -880,10 +880,17 @@ function micComparison(full,primary){
 
 function journalLines(text) {
   const result=[],pattern=/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$/;
+  let last=null;
   for(const line of text.split('\n')){
-    const m=pattern.exec(line);if(!m)continue;
+    const m=pattern.exec(line);
+    if(!m){
+      if(last && !last.status && line.startsWith('  Originally heard · '))last.original=line.slice('  Originally heard · '.length);
+      last=null;
+      continue;
+    }
     const at=Date.parse(m[1]+'T'+m[2]+m[3]);
-    if(Number.isFinite(at))result.push({at,text:m[4],status:m[4].startsWith('[capture status]')});
+    last=Number.isFinite(at)?{at,text:m[4],original:'',status:m[4].startsWith('[capture status]')}:null;
+    if(last)result.push(last);
   }
   return result;
 }
@@ -892,17 +899,27 @@ function journalReader(full,saved={}){
   if(!lines.length)return contentBlock('Journal text',raw||'No text supplied.');
   const box=e('section','detail-block journal-reader'),q=e('input');q.type='search';q.value=saved.query??state.query;q.placeholder='Find words in this journal';q.setAttribute('aria-label','Find words in this journal');
   const count=e('p','section-note'),results=e('div'),pages=e('div','quick-find');
-  const batch=20;let start=saved.start||0,version=0;
+  const batch=20;let start=saved.start||0,version=0,changedOnly=Boolean(saved.changedOnly);
+  const compare=button('',()=>{changedOnly=!changedOnly;start=0;draw();});
+  compare.hidden=!lines.some(row=>row.original);
   function draw(){
     const revision=++version,terms=q.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
-    const rows=lines.filter(row=>terms.every(term=>row.text.toLocaleLowerCase().includes(term)));
+    compare.textContent=changedOnly?'Show all lines':'Compare changed wording';
+    compare.setAttribute('aria-pressed',String(changedOnly));
+    const rows=lines.filter(row=>(!changedOnly||row.original) &&
+      terms.every(term=>(row.text+' '+row.original).toLocaleLowerCase().includes(term)));
     count.textContent=rows.length?((start+1)+'–'+Math.min(start+batch,rows.length)+' of '+plural(rows.length,'line')):'No matching lines.';
     results.replaceChildren();pages.replaceChildren();
     for(const line of rows.slice(start,start+batch)){
       const entry=e('article','journal-line');
       const stamp=e('time','row-sub',dateTime(line.at));stamp.dateTime=new Date(line.at).toISOString();
       const choices=e('div','line-actions');
-      add(entry,stamp,e('p','',line.text),choices);results.append(entry);
+      add(entry,stamp,e('p','',line.text));
+      if(line.original){
+        const first=e('details');first.open=changedOnly||terms.some(t=>line.original.toLocaleLowerCase().includes(t));
+        add(first,e('summary','','Originally heard'),e('p','',line.original));entry.append(first);
+      }
+      entry.append(choices);results.append(entry);
       if(line.status)continue;
       const locate=button('Find audio here',async()=>{
         locate.disabled=true;
@@ -912,7 +929,7 @@ function journalReader(full,saved={}){
           choices.replaceChildren();
           if(!match.items.length){choices.append(e('span','section-note','No archived recording covers this timestamp.'));return;}
           for(const recording of match.items){
-            const btn=button('Open '+(recording.kind==='segment'?'session audio':recording.title||'selected clip'),()=>openItem(recording,{at:line.at,journal:full,reader:{query:q.value,start}}),'btn');
+            const btn=button('Open '+(recording.kind==='segment'?'session audio':recording.title||'selected clip'),()=>openItem(recording,{at:line.at,journal:full,reader:{query:q.value,start,changedOnly}}),'btn');
             choices.append(btn);
           }
           if(match.more)choices.append(e('span','section-note','Showing the first 12 overlapping recordings.'));
@@ -925,7 +942,7 @@ function journalReader(full,saved={}){
   q.oninput=()=>{start=0;draw();};draw();
   const original=e('details');original.append(e('summary','','Full journal text'));
   original.ontoggle=()=>{if(original.open&&original.childElementCount===1)original.append(e('p','raw-journal',raw));};
-  return add(box,e('h3','','Journal text'),q,e('p','section-note','Timestamps mark when speech was recognized. Linked audio opens with a short lead-in.'),count,results,pages,original);
+  return add(box,e('h3','','Journal text'),q,compare,e('p','section-note','Timestamps mark when speech was recognized. Linked audio opens with a short lead-in.'),count,results,pages,original);
 }
 function writingNote(full){
   const text=[full.title||'Untitled clip',dateTime(full.startedAtMillis),full.category,

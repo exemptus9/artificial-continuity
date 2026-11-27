@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+python3 check-spoken-cues.py
 SOURCE="${RECALL_ENGINE_SOURCE:-../android/src/org/totalrecall/listening/SelectiveEngine.java}"
 if [[ ! -f ../android/assets/listening/cmudict-prosody.tsv.gz ]]; then
   python3 ../android/tests/prepare-prosody.py

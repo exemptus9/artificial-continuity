@@ -96,6 +96,7 @@ jobs:
           }
           build_prior 0.11.0 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
           build_prior 0.28.1 d84cf4d24f8ae22d130ae7f891c842ca2f36d8ec
+          build_prior 0.29.0 d735d2489e1341dfb85d05eb8fd1f901a8e7d570
           rm -f "$RECALL_KEYSTORE"
       - name: Verify in-place upgrade and exercise current Android app
         run: |
@@ -109,6 +110,8 @@ jobs:
           # The first probe required a clean emulator and has verified and removed its synthetic fixture.
           "$adb" uninstall org.continuity.recall.test
           timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.28.1/android/build/TotalRecall-0.28.1.apk" "$PWD/$current_apk" 30
+          "$adb" uninstall org.continuity.recall.test
+          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.29.0/android/build/TotalRecall-0.29.0.apk" "$PWD/$current_apk" 31
           timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
       - name: Exercise codec, pinned transfer and browser against the packaged Mint app
         run: |

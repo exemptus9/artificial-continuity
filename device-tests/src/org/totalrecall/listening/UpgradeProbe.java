@@ -23,10 +23,12 @@ public final class UpgradeProbe extends Instrumentation {
     private static final String TITLE = "Upgrade fixture";
     private static final String CORRECTION = "Preserve the blue book";
     private String phase;
+    private boolean voicePracticeFixture;
 
     @Override public void onCreate(Bundle args) {
         super.onCreate(args);
         phase = args == null ? "" : args.getString("phase", "");
+        voicePracticeFixture = args != null && "31".equals(args.getString("sourceVersion"));
         start();
     }
 
@@ -36,6 +38,7 @@ public final class UpgradeProbe extends Instrumentation {
         SharedPreferences fixture = target.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         try (Store store = new Store(target)) {
             if ("seed".equals(phase)) {
+                if (voicePracticeFixture) UpgradeVoicePractice.seed(target);
                 String marker = "upgrade-" + UUID.randomUUID();
                 Method save = Store.class.getDeclaredMethod("save", SelectiveEngine.Clip.class);
                 save.setAccessible(true);
@@ -75,6 +78,10 @@ public final class UpgradeProbe extends Instrumentation {
                         .commit(), "Could not persist upgrade witness");
                 receipt.putString("detail", "Created a WAV and catalog row with feedback, original transcript, title and correction.");
             } else if ("verify".equals(phase)) {
+                if (voicePracticeFixture) {
+                    UpgradeVoicePractice.verify(target);
+                    receipt.putString("voicePractice", "The synthetic speaker example, voice-only correction and general spelling survived replacement.");
+                }
                 String marker = fixture.getString("marker", null);
                 check(marker != null, "Package replacement lost the fixture");
                 Store.Moment row = exactlyOne(store.search(marker));
