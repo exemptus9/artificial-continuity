@@ -47,14 +47,21 @@ APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
 MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.28.0_all.deb"
 
-def login_page(failed=False):
+INSTALLER_NAMES = {"/downloads/android": "Android app", "/downloads/mint": "Linux Mint app"}
+
+def login_page(failed=False, installer=""):
+    name = INSTALLER_NAMES.get(installer)
+    title = "Download the " + name if name else "Your archive"
+    description = "Sign in to download your Total Recall installer." if name else "Listen to saved audio, find a clip, or connect your phone."
+    hidden = '<input type="hidden" name="installer" value="' + installer + '">' if name else ""
+    button = "Sign in and download" if name else "Open private archive"
     prompt = "That key did not match. Try the owner key from your private access file." if failed else "Use the owner key from your private access file."
     return ("""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Total Recall · Sign in</title><style>
     *{box-sizing:border-box}body{margin:0;min-height:100svh;background:#f7f5ec;color:#18382e;font:1rem/1.5 system-ui;display:grid;place-items:center;padding:24px}
     main{width:min(100%,27rem)}header{display:flex;align-items:center;gap:12px;font:bold 1.3rem Georgia,serif}svg{width:38px;height:38px}h1{font:normal clamp(2.5rem,9vw,4rem)/1 Georgia,serif;letter-spacing:-.04em;margin:48px 0 14px}p{color:#496459}
     label{display:block;font-weight:600;margin:26px 0 6px}input,button{width:100%;padding:14px;border-radius:10px;font:inherit}
     input{border:1px solid #80988b;background:white;color:#172d25}button{margin-top:12px;background:#164c3d;color:white;border:0;font-weight:650;cursor:pointer}
-    :focus-visible{outline:3px solid #b17728;outline-offset:3px}</style><main><header><svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="#196348" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M41 11 A23 23 0 1 0 54 37 M17 32h5l5-9 5 18 6-17 4 8h6"/><circle cx="50" cy="19" r="4" fill="#ac5b26" stroke="none"/></svg>Total Recall</header><h1>Your archive</h1><p>Listen to saved audio, find a clip, or connect your phone.</p><form method="post" action="/login"><label for="key">Owner key</label><input id="key" name="key" type="password" autocomplete="current-password" minlength="20" maxlength="160" required><p>"""+prompt+"""</p><button>Open private archive</button></form><p><a href="/early-access">Explore Total Recall and join early access</a></p></main></html>""").encode()
+    :focus-visible{outline:3px solid #b17728;outline-offset:3px}</style><main><header><svg viewBox="0 0 64 64" aria-hidden="true" fill="none" stroke="#196348" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M41 11 A23 23 0 1 0 54 37 M17 32h5l5-9 5 18 6-17 4 8h6"/><circle cx="50" cy="19" r="4" fill="#ac5b26" stroke="none"/></svg>Total Recall</header><h1>"""+title+"""</h1><p>"""+description+"""</p><form method="post" action="/login">"""+hidden+"""<label for="key">Owner key</label><input id="key" name="key" type="password" autocomplete="current-password" minlength="20" maxlength="160" required><p>"""+prompt+"""</p><button>"""+button+"""</button></form><p><a href="/early-access">Explore Total Recall and join early access</a></p></main></html>""").encode()
 
 def qr_png(code):
     bits=recall_desk.qr_bits(code)
@@ -144,8 +151,8 @@ class HostedHandler(recall_web.OwnerHandler):
             return hmac.compare_digest(want,mac)
         except (KeyError,ValueError,CookieError):return False
 
-    def redirects(self,value):
-        self.send_response(303);self.send_header("Location","/");self.send_header("Content-Length","0")
+    def redirects(self,value,location="/"):
+        self.send_response(303);self.send_header("Location",location);self.send_header("Content-Length","0")
         self.send_header("Set-Cookie",value);self.end_headers()
 
     def get_pair(self):
@@ -245,6 +252,8 @@ class HostedHandler(recall_web.OwnerHandler):
         if path=="/v2/status": return recall_desk.TransferHandler.do_GET(self)
         if path.startswith("/open/"): return self.json(404,{"error":"Unknown route"})
         if not self.auth():
+            if self.command == "GET" and path in INSTALLER_NAMES and "text/html" in self.headers.get("Accept","") and not self.headers.get("Range"):
+                return self.emit(200, login_page(installer=path), "text/html; charset=utf-8")
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
         if path=="/downloads/android":return self.download_apk()
@@ -311,13 +320,19 @@ class HostedHandler(recall_web.OwnerHandler):
         except recall_archive.Failure as e:return self.json(e.status,{"error":str(e)})
         ip=self.headers.get("X-Real-IP",self.client_address[0])[:100]
         if not self.server.login_allowed(ip):return self.json(429,{"error":"Too many attempts. Try again in a few minutes."})
-        try: key=parse_qs(self.rfile.read(size).decode("ascii"),max_num_fields=2).get("key",[""])[0]
-        except (UnicodeError,ValueError):key=""
+        try:
+            fields = parse_qs(self.rfile.read(size).decode("ascii"), max_num_fields=2)
+        except (UnicodeError, ValueError):
+            fields = {}
+        key = fields.get("key", [""])[0]
+        installer = fields.get("installer", [""])[0]
+        if installer not in INSTALLER_NAMES:
+            installer = ""
         if not hmac.compare_digest(hashlib.sha256(key.encode()).hexdigest(),self.server.owner_hash):
-            return self.emit(403,login_page(True),"text/html; charset=utf-8")
+            return self.emit(403,login_page(True, installer),"text/html; charset=utf-8")
         stamp=str(int(time.time())+30*DAY);msg=stamp+"."+secrets.token_hex(16)
         signed=msg+"."+hmac.digest(self.server.session_key,msg.encode(),"sha256").hex()
-        return self.redirects(COOKIE+"="+signed+"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age="+str(30*DAY))
+        return self.redirects(COOKIE+"="+signed+"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age="+str(30*DAY), installer or "/")
 
     def do_PUT(self):
         if not self.valid_host(self.headers.get("Host","")):return self.json(403,{"error":"Unrecognized origin"})

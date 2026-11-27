@@ -129,6 +129,22 @@ class HostedArchiveTests(unittest.TestCase):
         rows=json.loads(self.request("GET","/api/early-access",headers=self.login())[2])["signups"]
         self.assertEqual([row["email"] for row in rows],["person@example.com"])
 
+    def test_browser_installer_sign_in_returns_to_requested_package(self):
+        browser = {"Accept": "text/html,application/xhtml+xml"}
+        for path in cloud_host.INSTALLER_NAMES:
+            status, headers, form = self.request("GET", path, headers=browser)
+            self.assertEqual((status, headers["Content-Type"]), (200, "text/html; charset=utf-8"))
+            self.assertIn(('name="installer" value="'+path+'"').encode(), form)
+            self.assertIn(b"Sign in and download", form)
+            self.assertEqual(self.request("GET", path, headers={**browser, "Range": "bytes=10-"})[0], 401)
+            status, _, retry_form = self.request("POST", "/login", urlencode({"key":"wrong", "installer":path}), self.origin)
+            self.assertEqual(status, 403)
+            self.assertIn(('name="installer" value="'+path+'"').encode(), retry_form)
+            status, headers, _ = self.request("POST", "/login", urlencode({"key":self.owner_key, "installer":path}), self.origin)
+            self.assertEqual((status, headers["Location"]), (303, path))
+        status, headers, _ = self.request("POST", "/login", urlencode({"key":self.owner_key, "installer":"//elsewhere.invalid"}), self.origin)
+        self.assertEqual((status, headers["Location"]), (303, "/"))
+
     def test_mint_installer_requires_sign_in_and_returns_the_package(self):
         package = self.root / "total-recall-desk_0.28.0_all.deb"
         package.write_bytes(b"!<arch>\nfixture")
