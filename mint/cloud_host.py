@@ -36,9 +36,10 @@ SPEAKER_APK = ("TotalRecall-0.17.0.apk",70027652,"da51ecdbb9ec9db9a67b0b4c98badf
 PASSAGE_APK = ("TotalRecall-0.18.0.apk",70035844,"734ae0915ee467b9e91b4867e6664bd15b7b5b1e029392d0f62b6617cddff2b0")
 VOICE_PROFILE_APK = ("TotalRecall-0.19.0.apk",70044036,"b69eb035739c0a84793857d7c585e124885ad0cd002ed305d6f8d7802df16cd7")
 OWNER_PREVIOUS_APK = ("TotalRecall-0.23.0.apk",70072789,"4227d66588215e5a335007076af732c0e884726369ef8e2d2960d85c67d7a6b7")
-APK_NAME = "TotalRecall-0.24.0.apk"
-APK_SIZE = 70101738
-APK_SHA = "bf8b090d2b08fb36efcae7d185f5e382dcd8aed7e67e65c55f83db6c8b7e7454"
+LOCK_SCREEN_APK = ("TotalRecall-0.24.0.apk",70101738,"bf8b090d2b08fb36efcae7d185f5e382dcd8aed7e67e65c55f83db6c8b7e7454")
+APK_NAME = "TotalRecall-0.25.0.apk"
+APK_SIZE = 70105834
+APK_SHA = "0ef1c1546f75802d2a6a10be08f2f0f3420dd50f1e558934b9c5d72fe914692d"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
@@ -155,7 +156,7 @@ class HostedHandler(recall_web.OwnerHandler):
     def download_apk(self,release=None):
         media=self.server.archive.media_store
         try:
-            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),OWNER_PREVIOUS_APK,VOICE_PROFILE_APK,PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
+            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),LOCK_SCREEN_APK,OWNER_PREVIOUS_APK,VOICE_PROFILE_APK,PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
             for name,size,digest in choices:
                 key="total-recall/installers/"+digest+"/"+name
                 head=media._head(key)
@@ -226,7 +227,7 @@ class HostedHandler(recall_web.OwnerHandler):
                     ContentType=APK_MIME,ContentDisposition='attachment; filename="'+APK_NAME+'"',Metadata={"sha256":APK_SHA})
         except recall_archive.Failure as err:return self.json(err.status,{"error":str(err)})
         except Exception:return self.json(503,{"error":"Could not store the installer."})
-        return self.json(200,{"path":"/downloads/android","version":"0.24.0"})
+        return self.json(200,{"path":"/downloads/android","version":"0.25.0"})
 
     def do_GET(self):
         path=urlsplit(self.path).path
@@ -247,7 +248,7 @@ class HostedHandler(recall_web.OwnerHandler):
             return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")
         if path=="/api/early-access":
             return self.json(200,{"signups":early_access.roster(self.server.archive.root)})
-        if path=="/api/android-installer":return self.json(200,{"path":"/downloads/android","version":"0.24.0"})
+        if path=="/api/android-installer":return self.json(200,{"path":"/downloads/android","version":"0.25.0"})
         if path=="/api/phone-pairing":return self.json(200,{"code":self.get_pair(),"origin":"https://"+self.server.public_host})
         if path=="/api/phone-qr.png":
             try:return self.emit(200,qr_png(self.get_pair()),"image/png")
