@@ -296,8 +296,16 @@ public final class ArchiveProbe extends Instrumentation {
             ArchiveStore.Segment excluded=findDuration(store,1300);
             step("Preview exposed the exact queued bytes/hash. Disabled automation stayed idle; Wi-Fi loss and charging policy blocked the job, and a changed policy invalidated the earlier approval.");
             int job=scheduled().getId();
-            shell("dumpsys battery reset");
-            until(()->ArchiveSync.constraints(context).isEmpty(),25000,"Emulator did not resume charging/network");
+            // Supply the plugged-in half of the fixture explicitly. A headless AVD can
+            // legitimately restore a discharging battery when its override is reset.
+            shell("dumpsys battery set ac 1");
+            shell("dumpsys battery set level 100");
+            shell("dumpsys battery set status 5");
+            try{
+                until(()->ArchiveSync.constraints(context).isEmpty(),90000,"Constraint still active");
+            }catch(AssertionError failed){
+                throw new AssertionError("Archive transfer is waiting: "+ArchiveSync.constraints(context)+"; "+shell("dumpsys battery"),failed);
+            }
             shell("cmd jobscheduler run -f "+context.getPackageName()+" "+job);
             until(()->!store.get(source.id).receipt.isEmpty(),90000,
                     "No final matching receipt returned by real Mint receiver");
