@@ -158,6 +158,7 @@ public class SelectiveEngineTest {
         f.engine.text("lantern in the rain",true,true,"Lantern in the Rain");
         f.engine.text("hey recall save as",false);
         check(!f.engine.choicePending());
+        f.engine.text("hey murray call save as",true); // Slightly earlier final from the independent dictation decoder.
         f.engine.text("hey recall save as",true);
         check(f.engine.choicePending() && f.spoken.equals(Arrays.asList("choose")) && f.clips.isEmpty());
         f.sound(4,25000);

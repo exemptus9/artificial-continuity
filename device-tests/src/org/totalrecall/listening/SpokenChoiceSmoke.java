@@ -64,7 +64,7 @@ public final class SpokenChoiceSmoke {
         int initial=store.search("").size();
         try(JournalStore journal=new JournalStore(target)){
             window=construct.newInstance(service,store,journal,speech,events);
-            for(String answer:new String[]{"line","cancel","timeout"}){
+            for(String answer:new String[]{"cancel","timeout","line"}){
                 frozen=null;source.reset();requests.clear();receipts.clear();
                 begin.invoke(window,"choice playback","");
                 int before=saved.size();
@@ -97,7 +97,8 @@ public final class SpokenChoiceSmoke {
                     require(saved.size()==before+1,"Spoken label failed to save one clip");
                     Store.Moment row=null;
                     for(Store.Moment candidate:store.search(""))if(candidate.id==saved.get(before))row=candidate;
-                    require(row!=null && row.kind.equals(SelectiveEngine.POETRY) && row.transcript.contains("paper lantern"),
+                    require(row!=null && row.kind.equals(SelectiveEngine.POETRY) && row.transcript.contains("paper lantern")
+                            && row.cueText!=null && row.cueText.contains("paper lantern") && !row.transcript.endsWith("save as"),
                         "Wrong category or missing source passage");
                     byte[] wav=Files.readAllBytes(row.audio.toPath());
                     require(wav.length==44+frozen.length && Arrays.equals(Arrays.copyOfRange(wav,44,wav.length),frozen),

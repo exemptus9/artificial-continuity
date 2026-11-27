@@ -113,12 +113,12 @@ public final class SelectiveEngine {
         return wake+" "+narrow.group(3);
     }
 
-    private static final Pattern CHOICE_AFTER_UNKNOWN=Pattern.compile("^(?:\\[unk\\] )+(hey recall|total recall|hey lexi|lexi) (save (?:this |that )?as)$");
+    private static final Pattern CHOICE_AFTER_UNKNOWN=Pattern.compile("^(?:.* )?\\[unk\\] (hey recall|total recall|hey lexi|lexi) (save (?:this |that )?as)$");
     // This only asks a question. A second, separate label is still required to write audio.
     private static String corroboratedChoice(String restricted,String original){
         if(restricted==null || original==null || reportedAddress(original))return null;
         java.util.regex.Matcher match=CHOICE_AFTER_UNKNOWN.matcher(restricted);
-        if(!match.matches())return null;
+        if(!match.matches() || CommandEndpoints.REPORTING.matcher(restricted).find())return null;
         String open=normalize(original),request=match.group(2);
         return !CommandEndpoints.REPORTING.matcher(open).find() && open.endsWith(" "+request)?match.group(1)+" "+request:null;
     }
@@ -646,7 +646,7 @@ public final class SelectiveEngine {
                     keepAs(action==KEEP_WORD?FORGE:action==KEEP_LINE?POETRY:DECISION);
                 }else if(action==CHOOSE){
                     closeChoice(null);
-                    pendingRewind=rewindSnapshot();
+                    pendingRewind=rewindSnapshot(true);
                     if(pendingRewind!=null){
                         choiceUntil=at+8L*RATE;choiceCueSamples=0;
                         listener.onSpokenRequest("choose");
@@ -714,7 +714,7 @@ public final class SelectiveEngine {
     synchronized void keepAs(String category) {
         if (!FORGE.equals(category) && !POETRY.equals(category) && !DECISION.equals(category))
             throw new IllegalArgumentException("Unknown rewind category");
-        Clip snapshot=rewindSnapshot();
+        Clip snapshot=rewindSnapshot(false);
         if(snapshot!=null)publishRewind(snapshot,category,false);
     }
 
@@ -741,7 +741,10 @@ public final class SelectiveEngine {
         if(message!=null)listener.onVoice(message,false);
     }
 
-    private Clip rewindSnapshot(){
+    // The independent dictation endpoint can finalize the question just before the restricted
+    // decoder confirms it. Keep the original PCM but never teach its short wake/command reading.
+    private static final Pattern CHOICE_READING=Pattern.compile("^(?:(?:hey|he|they|can|total|lexi|recall)(?: [^ ]+){0,3} )?save (?:this |that )?as$");
+    private Clip rewindSnapshot(boolean spokenChoice){
         if (stopped || at == 0) {
             listener.onVoice("No audio buffered yet", false);
             return null;
@@ -754,6 +757,8 @@ public final class SelectiveEngine {
         String cue = "";
         long cueStart = Math.max(first, at - 12L * RATE);
         for (Segment segment : recent) {
+            if(spokenChoice && segment==recent.peekLast() && at-segment.at<=RATE*3/2
+                    && CHOICE_READING.matcher(segment.normalized).matches())continue;
             if (segment.at >= first) lines.add(segment.text);
             if (segment.at >= cueStart) cue = segment.learningText;
         }
