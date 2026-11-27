@@ -13,7 +13,8 @@ import android.text.TextUtils;
 import android.view.*;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.*;
-import java.util.Locale;
+import java.text.DateFormat;
+import java.util.Date;
 
 /** Session-scoped floating controls. Microphone acquisition always belongs to RecallService. */
 public final class RecallOverlay {
@@ -72,6 +73,41 @@ public final class RecallOverlay {
         options(c).edit().putBoolean("captions",value).apply();
         MAIN.post(()->{ if(active!=null && active.visible) { active.preserveBoundary();active.rebuild(); } });
     }
+    static final String[] SAVE_NAMES={"Recent audio","Forge word","Poem line","Project decision"};
+    static final String[] SAVE_ACTIONS={RecallService.KEEP,RecallService.KEEP_WORD,RecallService.KEEP_LINE,RecallService.KEEP_DECISION};
+    static int holdChoice(Context c){
+        int index=options(c).getInt("holdSave",0);
+        return index>=0 && index<SAVE_ACTIONS.length?index:0;
+    }
+    static void applyWritingSetup(Context c,int index){
+        if(index!=0 && index!=1)return;
+        SharedPreferences p=options(c);
+        SharedPreferences.Editor edit=p.edit();
+        if(!p.contains("previousFocus")){
+            edit.putString("previousFocus",p.getString("miniFocus","auto"))
+                .putInt("previousHold",holdChoice(c)).putInt("previousLines",p.getInt("captionLines",4))
+                .putBoolean("hadFocus",p.contains("miniFocus")).putBoolean("hadHold",p.contains("holdSave"))
+                .putBoolean("hadLines",p.contains("captionLines"));
+        }
+        boolean poet=index==0;
+        edit.putString("miniFocus",poet?"buffer":"stats").putInt("holdSave",poet?2:1)
+            .putInt("captionLines",poet?6:4).apply();
+        refreshOptions();
+    }
+    static void restoreWritingSetup(Context c){
+        SharedPreferences p=options(c);
+        if(!p.contains("previousFocus"))return;
+        SharedPreferences.Editor edit=p.edit();
+        if(p.getBoolean("hadFocus",false))edit.putString("miniFocus",p.getString("previousFocus","auto"));else edit.remove("miniFocus");
+        if(p.getBoolean("hadHold",false))edit.putInt("holdSave",p.getInt("previousHold",0));else edit.remove("holdSave");
+        if(p.getBoolean("hadLines",false))edit.putInt("captionLines",p.getInt("previousLines",4));else edit.remove("captionLines");
+        edit.remove("previousFocus").remove("previousHold").remove("previousLines")
+            .remove("hadFocus").remove("hadHold").remove("hadLines").apply();
+        refreshOptions();
+    }
+    static void refreshOptions(){
+        MAIN.post(()->{if(active!=null && active.visible)active.rebuild();});
+    }
     public static void reset(Context c) {
         options(c).edit().clear().apply();
         MAIN.post(RecallOverlay::stop);
@@ -105,6 +141,11 @@ public final class RecallOverlay {
         TextView caption, status, detail, keep, missed, words,takeControl,latest,contextCue;
         ProgressBar meter;
         InputTrail trail;
+        TextView sessionSummary,sessionToggle,sessionMark,saveAs;
+        LinearLayout saveKinds;
+        boolean kindsOpen;
+        long receiptTime=-1,hiddenClipId=-1,nextBackupCheck;
+        String receiptStamp="",backupReadout="";
         String hiddenPartial="";
         ScrollView panelScroll;
         boolean toolsOpen;
@@ -112,7 +153,7 @@ public final class RecallOverlay {
         long firstVisibleFinal,requestUntil;
         int requestedAtCount;
         String requestLabel="",partialSeen="",tentativeCue="";
-        int screenWidth;
+        int screenWidth,screenHeight;
         long expires;
         final BroadcastReceiver screen=new BroadcastReceiver() {
             @Override public void onReceive(Context c,Intent i){
@@ -156,6 +197,8 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
+            sessionSummary=null;sessionToggle=null;sessionMark=null;saveAs=null;saveKinds=null;
+            tentativeCue=partialSeen="";backupReadout="";nextBackupCheck=0;
             root=null;caption=null;status=null;detail=null;takeControl=null;latest=null;contextCue=null;panelScroll=null;meter=null;trail=null;keep=null;missed=null;words=null;visible=false;
         }
         int dp(int value){return (int)(value*app.getResources().getDisplayMetrics().density+0.5f);}
@@ -175,11 +218,14 @@ public final class RecallOverlay {
         }
         void preserveBoundary() {
             LiveCapture.Snapshot s=LiveCapture.snapshot();
-            hiddenPartial=s.partial;firstVisibleFinal=s.finalSequence+(s.partial.isEmpty()?0:1);
+            hiddenClipId=s.clipId;hiddenPartial=s.partial;firstVisibleFinal=s.finalSequence+(s.partial.isEmpty()?0:1);
             if(caption!=null)caption.setText("");
         }
         void rebuild(){
-            long boundary=firstVisibleFinal;String hidden=hiddenPartial;detach();build();firstVisibleFinal=boundary;hiddenPartial=hidden;
+            if(!unlocked()){detach();return;}
+            long boundary=firstVisibleFinal,clipBoundary=hiddenClipId;
+            String hidden=hiddenPartial;detach();build();
+            firstVisibleFinal=boundary;hiddenPartial=hidden;hiddenClipId=clipBoundary;
             if(visible && !preview)paint(LiveCapture.snapshot());
         }
         void showText(TextView view,String value){
@@ -194,29 +240,73 @@ public final class RecallOverlay {
             if(s.waiting!=wasWaiting){preserveBoundary();wasWaiting=s.waiting;requestUntil=0;}
             boolean ready=s.receiving;
             if(keep!=null)keep.setEnabled(ready);
+            if(saveAs!=null)saveAs.setEnabled(ready || kindsOpen);
+            if(saveKinds!=null)for(int i=0;i<saveKinds.getChildCount();i++)saveKinds.getChildAt(i).setEnabled(ready);
+            String longId=LongRecording.active;
+            boolean recording=!longId.isEmpty();
+            String clock=LongRecording.time(LongRecording.duration);
+            if(sessionToggle!=null){
+                sessionToggle.setTag(longId);
+                showText(sessionToggle,recording?"Finish session":"Start session");
+                sessionToggle.setEnabled(ready);
+                sessionToggle.setContentDescription(recording?"Finish and save this long session":"Start a long recording from this point");
+            }
+            if(sessionMark!=null){
+                sessionMark.setTag(longId);
+                sessionMark.setVisibility(recording?View.VISIBLE:View.GONE);
+                sessionMark.setEnabled(ready);
+            }
+            if(sessionSummary!=null){
+                sessionSummary.setVisibility(recording?View.VISIBLE:View.GONE);
+                int marks=LongRecording.marks;
+                showText(sessionSummary,"Session audio · "+clock+" · "+marks+(marks==1?" marker":" markers"));
+            }
             if(missed!=null)missed.setEnabled(ready);
             SpokenTake.Status take=SpokenTake.status;
             if(takeControl!=null){showText(takeControl,take.recording?"Finish & edit":"Record my words");takeControl.setContentDescription(take.recording?"Finish recording and edit your take":"Record a new voice take and edit what you actually said");takeControl.setEnabled(ready || take.recording);}
             if(latest!=null){
                 latest.setVisibility(s.clipId<0?View.GONE:View.VISIBLE);
-                if(s.clipId>=0){latest.setTag(s.clipId);showText(latest,"Open last save · "+s.lastSave+"  ›");}
+                if(s.clipId>=0){
+                    if(s.savedAt!=receiptTime){
+                        receiptTime=s.savedAt;
+                        receiptStamp=DateFormat.getTimeInstance(DateFormat.MEDIUM).format(new Date(receiptTime));
+                    }
+                    latest.setTag(s.clipId);
+                    showText(latest,"Open last save · "+s.lastSave+"\n"+receiptStamp+" · Clip #"+s.clipId);
+                    latest.setContentDescription("Open "+s.lastSave+", saved on this phone at "+receiptStamp+", clip "+s.clipId);
+                }
             }
             int level=Math.round(s.level*100);
             if(trail!=null)trail.update(ready,level);
             if(meter!=null)meter.setProgress(s.waiting?0:level);
-            String headline=s.waiting?"Waiting for microphone":!s.event.isEmpty()?s.event:s.state.startsWith("Keeping")?"Capturing clip":ready?"Listening":"Waiting for input";
             if(s.savedCount>requestedAtCount)requestUntil=0;
-            if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
-            String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
-            String compact=s.waiting?"Mic busy":!ready?"No input":take.recording?"Take "+take.seconds+"s":elapsed+" · "+s.words+"w";
-            if(ready && !s.event.isEmpty() && !take.recording){
-                String event=s.event.startsWith("Clip saved")?"Saved":s.event.startsWith("Flagged")?"Flagged":s.event;
-                compact=elapsed+" · "+event;
+            String elapsed=LongRecording.time(s.sessionSeconds*1000);
+            boolean savePending=SystemClock.elapsedRealtime()<requestUntil;
+            boolean clipped=ready && LiveCapture.clipping();
+            // Keep unavailable input and real service acknowledgments visible during long takes.
+            String headline,compact;
+            if(!ready){
+                headline=s.waiting?"Waiting for microphone":"Waiting for input";
+                compact=s.waiting?"Mic busy":"No input";
+            }else if(savePending){
+                headline=compact=requestLabel;
+            }else if(!s.event.isEmpty()){
+                headline=s.event;
+                compact=s.event.startsWith("Clip saved")?"Clip saved":s.event;
+            }else if(clipped){
+                headline=compact="Mic clipping";
+            }else if(take.recording){
+                headline="Voice take · "+take.seconds+" / 60 s";
+                compact="Take "+take.seconds+"s";
+            }else if(recording){
+                headline="Recording long session";
+                compact="REC "+clock;
+            }else{
+                headline=s.state.startsWith("Keeping")?"Capturing clip":"Listening";
+                compact=elapsed+" · ↶"+Math.min(60,s.bufferSeconds)+"s";
             }
-            if(SystemClock.elapsedRealtime()<requestUntil)compact=requestLabel;
-            showText(status,expanded?(take.recording?"Voice take · "+take.seconds+" / 60 s":headline+" · "+elapsed):compact);
-            status.setTextColor(ready?0xffa6f5d5:0xffffd99a);
-            if(!LongRecording.active.isEmpty())showText(status,(expanded?"Long session · ":"REC ")+LongRecording.time(LongRecording.duration));
+            showText(status,expanded?headline:compact);
+            status.setTextColor(!ready || clipped?0xffffd99a:0xffa6f5d5);
             if(contextCue!=null){
                 String pending=s.waiting || s.finalSequence<firstVisibleFinal?"":s.partial;
                 if(!pending.equals(partialSeen)){
@@ -231,16 +321,31 @@ public final class RecallOverlay {
             }
             if(detail!=null){
                 String stats=s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
-                String diagnostics=s.registration(firstVisibleFinal)+"\n"+stats+(LiveCapture.clipping()?" · Mic clipping":"");
-                if(toolsOpen){
-                    diagnostics+="\nText journal "+(JournalStore.enabled(app)?"on":"off")+" · Full audio "+(ArchiveStore.enabled(app)?"on":"off");
-                    if(!s.lastFlag.isEmpty())diagnostics+="\nLast flag · "+s.lastFlag;
+                String diagnostics=s.registration(firstVisibleFinal)+" · Session "+elapsed;
+                if(ready)diagnostics+="\n"+s.bufferLabel()+" · "+stats;
+                else diagnostics+="\n"+stats;
+                if(toolsOpen || prefs.getBoolean("fullDetail",true)){
+                    String route=ready?RecallService.activeInputRoute():"";
+                    if(!route.isEmpty())diagnostics+="\nMic · "+route;
+                    if(clipped)diagnostics+=" · Clipping";
+                    long now=SystemClock.elapsedRealtime();
+                    if(now>=nextBackupCheck){
+                        try{backupReadout=ArchiveSync.backupStatus(app);}
+                        catch(RuntimeException unavailable){backupReadout="Archive status unavailable";}
+                        nextBackupCheck=now+8000;
+                    }
+                    diagnostics+="\nText journal "+(JournalStore.enabled(app)?"on":"off")+" · Full audio "+(ArchiveStore.enabled(app)?"on":"off")
+                        +"\nArchive destination · "+backupReadout;
+                    if(toolsOpen && !s.lastFlag.isEmpty())diagnostics+="\nLast flag · "+s.lastFlag;
+                    if(toolsOpen && prefs.getBoolean("captions",true) && s.clipId>=0 && s.clipId!=hiddenClipId && !s.reason.isEmpty())
+                        diagnostics+="\nWhy clip #"+s.clipId+" was saved · "+s.reason;
                 }
                 showText(detail,diagnostics);
             }
             if(caption!=null){
                 boolean showWords=prefs.getBoolean("captions",true);
-                String line=showWords?s.overlayWords(firstVisibleFinal):"";
+                int maxFinals=expanded?caption.getMaxLines()-(s.partial.isEmpty()?0:1):1;
+                String line=showWords?s.overlayWords(firstVisibleFinal,maxFinals):"";
                 if(showWords && line.isEmpty() && !s.waiting)line=s.appendedPartial(firstVisibleFinal,hiddenPartial);
                 if(!expanded && line.contains("\n"))line=line.substring(line.lastIndexOf('\n')+1);
                 String fallback=s.waiting?"Waiting for mic":!ready?"Waiting for input":level<8?"Quiet · mic on":"Input "+level+"%";
@@ -257,10 +362,21 @@ public final class RecallOverlay {
                         fallback=s.currentSituation(firstVisibleFinal);
                 }
                 if(expanded && showWords && line.isEmpty() && ready)fallback="Waiting for words…";
-                showText(caption,line.isEmpty()?fallback:expanded?"Heard · "+line:line);
+                if(!expanded && recording && (!ready || savePending || !s.event.isEmpty() || clipped) && line.isEmpty())
+                    fallback="Audio "+clock+" · "+LongRecording.marks+(LongRecording.marks==1?" mark":" marks");
+                if(expanded && !line.isEmpty()){
+                    if(s.partial.isEmpty())line="Heard · "+line;
+                    else if(s.finalSequence<firstVisibleFinal || line.equals(s.partial))line="Live · "+line;
+                    else if(line.endsWith("\n"+s.partial)){
+                        String complete=line.substring(0,line.length()-s.partial.length()-1);
+                        line="Heard · "+complete+"\nLive · "+s.partial;
+                    }
+                }
+                showText(caption,line.isEmpty()?fallback:line);
                 if(ultra && Build.VERSION.SDK_INT>=30){
                     View readout=(View)status.getParent();
-                    String summary=s.waiting?"Microphone unavailable":s.words+" words, "+s.savedCount+" saved, "+s.flags+" flagged. "+caption.getText();
+                    String summary=status.getText()+". Listening session "+elapsed+", "+s.bufferLabel()+". "
+                        +s.words+" words, "+s.savedCount+" saved, "+s.flags+" flagged. "+caption.getText();
                     if(!TextUtils.equals(summary,readout.getStateDescription()))readout.setStateDescription(summary);
                 }
             }
@@ -271,18 +387,22 @@ public final class RecallOverlay {
             if(active!=this)return;
             if(!enabled(app)||!Settings.canDrawOverlays(app)||(!preview && !RecallService.isListening())||
                (preview && ((!resumePanel() && SystemClock.elapsedRealtime()>=expires) || (resumePanel() && !org.continuity.recall.ListenPolicy.allowed(app))))) {stop();return;}
-            PowerManager pm=app.getSystemService(PowerManager.class);
-            KeyguardManager km=app.getSystemService(KeyguardManager.class);
-            if(pm==null||km==null||!pm.isInteractive()||km.isKeyguardLocked()){
+            if(!unlocked()){
                 if(visible)detach();
                 MAIN.postDelayed(pulse,1200);return;
             }
             if(!visible)build();
-            else if(screenWidth!=windowContext.getResources().getDisplayMetrics().widthPixels)rebuild();
+            else if(screenWidth!=windowContext.getResources().getDisplayMetrics().widthPixels ||
+                screenHeight!=windowContext.getResources().getDisplayMetrics().heightPixels)rebuild();
             if(active!=this)return;
             if(!preview)paint(LiveCapture.snapshot());
             position(layout.x,layout.y);
             MAIN.postDelayed(pulse,preview?1500:300);
+        }
+        boolean unlocked(){
+            PowerManager power=app.getSystemService(PowerManager.class);
+            KeyguardManager keyguard=app.getSystemService(KeyguardManager.class);
+            return power!=null && keyguard!=null && power.isInteractive() && !keyguard.isKeyguardLocked();
         }
         void build(){
             root=new DragSurface();root.setOrientation(LinearLayout.VERTICAL);
@@ -295,29 +415,35 @@ public final class RecallOverlay {
             readout.setContentDescription("Open the complete transcript across saved sessions");readout.setTooltipText("Open full journal");
             readout.setOnClickListener(v->openScreen(FullJournalActivity.class,false));
             if(ultra && !preview){
-                readout.setTooltipText("Tap for journal · hold to save recent audio");
+                String holdName=SAVE_NAMES[holdChoice(app)];
+                readout.setTooltipText("Tap for journal · hold to save "+holdName.toLowerCase(java.util.Locale.ROOT));
                 readout.setOnLongClickListener(v->{
                     if(!LiveCapture.snapshot().receiving){Toast.makeText(app,"Waiting for microphone input",Toast.LENGTH_SHORT).show();return true;}
-                    request(RecallService.KEEP,"Saving…");
+                    request(SAVE_ACTIONS[holdChoice(app)],"Saving…");
                     v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                     return true;
                 });
                 readout.setAccessibilityDelegate(new View.AccessibilityDelegate(){
                     @Override public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){
                         super.onInitializeAccessibilityNodeInfo(host,info);
-                        info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK,"Save recent audio"));
+                        info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK,"Save "+holdName));
                     }
                 });
             }
             status=label(readout,resumePanel()?"Paused":preview?"Mic off":"Starting",expanded?14:12);
-            status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setTextColor(0xffa6f5d5);status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+            if(expanded)status.setMaxLines(2);else status.setSingleLine(true);
+            status.setEllipsize(TextUtils.TruncateAt.END);status.setTextColor(0xffa6f5d5);status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             LinearLayout body=root;
             if(expanded){
+                if(!preview){
+                    sessionSummary=label(root,"",13);sessionSummary.setTextColor(0xffa6f5d5);sessionSummary.setVisibility(View.GONE);
+                }
                 Point display=new Point();wm.getDefaultDisplay().getSize(display);
-                int maxBody=Math.max(dp(80),display.y-dp(106));
                 panelScroll=new ScrollView(windowContext){
                     @Override protected void onMeasure(int w,int h){
-                        super.onMeasure(w,MeasureSpec.makeMeasureSpec(maxBody,MeasureSpec.AT_MOST));
+                        int summaryHeight=sessionSummary!=null && sessionSummary.getVisibility()==View.VISIBLE?sessionSummary.getMeasuredHeight():0;
+                        int reserve=Math.max(dp(106),header.getMeasuredHeight()+summaryHeight+dp(24));
+                        super.onMeasure(w,MeasureSpec.makeMeasureSpec(Math.max(dp(24),display.y-reserve),MeasureSpec.AT_MOST));
                     }
                 };
                 body=new LinearLayout(windowContext);body.setOrientation(LinearLayout.VERTICAL);
@@ -335,7 +461,8 @@ public final class RecallOverlay {
                 }
                 if(showWords || !expanded){
                     caption=label(expanded?body:readout,"",expanded?14:11);
-                    caption.setMaxLines(expanded?2:1);caption.setEllipsize(expanded?TextUtils.TruncateAt.END:TextUtils.TruncateAt.START);
+                    caption.setMaxLines(expanded?Math.max(2,Math.min(6,prefs.getInt("captionLines",4))):1);
+                    caption.setEllipsize(expanded?null:TextUtils.TruncateAt.START);
                     if(!expanded)caption.setSingleLine(true);
                 }
             }
@@ -366,19 +493,45 @@ public final class RecallOverlay {
                 if(!preview){
                     GradientDrawable actionBg=new GradientDrawable();actionBg.setColor(0xff24594e);actionBg.setCornerRadius(dp(8));actions.setBackground(actionBg);
                     detail=label(body,"",12);detail.setTextColor(0xffc0d5cd);
-                    contextCue=label(body,"",13);contextCue.setTextColor(0xffd5eae1);
-                    contextCue.setOnClickListener(v->openScreen(CaptureReviewActivity.class,false));
-                    contextCue.setTooltipText("Inspect the words behind these situation cues");
+                    if(showWords){
+                        contextCue=label(body,"",13);contextCue.setTextColor(0xffd5eae1);
+                        contextCue.setOnClickListener(v->openScreen(CaptureReviewActivity.class,false));
+                        contextCue.setTooltipText("Inspect the words behind these situation cues");
+                    }
                 }
                 LinearLayout sessions=row(body);
-                control(sessions,"Long sessions","Start, mark, finish or play a long recording",v->openScreen(LongSessionsActivity.class,false));
+                if(!preview){
+                    sessionToggle=control(sessions,"Start session","Start a long recording from this point",v->{
+                        if(!(v.getTag() instanceof String))return;
+                        String expected=(String)v.getTag();
+                        if(expected.isEmpty()){
+                            if(LongRecording.active.isEmpty() && LiveCapture.snapshot().receiving)command(RecallService.BEGIN_LONG);
+                        }else sessionAction(RecallService.FINISH_LONG,expected);
+                    });
+                    sessionMark=control(sessions,"Mark point","Bookmark the current audio position",v->sessionAction(RecallService.MARK_LONG,(String)v.getTag()));
+                    sessionMark.setVisibility(View.GONE);
+                }
+                control(sessions,"Sessions","Open long recordings and their markers",v->openScreen(LongSessionsActivity.class,false));
                 LinearLayout browse=preview?actions:row(body);
                 if(!preview){
                     control(actions,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
+                    saveAs=control(browse,"Save as…","Choose a category and save recent audio",v->{
+                        kindsOpen=!kindsOpen;showKinds();
+                    });
                     control(browse,"Journal","Read and correct individual journal lines",v->openScreen(FullJournalActivity.class,false));
                 }
                 control(browse,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
                 if(!preview){
+                    saveKinds=row(body);
+                    for(int i=1;i<SAVE_NAMES.length;i++){
+                        final int index=i;
+                        control(saveKinds,SAVE_NAMES[i],"Save recent audio as "+SAVE_NAMES[i],v->{
+                            if(!LiveCapture.snapshot().receiving)return;
+                            request(SAVE_ACTIONS[index],"Saving…");
+                            kindsOpen=false;showKinds();
+                        });
+                    }
+                    showKinds();
                     latest=control(row(body),"Open last save","Open the most recently saved clip",v->{
                         if(!(v.getTag() instanceof Long))return;
                         try{app.startActivity(new Intent(app,RecallListenActivity.class).putExtra("moment_id",(long)(Long)v.getTag())
@@ -403,6 +556,7 @@ public final class RecallOverlay {
                 }
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
+            screenHeight=windowContext.getResources().getDisplayMetrics().heightPixels;
             int width=expanded?320:ultra?192:preview?210:276;
             float font=windowContext.getResources().getConfiguration().fontScale;
             width+=Math.round(Math.max(0,Math.min(font-1,1))*60);
@@ -459,6 +613,16 @@ public final class RecallOverlay {
             prefs.edit().putBoolean("ultra",mini).putBoolean("expanded",large).apply();
             rebuild();
         }
+        void showKinds(){
+            saveKinds.setVisibility(kindsOpen?View.VISIBLE:View.GONE);
+            showText(saveAs,kindsOpen?"Cancel":"Save as…");
+            saveAs.setContentDescription(kindsOpen?"Close category choices":"Choose a category and save recent audio");
+        }
+        void sessionAction(String action,String expected){
+            if(expected==null || expected.isEmpty() || !expected.equals(LongRecording.active) || !RecallService.isListening())return;
+            try{app.startService(new Intent(app,RecallService.class).setAction(action).putExtra("longId",expected));}
+            catch(RuntimeException e){Toast.makeText(app,"Recorder could not accept this action",Toast.LENGTH_SHORT).show();}
+        }
         void newGuide(){
             Intent i=new Intent(app,CaptureReviewActivity.class).putExtra("commands",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);
             try{app.startActivity(i);}catch(RuntimeException e){Toast.makeText(app,"Could not open voice commands",Toast.LENGTH_SHORT).show();}
@@ -485,7 +649,11 @@ public final class RecallOverlay {
         }
         TextView control(LinearLayout row,String label,String hint,View.OnClickListener listener){
             TextView t=new TextView(windowContext);
-            t.setText(label);t.setTextSize(14);t.setTextColor(Color.WHITE);t.setGravity(Gravity.CENTER);
+            t.setText(label);t.setTextSize(14);t.setGravity(Gravity.CENTER);
+            t.setTextColor(new android.content.res.ColorStateList(
+                new int[][]{{-android.R.attr.state_enabled},{}},new int[]{0xffa1b5b0,Color.WHITE}));
+            t.setBackground(new android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x449ff1cc),null,new android.graphics.drawable.ColorDrawable(Color.WHITE)));
             t.setMinWidth(0);t.setMinHeight(dp(48));t.setPadding(dp(3),0,dp(3),0);t.setClickable(true);
             t.setContentDescription(hint);t.setTooltipText(hint);t.setFilterTouchesWhenObscured(true);t.setOnClickListener(listener);
             t.setAccessibilityDelegate(new View.AccessibilityDelegate(){

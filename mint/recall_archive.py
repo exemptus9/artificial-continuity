@@ -223,7 +223,7 @@ class Archive:
             db.executemany("DELETE FROM clip_original_sizes WHERE id=?",((uid,) for uid in ids))
             db.executemany("DELETE FROM clips WHERE id=?",((uid,) for uid in ids))
             db.commit()
-            for table in ("owner_reviews","item_stories","recording_evidence"):
+            for table in ("owner_reviews","item_stories","recording_evidence","recent_filing_undo"):
                 db.execute("DELETE FROM "+table+""" WHERE (kind='clip' AND id NOT IN (SELECT id FROM clips)) OR (kind!='clip' AND id NOT IN (SELECT id FROM archive_uploads WHERE state='complete'))""")
             if ids:db.execute("PRAGMA incremental_vacuum(2048)")
             # Also collect orphan files left by a crash around deletion.

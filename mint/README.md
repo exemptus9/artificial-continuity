@@ -15,6 +15,8 @@ In **Private archive**, search for an item, play the original or download it. Br
 
 Open **Laptop microphone** in Total Recall Desk. Drag the title bar to move the panel. **Start recording** uses the default Mint microphone; the input meter shows the measured sound level. **Keep moment** saves the available last 15, 30 or 60 seconds as a separate bookmark in Review. **Browse & play** opens all local recordings. **Stop recording** releases the microphone and finalizes the current segment. Closing or hiding the panel leaves a running recorder active. Reopen it from Desk.
 
+In the expanded laptop microphone panel, **Poem line**, **Coined word** and **Pick up here** save the preceding audio with a searchable category. Use **Pick up here** before an interruption, then **Open last keep** to hear where you left off. The button shows the capture time and actual duration. Routine segment saves leave that button pointing at your intentional bookmark. The compact panel shows the recording clock, live input level and available lookback. In **More → Settings → Voice**, choose visual feedback, wake chimes, save tones or local spoken save confirmations. A save confirmation follows a verified local write. A laptop with no local speech engine uses a tone. If a recorder was already running during the upgrade, sign out of Mint and back in once to load the new worker. The generic Keep moment action still works with the previous worker.
+
 **Settings** controls the sound system (PulseAudio/PipeWire or ALSA), AAC quality, segment length, bookmark length, compact mode, always-on-top and optional recording at login. The recorder runs under the signed-in user. A sleeping or powered-off laptop has no microphone coverage. Laptop clips and full-audio segments are saved on this computer independently of the phone. The Android recorder offers automatic creative highlights. The optional desktop speech controls can also show recognized words and current and previous situation cues. Use **Keep moment** on the laptop for passages to review.
 
 For a second copy, enable **Send laptop audio and bookmarks to my hosted archive** and paste a hosted pairing code from the website. Completed laptop recordings are uploaded in order, with byte checks, resumable transfers and a matching SHA-256 receipt. Local originals stay in the local archive. Pending files wait for storage or connectivity. Desk's existing storage quota and free-space reserve apply. Overlapping device recordings retain their separate originals.
@@ -23,13 +25,25 @@ For a second copy, enable **Send laptop audio and bookmarks to my hosted archive
 
 Open **Review** in the private website or local archive. Listen inline and click a category to file the item. Use **Collection** to open a category, see all filed items, or revisit dismissed clips. **Inbox settings** lets you rename or add buttons and set the page size and order. Changing the button list preserves existing collections. Within an item, **Classify or edit writing** supports multiple categories, draft text, a corrected word and its recognized spelling. These are private archive collections. Copy a draft to take it to another writing app.
 
+Choose **One at a time** for a single card with its time, source, duration and category. **Next item** skips ahead without changing its filing. Choosing **Poem draft** or **Forge Lexicon** files the current clip and brings the next inbox item into view. **Undo filing** reverses your most recent action in that review view, including draft text automatically seeded by that action. A subsequent edit or filing of the same item on another device invalidates its undo. Your layout preference stays in this browser.
+
 **Dismiss** leaves the original in Archive. To remove an item, open it, expand **Delete from this archive**, check the confirmation and click **Delete this item**. The operation removes the active original, its text and its filing from this archive. Other devices, independent excerpts, copies you exported and previous backups can retain material. The archive rejects repeat uploads of the same deleted item ID.
 
 ## Find a moment
 
 From Overview, search for part of a line or choose **Coined words**, **Poetry & freestyle**, or **Yesterday**. In Archive, combine recognized words, notes and corrections with a clip label and the local date the item started. Results show a passage around the match when available.
 
+If you remember roughly when you said something, expand **Find by approximate time**. Set the date, clock time and a five-, fifteen- or sixty-minute window. This includes recordings already underway. Selecting a recording covering that time cues its player with up to three seconds of lead-in. The form shows your browser's time zone and offers both occurrences of a repeated clock time when daylight saving time ends.
+
+Search also covers your filed titles, writing, saved stories, recognized spellings and text from recording analysis. A result names the field containing your words. A timestamp beside **Recognized in audio** opens the source recording near that passage.
+
 Open a timestamped journal to find a line and select **Find audio here**. Choose one of the recordings covering the recognition time and press play. Playback starts with up to three seconds of lead-in. **Back to journal** restores the search and page. **Copy to writing notes** on a selected clip copies its text, correction and note for use in another app.
+
+## Long session markers
+
+Choose **Long sessions** and open an audio file from your device. Play it and tap **Poem line**, **Coined word** or **Follow-up** when a passage deserves another listen. You can rename or reclassify a selected marker. Search by marker name, type or displayed timestamp, move between results and set **Replay lead-in** from zero to fifteen seconds to hear the setup.
+
+**Save marker index** downloads a companion JSON that you can reopen with the audio. Indexes made in a browser with secure hashing available are checked against the audio contents. For an older Android index, the player checks the size and asks you to confirm the title before merging. Merging preserves the markers you already have and skips exact duplicates. Audio and markers stay in the tab while you visit other archive views. Download the index to keep edits across a reload or after closing the tab.
 
 ## Space, retention and backup
 

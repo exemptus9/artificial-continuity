@@ -52,6 +52,48 @@ class OwnerWorkflow(unittest.TestCase):
         review.delete(self.arc,dict(kind="clip",id=uid,sha256=item["sha256"]))
         with self.arc.connection() as db:self.assertEqual(db.execute("SELECT count(*) FROM item_stories").fetchone()[0],0)
 
+    def test_undo_restores_labels_and_refuses_stale_receipt(self):
+        uid=self.stage(True)
+        item=dict(kind="clip",id=uid)
+        with self.arc.connection() as db:
+            db.execute("UPDATE clips SET transcript=? WHERE id=?",("Synthetic starting line",uid))
+        filed=review.classify(self.arc,dict(item,action="add",label="Poem draft"))
+        self.assertEqual(filed["writing"],"Synthetic starting line")
+        undone=review.classify(self.arc,dict(item,action="undo",before=filed["undo"]))
+        self.assertEqual((undone["state"],undone["labels"],undone["writing"]),("inbox",[],""))
+        with self.assertRaises(recall_archive.Failure):
+            review.classify(self.arc,dict(item,action="undo",before=filed["undo"]))
+        review.classify(self.arc,dict(item,action="add",label="Forge Lexicon"))
+        dismissed=review.classify(self.arc,dict(item,action="dismiss"))
+        restored=review.classify(self.arc,dict(item,action="undo",before=dismissed["undo"]))
+        self.assertEqual((restored["state"],restored["labels"]),("filed",["Forge Lexicon"]))
+        first=review.classify(self.arc,dict(item,action="add",label="To do"))
+        review.classify(self.arc,dict(item,action="remove",label="To do"))
+        with self.assertRaises(recall_archive.Failure):
+            review.classify(self.arc,dict(item,action="undo",before=first["undo"]))
+        with self.assertRaises(recall_archive.Failure):
+            review.classify(self.arc,dict(item,action="undo",before={"state":"dismissed"}))
+        latest=review.classify(self.arc,dict(item,action="add",label="Poem draft"))
+        review.classify(self.arc,dict(item,action="edit",name="New name",writing="New draft",heard="one"))
+        with self.assertRaises(recall_archive.Failure):
+            review.classify(self.arc,dict(item,action="undo",before=latest["undo"]))
+        self.assertEqual(web.lookup(self.arc,"clip",uid)["review"]["writing"],"New draft")
+
+    def test_results_explain_owner_and_timed_audio_matches(self):
+        uid=self.stage(True)
+        item=dict(kind="clip",id=uid)
+        review.classify(self.arc,dict(item,action="edit",name="Suffralchemy",writing="A silver word",heard="suffer alchemy"))
+        review.classify(self.arc,dict(item,action="story",body="Out walking near the library",revision=0))
+        cue=dict(quote="Luminous field recording",seconds=.5,stamp="0:00",label="Source excerpt")
+        with self.arc.connection() as db:
+            db.execute("INSERT INTO recording_evidence VALUES(?,?,?,?,?)",("clip",uid,0,"original",json.dumps([cue])))
+        for query,field in (("silver","Filed writing"),("library","Recording story"),("suffer","Recognized spelling"),("luminous","Recognized in audio")):
+            result=web.items(self.arc,"all",query,5,0)["items"][0]
+            self.assertEqual(result["match"]["field"],field)
+            self.assertEqual(result["title"],"Suffralchemy")
+            self.assertNotIn("filedWriting",result)
+        self.assertEqual(result["match"]["seconds"],.5)
+
     def test_quiet_pruning_preserves_marks_old_spools_and_audible_frames(self):
         stamp=recall_archive.now()-4000
         for i,(prefix,peak) in enumerate((("quietcheck",4),("quietcheck",7),("mark",0),("segment",0))):

@@ -8,7 +8,7 @@ const viewInfo = {
   archive:['Your archive','Search saved clips, original audio segments and journal entries.'],
   activity:['Archive activity','See when recordings arrived and how much audio they cover.']
 };
-const state={view:'overview',days:7,kind:'all',query:'',category:'',device:'all',date:'',offset:0,version:0,detailVersion:0};
+const state={view:'overview',days:7,kind:'all',query:'',category:'',device:'all',date:'',clock:'',fold:0,radius:15,offset:0,version:0,detailVersion:0};
 const limit=25;
 let searchTimer, modalCleanup;
 const dateFmt=(value,options)=>new Intl.DateTimeFormat(undefined,options).format(new Date(value));
@@ -74,11 +74,15 @@ function storage(info){const box=e('div','panel storage');add(box,add(e('div','s
   if(hosted){
     box.append(button('Pair phone',openPairing,'btn pair-action'));
     const installer=e('a','btn','Download Android app');installer.href='/downloads/android';box.append(installer);
+    const mint=e('a','btn','Download Linux Mint app');mint.href='/downloads/mint';box.append(mint);
     const roster=e('a','btn','Early-access requests');roster.href='/early-access/roster#join';box.append(roster);
     const form=e('form');form.method='post';form.action='/logout';
     const signOut=e('button','btn','Sign out');signOut.type='submit';form.append(signOut);box.append(form);
   }return box;}
-const reviewView={shelf:'inbox',offset:0,feedback:''};
+function singleReviewPreferred(){
+  try{return localStorage.getItem('recall-review-layout')==='single';}catch{return false;}
+}
+const reviewView={shelf:'inbox',offset:0,feedback:'',single:singleReviewPreferred(),undo:null};
 async function ownerAction(path,data){
   const reply=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
@@ -91,7 +95,10 @@ function reviewButtons(item,options,after){
   status.setAttribute('role','status');
   async function change(action,label){
     const all=out.querySelectorAll('button');for(const b of all)b.disabled=true;
-    try{await ownerAction('/api/review/file',{kind:item.kind,id:item.id,action,label});await after(label||action);}
+    try{
+      const result=await ownerAction('/api/review/file',{kind:item.kind,id:item.id,action,label});
+      await after(action,label,result);
+    }
     catch(err){status.textContent=err.message;}
     finally{for(const b of all)b.disabled=false;}
   }
@@ -120,34 +127,63 @@ function reviewSettings(options){
     add(e('div','find-filters'),add(e('label'),'Items per page',count),add(e('label'),'Review order',order)),save,status);
 }
 async function reviewPage(ver){
-  const data=await get('/api/review',{shelf:reviewView.shelf,offset:reviewView.offset});
+  const {shelf:sourceShelf,offset:sourceOffset}=reviewView;
+  const data=await get('/api/review',{shelf:sourceShelf,offset:sourceOffset});
   if(ver!==state.version)return;
-  if(!data.items.length&&reviewView.offset){reviewView.offset=0;return refresh();}
+  const step=reviewView.single?1:data.options.batch;
+  if(!data.items.length&&reviewView.offset){
+    reviewView.offset=Math.max(0,Math.floor((data.total-1)/step)*step);return refresh();
+  }
   const holder=e('div'),shelf=e('select');shelf.setAttribute('aria-label','Review collection');
   for(const [key,name] of [['inbox','Needs review'],['filed','Filed'],['dismissed','Dismissed'],...data.shelves.map(name=>['label/'+name,name])]){
     const o=e('option','',name);o.value=key;shelf.append(o);}
   shelf.value=reviewView.shelf;shelf.onchange=()=>{reviewView.shelf=shelf.value;reviewView.offset=0;reviewView.feedback='';refresh();};
-  holder.append(add(e('div','review-top'),add(e('label'),'Collection ',shelf),e('span','',plural(data.total,'item'))));
-  if(reviewView.feedback){const msg=e('p','section-note',reviewView.feedback);msg.setAttribute('role','status');holder.append(msg);}
+  const layout=button('One at a time',()=>{
+    reviewView.single=!reviewView.single;
+    if(!reviewView.single)reviewView.offset=Math.floor(reviewView.offset/data.options.batch)*data.options.batch;
+    try{localStorage.setItem('recall-review-layout',reviewView.single?'single':'list');}catch{}
+    refresh();
+  },'btn layout-mode');
+  layout.setAttribute('aria-pressed',String(reviewView.single));
+  const position=reviewView.single&&data.total?'Item '+(reviewView.offset+1)+' of '+number(data.total):plural(data.total,'item');
+  holder.append(add(e('div','review-top'),add(e('label'),'Collection ',shelf),layout,e('span','',position)));
+  if(reviewView.feedback){
+    const msg=e('span','',reviewView.feedback);msg.setAttribute('role','status');
+    const receipt=reviewView.undo;
+    const undo=receipt?button('Undo filing',async()=>{
+      undo.disabled=true;
+      try{
+        await ownerAction('/api/review/file',{kind:receipt.kind,id:receipt.id,action:'undo',before:receipt.before});
+        reviewView.shelf=receipt.shelf;reviewView.offset=receipt.offset;reviewView.undo=null;
+        reviewView.feedback='Filing undone.';await refresh();
+      }catch(err){msg.textContent=err.message;undo.disabled=false;}
+    },'text-link'):null;
+    holder.append(add(e('div','review-feedback'),msg,undo));
+  }
   if(!data.items.length)holder.append(panel(empty(reviewView.shelf==='inbox'?'You’re caught up.':'Nothing filed here yet.',
     reviewView.shelf==='inbox'?'Selected clips and laptop bookmarks appear here after they reach this archive.':'Open an archive item to file it here.')));
-  for(const item of data.items){
+  for(const item of (reviewView.single?data.items.slice(0,1):data.items)){
     const card=e('article','panel review-card');
     const open=button(item.review.name||item.title||kindName(item.kind),()=>openItem(item),'review-title');
-    add(card,e('p','row-sub',dateTime(item.startedAtMillis)+' · '+(item.category||kindName(item.kind))),open);
+    const device=/^(?:desk-keep-|laptop-)\d/.test(item.id)?'Mint laptop':'Phone or imported';
+    const facts=[dateTime(item.startedAtMillis),item.category||kindName(item.kind),device];
+    if(item.kind!=='journal')facts.push(duration(item.durationMs));
+    add(card,e('p','row-sub',facts.join(' · ')),open);
     if(item.review.writing||item.snippet)card.append(e('p','review-snippet',(item.review.writing||item.snippet).slice(0,400)));
     if(item.kind!=='journal'){
       const audio=e('audio');audio.controls=true;audio.preload='none';audio.src=mediaPath(item);audio.setAttribute('aria-label','Listen to '+item.title);
       audio.onplay=()=>{for(const other of holder.querySelectorAll('audio'))if(other!==audio)other.pause();};card.append(audio);
     }
-    card.append(reviewButtons(item,data.options,async label=>{
-      reviewView.feedback=label==='dismiss'?'Dismissed. The original stays in Archive.':label==='reopen'?'Returned to the inbox.':'Updated '+label+'.';
+    card.append(reviewButtons(item,data.options,async(action,label,result)=>{
+      reviewView.feedback=action==='dismiss'?'Dismissed. The original stays in Archive.':action==='reopen'?'Returned to the inbox.':action==='remove'?'Removed '+label+'.':'Filed under '+label+'.';
+      reviewView.undo=result.undo?{kind:item.kind,id:item.id,before:result.undo,shelf:sourceShelf,offset:sourceOffset}:null;
       await refresh();
+      if(state.view==='review'&&reviewView.single)$('view').querySelector('.review-title')?.focus();
     }));holder.append(card);
   }
   const pager=e('div','quick-find');
-  if(reviewView.offset)pager.append(button('Previous items',()=>{reviewView.offset=Math.max(0,reviewView.offset-data.options.batch);refresh();}));
-  if(reviewView.offset+data.items.length<data.total)pager.append(button('Next items',()=>{reviewView.offset+=data.options.batch;refresh();}));
+  if(reviewView.offset)pager.append(button(reviewView.single?'Previous item':'Previous items',()=>{reviewView.offset=Math.max(0,reviewView.offset-step);refresh();}));
+  if(reviewView.offset+step<data.total)pager.append(button(reviewView.single?'Next item':'Next items',()=>{reviewView.offset+=step;refresh();}));
   add(holder,pager,reviewSettings(data.options));$('view').replaceChildren(holder);
 }
 function filedWork(full){
@@ -184,10 +220,15 @@ function deletion(full){
   return add(details,message,add(e('label','delete-confirm'),confirm,' I want to delete this item.'),remove,status);
 }
 function kindName(kind){return KINDS[kind]||'Archive item';}
-function itemRow(item){const row=button('',()=>openItem(item),'row');row.dataset.itemId=item.id;row.dataset.kind=item.kind;
+function itemRow(item){
+  const timed=item.kind!=='journal'&&Number.isFinite(item.match?.seconds);
+  const instant=state.view==='archive'?localInstants(state.date,state.clock)[state.fold]:null;
+  const covers=item.kind!=='journal'&&instant>=item.startedAtMillis&&instant<item.startedAtMillis+item.durationMs;
+  const target=timed?{at:item.startedAtMillis+item.match.seconds*1000,match:item.match}:covers?{at:instant,clock:true}:{};
+  const row=button('',()=>openItem(item,target),'row');row.dataset.itemId=item.id;row.dataset.kind=item.kind;
   const when=item.startedAtMillis?dateTime(item.startedAtMillis):'Time unavailable';const tag=item.category||kindName(item.kind);
   add(row,add(e('span',`row-icon ${item.kind}`),icon(KINDS[item.kind]?item.kind:'archive')),add(e('span','row-main'),e('span','row-title',item.title||tag),e('span','row-sub',`${tag} · ${when}`)),
-    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));if(item.match)row.querySelector('.row-main').append(e('span','match-preview',item.match.field+' · '+item.match.text));return row;}
+    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));if(item.match)row.querySelector('.row-main').append(e('span','match-preview',[item.match.field,item.match.stamp,item.match.text].filter(Boolean).join(' · ')));return row;}
 function eventPanel(events){if(!events||!events.length)return panel(empty('No activity in this period.','New archive receipts will appear here.'));
   return panel(...events.map(v=>{const t=e('time','',dateTime(v.atMillis));t.dateTime=new Date(v.atMillis).toISOString();return add(e('div','event'),add(e('div'),e('b','',v.label||'Archive receipt'),v.detail?e('p','',v.detail):null,t));}));}
 async function dashboard(ver){const [overview,items,info]=await Promise.all([get('/api/overview',range()),get('/api/items',{kind:'clip',limit:5,offset:0}),get('/api/status')]);if(ver!==state.version)return;
@@ -233,14 +274,31 @@ function localDate(date) {
   const pad=n=>String(n).padStart(2,'0');
   return date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate());
 }
-function dayBounds(value) {
+function localInstants(date,clock){
+  if(!date||!clock)return [];
+  const wall=Date.parse(date+'T'+clock+'Z');
+  if(!Number.isFinite(wall))return [];
+  // A repeated wall time may have two UTC offsets. A skipped wall time has none.
+  const offsets=new Set([-1,0,1].map(d=>new Date(wall+d*86400000).getTimezoneOffset()));
+  return Array.from(offsets,m=>{
+    const instant=wall+m*60000,actual=new Date(instant);
+    return actual.getTimezoneOffset()===m?instant:null;
+  }).filter(n=>n!==null).sort((a,b)=>a-b);
+}
+function dayBounds(value,clock,radius,fold) {
   if (!value) return {};
+  if(clock){
+    const options=localInstants(value,clock);
+    if(!options.length)throw Error('The clock skipped this time on that date. Choose a different local time.');
+    const instant=options[fold]??options[0],margin=radius*60000;
+    return {from:instant-margin,to:instant+margin+1,overlap:1};
+  }
   const start=new Date(value+'T00:00:00'),end=new Date(start);
   end.setDate(end.getDate()+1);
   return {from:start.getTime(),to:end.getTime()};
 }
 function findArchive(filters={}) {
-  Object.assign(state,{kind:'all',category:'',device:'all',date:'',query:'',offset:0},filters);
+  Object.assign(state,{kind:'all',category:'',device:'all',date:'',clock:'',fold:0,radius:15,query:'',offset:0},filters);
   if(location.hash==='#archive'){makeArchive();refresh();}else location.hash='archive';
 }
 function discovery() {
@@ -266,19 +324,41 @@ function makeArchive(){
   const device=chooser('Recorded on',[['all','All sources'],['laptop','Mint laptop'],['other','Phone or imported']],state.device);
   const cats=chooser('Clip label',[['','All labels'],...Object.entries(patternNames)],state.category);
   const date=e('input');date.type='date';date.setAttribute('aria-label','Date started');date.value=state.date;
+  const clock=e('input');clock.type='time';clock.value=state.clock;
+  const radius=chooser('Search window',[['5','Within 5 minutes'],['15','Within 15 minutes'],['60','Within an hour']],String(state.radius));
+  radius.disabled=!clock.value;
+  const occurrence=e('select'),which=add(e('label'),'Which occurrence?',occurrence);
+  function updateOccurrence(){
+    const choices=localInstants(date.value,clock.value);
+    occurrence.replaceChildren();
+    for(const [i,n] of choices.entries()){
+      const opt=e('option','',dateFmt(n,{hour:'numeric',minute:'2-digit',timeZoneName:'short'}));
+      opt.value=String(i);occurrence.append(opt);
+    }
+    which.hidden=choices.length<2;occurrence.value=String(Math.min(state.fold,Math.max(0,choices.length-1)));
+  }
+  updateOccurrence();
+  const around=e('details','time-search');around.open=Boolean(clock.value);
+  const zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'local time';
+  add(around,e('summary','','Find by approximate time'),add(e('div','find-filters'),
+    add(e('label'),'Time you remember',clock),which,add(e('label'),'Search window',radius)),
+    e('p','section-note','Includes recordings already in progress. Times are shown in '+zone+'.'));
   function apply(){
+    state.clock=clock.value;state.radius=Number(radius.value);state.fold=Number(occurrence.value)||0;
     state.query=q.value.trim();state.kind=kinds.value;state.device=device.value;state.category=cats.value;state.date=date.value;state.offset=0;refresh();
   }
   form.onsubmit=ev=>{ev.preventDefault();clearTimeout(searchTimer);apply();};
   q.oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(apply,180);};
   kinds.onchange=()=>{if(kinds.value!=='clip'&&kinds.value!=='all')cats.value='';apply();};
-  cats.onchange=()=>{if(cats.value)kinds.value='clip';apply();};date.onchange=apply;device.onchange=apply;
+  cats.onchange=()=>{if(cats.value)kinds.value='clip';apply();};date.onchange=()=>{if(!date.value){clock.value='';radius.disabled=true;}state.fold=0;updateOccurrence();apply();};device.onchange=apply;
+  clock.onchange=()=>{if(clock.value&&!date.value)date.value=localDate(new Date());radius.disabled=!clock.value;state.fold=0;updateOccurrence();apply();};
+  occurrence.onchange=radius.onchange=apply;
   const filters=add(e('div','find-filters'),add(e('label'),'Item type',kinds),add(e('label'),'Clip label',cats),add(e('label'),'Recorded on',device),add(e('label'),'Date started',date));
   const clear=button('Clear filters',()=>{clearTimeout(searchTimer);findArchive();},'text-link');
-  add(form,add(e('label','searchbox'),icon('search'),q),filters,clear);
+  add(form,add(e('label','searchbox'),icon('search'),q),filters,around,clear);
   const results=e('div');results.id='results';$('view').replaceChildren(form,results);
 }
-async function archive(ver){if(!$('results'))makeArchive();const response=await get('/api/items',{kind:state.kind,q:state.query,category:state.category,device:state.device,...dayBounds(state.date),offset:state.offset,limit});if(ver!==state.version)return;
+async function archive(ver){if(!$('results'))makeArchive();const response=await get('/api/items',{kind:state.kind,q:state.query,category:state.category,device:state.device,...dayBounds(state.date,state.clock,state.radius,state.fold),offset:state.offset,limit});if(ver!==state.version)return;
   if(state.offset>0&&!response.items.length&&response.total>0){state.offset=Math.floor((response.total-1)/limit)*limit;return refresh();}
   const nodes=[],group=new Map();for(const item of [...response.items].sort((a,b)=>b.startedAtMillis-a.startedAtMillis)){const d=item.startedAtMillis?dateFmt(item.startedAtMillis,{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'Undated';if(!group.has(d))group.set(d,[]);group.get(d).push(item);}
   for(const [d,list] of group)nodes.push(e('h2','group-label',d),panel(...list.map(itemRow)));
@@ -289,59 +369,192 @@ async function archive(ver){if(!$('results'))makeArchive();const response=await 
 async function refresh(){const ver=++state.version;notice();$('view').setAttribute('aria-busy','true');try{if(state.view==='sessions'){if(!$('session-audio'))sessionPlayer();}else if(state.view==='overview')await dashboard(ver);else if(state.view==='activity')await activity(ver);else if(state.view==='review')await reviewPage(ver);else await archive(ver);}catch(err){if(ver===state.version){notice(err.message);if(state.view==='archive'&&$('results'))$('results').replaceChildren();else $('view').replaceChildren();}}finally{if(ver===state.version)$('view').setAttribute('aria-busy','false');}}
 let sessionCleanup;
 function sessionPlayer(){
-  const view=$('view'), audio=e('audio'), files=e('input'), index=e('input'), list=e('div'), status=e('p','muted');
-  audio.id='session-audio';audio.controls=true;audio.preload='metadata';audio.style.width='100%';
-  files.type=index.type='file';files.accept='audio/*,.aac,.m4a';index.accept='.json,application/json';index.disabled=true;
-  let objectURL='',current=null,points=[],title='',generation=0;
-  const stamp=ms=>new Date(ms).toISOString().slice(11,19);
-  const render=()=>{
+  // Only this tab holds the File and its working index. Changing views pauses playback.
+  const desk=sessionPlayer.desk||={
+    file:null,title:'',points:[],selected:null,position:0,lead:5,query:'',page:0,
+    revision:0,exported:0,fingerprint:null,
+    warn(event){event.preventDefault();event.returnValue='';}
+  };
+  const types=['Moment','Poem line','Coined word','Follow-up','Project decision','Connection'];
+  const maxPoints=20000,pageSize=24;
+  const audio=e('audio'),files=e('input'),index=e('input'),search=e('input'),lead=e('select');
+  const note=e('p','status'),receipt=e('p','section-note'),record=e('h2'),list=e('div'),summary=e('p','row-sub');
+  const editor=e('div','find-filters'),name=e('input'),type=e('select'),pending=e('div','quick-find');
+  const library=e('section','panel review-card'),toolbox=e('section','panel review-card');
+  let sourceURL='',generation=0,importVersion=0,exporting=false;
+  const stamp=ms=>{
+    const seconds=Math.floor(ms/1000),hh=Math.floor(seconds/3600),mm=Math.floor(seconds/60)%60,ss=seconds%60;
+    return (hh?hh+':':'')+String(mm).padStart(hh?2:1,'0')+':'+String(ss).padStart(2,'0');
+  };
+  const dirty=()=>desk.revision!==desk.exported;
+  function updateReceipt(){
+    receipt.textContent=desk.file?(dirty()?'Marker changes are in this tab. Download the index to keep them.':'Markers stay in this tab until you close it.'): '';
+    if(dirty())window.addEventListener('beforeunload',desk.warn);else window.removeEventListener('beforeunload',desk.warn);
+  }
+  function changed(){desk.revision++;updateReceipt();}
+  function matching(){const q=desk.query.trim().toLocaleLowerCase();return desk.points.filter(p=>(p.label+' '+p.type+' '+stamp(p.ms)).toLocaleLowerCase().includes(q));}
+  function showEditor(){
+    const p=desk.selected;editor.hidden=!p;
+    if(!p)return;
+    name.value=p.label;type.replaceChildren();
+    for(const v of new Set([...types,p.type])){const opt=e('option','',v);opt.value=v;type.append(opt);}
+    type.value=p.type;
+  }
+  function render(){
+    const filtered=matching(),pages=Math.max(1,Math.ceil(filtered.length/pageSize));
+    desk.page=Math.max(0,Math.min(pages-1,desk.page));const start=desk.page*pageSize;
     list.replaceChildren();
-    points.forEach(p=>list.append(button(stamp(p.ms)+' · '+p.label,()=>{
-      if(!Number.isFinite(audio.duration)){status.textContent='Wait for the recording to load before jumping to a marker.';return;}
-      audio.currentTime=Math.min(audio.duration,p.ms/1000);
-      audio.play().catch(()=>{status.textContent='Press Play to hear this marker.';});
-    },'btn')));
-    download.disabled=!current||!points.length; mark.disabled=!current;
-  };
-  const mark=button('Mark current position',()=>{
-    if(!current||audio.readyState<1)return;
-    const ms=Math.round(audio.currentTime*1000);
-    points.push({ms,label:'Marker '+(points.length+1)});points.sort((a,b)=>a.ms-b.ms);render();
-  });
-  const download=button('Save marker index',()=>{
-    const data=JSON.stringify({format:'total-recall-markers-1',title,audioBytes:current.size,markers:points},null,2);
-    const url=URL.createObjectURL(new Blob([data],{type:'application/json'})),link=e('a');
-    link.href=url;link.download=current.name+'.markers.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  });
-  files.onchange=()=>{
-    if(!files.files.length)return;
-    generation++;audio.pause();if(objectURL)URL.revokeObjectURL(objectURL);
-    current=files.files[0];title=current.name;points=[];index.value='';index.disabled=false;
-    objectURL=URL.createObjectURL(current);audio.src=objectURL;status.textContent=title;render();
-  };
-  audio.onerror=()=>{if(current)status.textContent='This browser could not play the audio. The original file remains available on your device.';};
-  index.onchange=async()=>{
-    const file=index.files[0],version=++generation;if(!file||!current)return;
+    for(const p of filtered.slice(start,start+pageSize)){
+      const row=button(stamp(p.ms)+' · '+p.label+(p.type==='Moment'||p.type===p.label?'':' · '+p.type),()=>select(p,true),p===desk.selected?'btn primary':'btn');
+      row.setAttribute('aria-pressed',String(p===desk.selected));list.append(row);
+    }
+    summary.textContent=filtered.length?(desk.query?filtered.length+' of '+plural(desk.points.length,'marker'):plural(desk.points.length,'marker'))+
+      (pages>1?' · '+(start+1)+'–'+Math.min(start+pageSize,filtered.length):''):(desk.query?'No matching markers.':'No markers yet.');
+    previousPage.disabled=!desk.page;nextPage.disabled=desk.page+1>=pages;pager.hidden=pages===1;
+    const i=filtered.indexOf(desk.selected);
+    previous.disabled=!filtered.length||i===0;next.disabled=!filtered.length||i===filtered.length-1;
+    navigation.hidden=!filtered.length;download.disabled=!desk.file||exporting||(!desk.points.length&&!dirty());
+    for(const b of marking.querySelectorAll('button'))b.disabled=audio.readyState<1||!desk.file;
+  }
+  function select(p,play){
+    const focusedRow=list.contains(document.activeElement);
+    desk.selected=p;const ix=matching().indexOf(p);if(ix>=0)desk.page=Math.floor(ix/pageSize);
+    showEditor();render();
+    if(focusedRow)list.querySelector('[aria-pressed="true"]')?.focus({preventScroll:true});
+    if(!play)return;
+    if(audio.readyState<1){note.textContent='Load playable audio to hear this marker. You can still edit its label.';return;}
+    if(Number.isFinite(audio.duration)&&p.ms/1000>audio.duration+0.25){note.textContent='This marker falls beyond the playable audio.';return;}
+    const at=Math.max(0,p.ms/1000-desk.lead);
+    try{audio.currentTime=at;audio.play().catch(()=>{if(sourceURL)note.textContent='Press Play to hear the selected marker.';});
+      note.textContent='Playing from '+stamp(Math.round(at*1000))+' · '+p.label+' at '+stamp(p.ms)+'.';
+    }catch{note.textContent='This browser could not seek to the marker.';}
+  }
+  function navigate(step){
+    const matches=matching(),ix=matches.indexOf(desk.selected);
+    const p=matches[ix<0?(step>0?0:matches.length-1):ix+step];if(p)select(p,true);
+  }
+  const previous=button('Previous marker',()=>navigate(-1)),next=button('Next marker',()=>navigate(1));
+  const navigation=add(e('div','quick-find'),previous,next);
+  const previousPage=button('Previous page',()=>{desk.page--;render();}),nextPage=button('Next page',()=>{desk.page++;render();});
+  const pager=add(e('div','quick-find'),previousPage,nextPage);
+  function mark(category){
+    if(!desk.file||audio.readyState<1)return;
+    if(desk.points.length>=maxPoints){note.textContent='This index already has 20,000 markers.';return;}
+    const p={ms:Math.round(audio.currentTime*1000),type:category,label:category==='Moment'?'Marker '+(desk.points.length+1):category};
+    desk.points.push(p);desk.points.sort((a,b)=>a.ms-b.ms);
+    desk.query='';search.value='';changed();select(p,false);note.textContent='Marked '+category+' at '+stamp(p.ms)+'.';
+  }
+  const marking=add(e('div','quick-find'),...types.slice(0,4).map((t,i)=>button(i?t:'Mark current position',()=>mark(t),i?'btn':'btn primary')));
+  // Bound resident memory while checking every audio byte, including in multi-hour sessions.
+  async function fingerprint(file){
+    if(!window.crypto?.subtle)return null;
+    const size=4*1024*1024,parts=new Uint8Array(Math.ceil(file.size/size)*32);
+    for(let off=0,i=0;off<file.size;off+=size,i++){
+      const data=await file.slice(off,off+size).arrayBuffer();
+      parts.set(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),i*32);
+      if(file!==desk.file)throw Error('Recording changed.');
+    }
+    const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',parts));
+    return 'sha256-chunks-4m-v1:'+Array.from(digest,b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  function digestFor(file){
+    if(!desk.fingerprint)desk.fingerprint=fingerprint(file).catch(err=>{if(desk.file===file)desk.fingerprint=null;throw err;});
+    return desk.fingerprint;
+  }
+  const download=button('Save marker index',async()=>{
+    const file=desk.file,ver=generation;if(!file||exporting)return;
+    exporting=true;render();note.textContent='Checking audio and preparing the index…';
     try{
-      if(file.size>4*1024*1024)throw Error('Marker index is too large.');
-      const data=JSON.parse(await file.text());if(version!==generation)return;
-      if(data.format!=='total-recall-markers-1'||data.audioBytes!==current.size)throw Error('Choose the marker index exported for this recording.');
-      if(!Array.isArray(data.markers)||data.markers.length>20000||!data.markers.every(m=>m&&Number.isSafeInteger(m.ms)&&m.ms>=0&&m.ms<8640000000000000&&typeof m.label==='string'))throw Error('Invalid marker index.');
-      points=data.markers.map(m=>({ms:m.ms,label:m.label.slice(0,160)})).sort((a,b)=>a.ms-b.ms);title=String(data.title||current.name);
-      status.textContent=title+' · '+points.length+' markers';render();
-    }catch(err){if(version===generation)status.textContent=err.message;}
+      const digest=await digestFor(file);if(generation!==ver||desk.file!==file)return;
+      const data={format:'total-recall-markers-1',title:desk.title,audioBytes:file.size,markers:desk.points.map(p=>({ms:p.ms,label:p.label,category:p.type}))};
+      if(digest)data.audioFingerprint=digest;
+      const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'})),a=e('a');
+      a.href=url;a.download=file.name+'.markers.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      desk.exported=desk.revision;updateReceipt();note.textContent='Index download requested · '+plural(data.markers.length,'marker')+(digest?' · bound to this audio.':' · matched by size only.');
+    }catch{if(generation===ver)note.textContent='Could not prepare the index. Your markers remain in this tab.';}
+    finally{if(generation===ver){exporting=false;render();}}
+  });
+  function merge(data){
+    const key=p=>JSON.stringify([p.ms,p.label,p.type]),seen=new Set(desk.points.map(key)),fresh=[];
+    for(const m of data.markers){const p={ms:m.ms,label:m.label,type:m.category||'Moment'},k=key(p);if(!seen.has(k)){fresh.push(p);seen.add(k);}}
+    if(seen.size>maxPoints){note.textContent='Merging would exceed 20,000 markers.';return;}
+    const hadEdits=dirty(),hadPoints=desk.points.length>0;
+    if(!hadPoints&&!hadEdits&&typeof data.title==='string')desk.title=data.title.slice(0,200)||desk.title;
+    desk.points.push(...fresh);desk.points.sort((a,b)=>a.ms-b.ms);
+    if(fresh.length&&(hadPoints||hadEdits))changed();
+    pending.replaceChildren();record.textContent=desk.title;render();
+    note.textContent=plural(fresh.length,'marker')+' added · '+plural(data.markers.length-fresh.length,'duplicate')+' skipped.';
+  }
+  index.onchange=async()=>{
+    const chosen=index.files[0],file=desk.file,job=++importVersion;pending.replaceChildren();index.value='';
+    if(!chosen||!file)return;
+    try{
+      if(chosen.size>16*1024*1024)throw Error('Index exceeds 16 MiB.');
+      const data=JSON.parse(await chosen.text());if(job!==importVersion)return;
+      if(data?.format!=='total-recall-markers-1'||data.audioBytes!==file.size)throw Error('Index and audio do not match.');
+      if(!Array.isArray(data.markers)||data.markers.length>maxPoints||!data.markers.every(p=>p&&Number.isSafeInteger(p.ms)&&p.ms>=0&&
+        typeof p.label==='string'&&p.label.length<=160&&(p.category==null||(typeof p.category==='string'&&p.category.length<=42))))throw Error('Invalid marker index.');
+      if(data.audioFingerprint!==undefined){
+        note.textContent='Checking that this index belongs to the audio…';const fingerprint=await digestFor(file);if(job!==importVersion)return;
+        if(!fingerprint||data.audioFingerprint!==fingerprint)throw Error('Audio fingerprint could not be matched. Existing markers are intact.');
+        merge(data);
+      }else{
+        note.textContent='This older index matches the file size only. Check the title before merging.';
+        pending.replaceChildren(e('span','',String(data.title||chosen.name).slice(0,200)+' · '+plural(data.markers.length,'marker')),
+          button('Merge these markers',()=>{if(job===importVersion)merge(data);}),
+          button('Cancel',()=>{pending.replaceChildren();note.textContent='Index left unopened.';}));
+      }
+    }catch(err){if(job===importVersion)note.textContent=err instanceof SyntaxError?'Invalid JSON index.':err.message;}
   };
-  render();
-  view.replaceChildren(add(e('section','detail-block'),add(e('label'),'Open audio from device',files),audio,
-    add(e('label'),'Open matching marker index',index),status,mark,download,list),
-    contentBlock('Recording on Android','Long sessions → Start long session. The microphone records until you finish or capture is interrupted. Export the audio and optional marker index from the saved session. Files opened here play locally in your browser.'),
-    contentBlock('Hands-free commands','While listening, say “Lexi, start a long session,” “Lexi, mark this point,” or “Lexi, finish the session.” Two rising notes acknowledge the wake word. Spoken save confirmations and automatic creative announcements are optional in Lock screen & sound.'));
-  sessionCleanup=()=>{generation++;current=null;audio.pause();audio.removeAttribute('src');audio.load();if(objectURL)URL.revokeObjectURL(objectURL);};
+  function loadFile(){
+    if(sourceURL)URL.revokeObjectURL(sourceURL);sourceURL='';
+    audio.pause();audio.removeAttribute('src');
+    if(desk.file){sourceURL=URL.createObjectURL(desk.file);audio.src=sourceURL;}else audio.load();
+    record.textContent=desk.file?desk.title:'Open a long recording';
+    library.hidden=toolbox.hidden=!desk.file;updateReceipt();showEditor();render();
+  }
+  function replaceFile(file){
+    if(dirty()&&!confirm('Discard the marker changes for this recording? Cancel to download its index first.'))return;
+    generation++;importVersion++;exporting=false;
+    Object.assign(desk,{file,title:file?.name||'',points:[],selected:null,position:0,query:'',page:0,revision:0,exported:0,fingerprint:null});
+    search.value='';pending.replaceChildren();note.textContent='';loadFile();
+  }
+  files.type=index.type='file';files.accept='audio/*,.aac,.m4a';index.accept='.json,application/json';
+  files.onchange=()=>{const chosen=files.files[0];files.value='';if(chosen)replaceFile(chosen);};
+  audio.id='session-audio';audio.controls=true;audio.preload='metadata';audio.setAttribute('aria-label','Session recording');
+  audio.onloadedmetadata=()=>{if(!sourceURL||audio.currentSrc!==sourceURL)return;if(desk.position>0){try{audio.currentTime=desk.position;}catch{}}render();};
+  audio.onerror=()=>{if(sourceURL)note.textContent='This browser could not play the audio. You can still open and edit the marker index.';render();};
+  name.maxLength=160;name.oninput=()=>{const p=desk.selected;if(!p)return;const label=name.value.trim()||p.type;
+    if(label!==p.label){p.label=label;changed();render();}
+  };
+  name.onblur=()=>{if(desk.selected)name.value=desk.selected.label;};
+  type.onchange=()=>{if(desk.selected){desk.selected.type=type.value;changed();render();}};
+  add(editor,add(e('label'),'Selected marker name',name),add(e('label'),'Marker type',type));
+  search.type='search';search.value=desk.query;search.placeholder='Name, type or timestamp';search.oninput=()=>{desk.query=search.value;desk.page=0;render();};
+  for(const n of [0,2,5,10,15]){const o=e('option','',n?n+' seconds':'At the marker');o.value=n;lead.append(o);}
+  lead.value=desk.lead;lead.onchange=()=>{desk.lead=Number(lead.value);};
+  note.setAttribute('role','status');list.className='quick-find';
+  add(toolbox,audio,marking,editor,add(e('div','quick-find'),download,button('Close recording',()=>replaceFile(null))),receipt);
+  add(library,heading('Markers'),add(e('div','find-filters'),add(e('label'),'Find a marker',search),add(e('label'),'Replay lead-in',lead)),
+    navigation,summary,list,pager,add(e('label'),'Open matching marker index',index),pending);
+  const guide=e('details','detail-block');add(guide,e('summary','','Recording on Android'),
+    e('p','','Start under Long sessions, or say “Lexi, start a long session” while listening. Say “Lexi, mark this point” as you go and “Lexi, finish the session” to finish. Export the audio and optional marker index from the saved recording.'));
+  $('view').replaceChildren(add(e('section','panel review-card'),record,add(e('label'),'Open audio from device',files),
+    e('p','section-note','Playback and marker editing use local files in this tab.')),toolbox,note,library,guide);
+  loadFile();
+  sessionCleanup=()=>{generation++;importVersion++;if(desk.file&&audio.readyState>=1)desk.position=audio.currentTime;
+    sourceURL&&URL.revokeObjectURL(sourceURL);sourceURL='';audio.pause();audio.removeAttribute('src');audio.load();};
 }
 
-function route(){let r=location.hash.slice(1);if(r==='content')return;if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';if(sessionCleanup){sessionCleanup();sessionCleanup=null;}state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review','sessions'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
+function route(){let r=location.hash.slice(1);if(r==='content')return;
+  const clipLink=/^clip\/([A-Za-z0-9_-]{1,128})$/.exec(r);
+  if(clipLink){r='archive';}
+  if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.clock='';state.fold=0;state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';if(sessionCleanup){sessionCleanup();sessionCleanup=null;}state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review','sessions'].includes(r);$('crumb').textContent=r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
   for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===r)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
-  $('view').replaceChildren(e('p','empty','Loading…'));refresh();}
+  $('view').replaceChildren(e('p','empty','Loading…'));refresh();
+  if(clipLink)openItem({kind:'clip',id:clipLink[1]});
+  else if($('detail').open)$('detail').close();
+}
 function contentBlock(title,text,css=''){return add(e('section','detail-block'),e('h3','',title),e('p',css,text));}
 function mediaPath(item){return `/api/media/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`;}
 function audioHeader(format,channels,rate,bits,size){const out=new Uint8Array(44);const v=new DataView(out.buffer);const str=(offset,s)=>{for(let i=0;i<s.length;i++)v.setUint8(offset+i,s.charCodeAt(i));};const stride=channels*bits/8;str(0,'RIFF');v.setUint32(4,36+size,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,format,true);v.setUint16(22,channels,true);v.setUint32(24,rate,true);v.setUint32(28,rate*stride,true);v.setUint16(32,stride,true);v.setUint16(34,bits,true);str(36,'data');v.setUint32(40,size,true);return out;}
@@ -372,7 +585,11 @@ function excerptControls(item,audio,signal){const details=e('details'),summary=e
   const save=button('Download excerpt',async()=>{try{const [from,to]=values();save.disabled=true;message.textContent='Preparing WAV…';const blob=await excerptBlob(item,from,to,signal);if(signal.aborted)return;const url=URL.createObjectURL(blob),l=e('a');l.href=url;l.download=`${item.id}-${from.toFixed(2)}s-${to.toFixed(2)}s.wav`;l.click();setTimeout(()=>URL.revokeObjectURL(url),60000);message.textContent='Excerpt ready for download.';}catch(err){if(!signal.aborted)message.textContent=err.message;}finally{save.disabled=false;}},'btn primary');
   return add(e('div','detail-block'),add(details,fields,add(e('div','actions'),preview,save),message));}
 function player(item,at){const audio=e('audio');audio.controls=true;audio.preload='metadata';audio.src=mediaPath(item);if(Number.isFinite(at))audio.addEventListener('loadedmetadata',()=>{
-    audio.currentTime=Math.max(0,Math.min((at-item.startedAtMillis)/1000-3,audio.duration||0));
+    const moment=(at-item.startedAtMillis)/1000;
+    if(!Number.isFinite(audio.duration)||moment<0||moment>audio.duration){
+      help.textContent='The timestamp falls outside the playable recording. Press Play to hear the available audio.';help.hidden=false;return;
+    }
+    try{audio.currentTime=Math.max(0,moment-3);}catch{help.textContent='This browser could not seek to that time. Use the player to listen.';help.hidden=false;}
   },{once:true});audio.setAttribute('aria-label','Original recording');const rates=e('select');rates.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=e('option','',`${n}×`);o.value=n;o.selected=n===1;rates.append(o);}rates.onchange=()=>audio.playbackRate=Number(rates.value);
   const download=e('a','text-link','Download original');download.prepend(icon('download'));download.href=mediaPath(item)+'?download=1';download.download='';const help=e('p','status');help.hidden=true;audio.onerror=()=>{if(audio.getAttribute('src')){help.textContent='This browser could not play the file. Download the original to open it in another player.';help.hidden=false;}};
   let ctx,source,filter,gain,compressor,focused=false;
@@ -608,7 +825,10 @@ function situationPanel(full,audio,story){
 async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalCleanup=null;}const serial=++state.detailVersion;const dialog=$('detail');$('detail-kind').textContent=kindName(item.kind);$('detail-body').replaceChildren(e('p','empty','Loading item…'));if(!dialog.open)dialog.showModal();
   try{const full=await get(`/api/items/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`);if(serial!==state.detailVersion||!dialog.open)return;
     const d=e('h2','',full.review?.name||full.title||full.category||kindName(full.kind));d.id='detail-title';const meta=add(e('div','detail-meta'),e('span','',dateTime(full.startedAtMillis)),e('span','','·'),e('span','',full.kind==='journal'?bytes(full.bytes):duration(full.durationMs)));
-    const nodes=[d,meta];if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
+    const nodes=[d,meta];
+    if(jump.clock)nodes.push(e('p','section-note','Playback is cued near your remembered time, '+dateTime(jump.at)+'.'));
+    if(jump.match)nodes.push(e('p','match-context','Recognized at '+jump.match.stamp+' · “'+jump.match.text+'”'),e('p','section-note','Playback starts up to three seconds before this passage.'));
+    if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
     const playerNode=nodes.find(node=>node?.classList?.contains('player'));
     if(playerNode)nodes.push(micComparison(full,playerNode.querySelector("audio")));
     const story=storyPanel(full);nodes.push(story.box,situationPanel(full,playerNode?.querySelector('audio'),story));

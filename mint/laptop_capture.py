@@ -34,6 +34,82 @@ HOST="total-recall-archive-production.up.railway.app"
 RATE=16000
 BYTES_PER_SECOND=2*RATE
 BASE={"source":"pulse","quality":32,"seconds":60,"keep":30,"journal":False,"commands":True,"prune":False,"network":"Any network"}
+# The spool prefix travels with the original PCM through an interrupted save.
+# Keep legacy mark/passage prefixes readable for already-running recorders.
+KEEP_TYPES = {
+    "mark": ("Laptop bookmark", "Manual keep"),
+    "passage": ("Spoken passage", "Poem line"),
+    "line": ("Poem line", "Poem line"),
+    "coinage": ("Coined word", "Forge Lexicon"),
+    "resume": ("Pick up here", "Resume point"),
+}
+
+SOUND_MODES = ("Wake chime only", "Wake and save tones", "Wake and spoken saves", "Visual only")
+SPOKEN_RECEIPTS = {"line":"Line captured","coinage":"Word captured","resume":"Place marked","passage":"Passage saved","mark":"Moment saved"}
+
+def sound_cue(root, event):
+    mode=read(root/"sound.json",SOUND_MODES[0])
+    if mode not in SOUND_MODES or mode=="Visual only" or (event!="wake" and mode==SOUND_MODES[0]):
+        return
+    if event!="wake" and mode=="Wake and spoken saves":
+        speaker=shutil.which("espeak-ng") or shutil.which("espeak")
+        command=[speaker,SPOKEN_RECEIPTS[event]] if speaker else None
+    else:command=None
+    if not command:
+        pattern=("aevalsrc=0.10*sin(2*PI*(660+330*gte(t\\,0.08))*t):d=0.17" if event=="wake"
+                 else "aevalsrc=0.10*sin(2*PI*(950-350*gte(t\\,0.10))*t):d=0.21")
+        command=["ffplay","-v","quiet","-nodisp","-autoexit","-f","lavfi","-i",pattern]
+    try:
+        subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+def request_keep(root, kind):
+    if kind not in KEEP_TYPES or kind == "passage":
+        raise ValueError("Unknown bookmark type")
+    status = read(root/"status.json", {})
+    age = storage.now() - status.get("at", 0)
+    if (not (root/"enabled").exists() or status.get("state") != "Recording"
+            or not 0 <= age < 6500 or not status.get("stream")):
+        raise ValueError("Waiting for live laptop audio")
+    # Unique files preserve two different catches made within the same audio block.
+    request_id = secrets.token_hex(8)
+    write(root/f"keep-{request_id}.request", {
+        "stream": status["stream"], "kind": kind, "at": storage.now()
+    })
+    return request_id
+
+def collect_keeps(root, stream_id, ring, end_ms, lookback):
+    """Save up to the click time, using only samples from this microphone stream."""
+    for request in sorted(root.glob("keep-*.request")):
+        data = read(request, {})
+        stamp = data.get("at")
+        kind = data.get("kind")
+        missed = None
+        if (data.get("stream") != stream_id or kind not in KEEP_TYPES
+                or type(stamp) is not int or end_ms - stamp > 6500):
+            missed = "Microphone changed before this moment could be kept"
+        elif stamp > end_ms + 1000:
+            missed = "Laptop clock changed before this moment could be kept"
+        else:
+            # A just-clicked control can be a few milliseconds ahead of this block.
+            available_end = max(0, len(ring) - max(0, end_ms - stamp) * BYTES_PER_SECOND // 1000)
+            count = min(lookback * BYTES_PER_SECOND, available_end)
+            if count:
+                start = min(stamp, end_ms) - round(count * 1000 / BYTES_PER_SECOND)
+                identifier = request.stem.split("-", 1)[1]
+                path = root/f"{kind}-{start}-{identifier}.pcm.part"
+                with path.open("wb") as output:
+                    output.write(memoryview(ring)[available_end-count:available_end])
+                    output.flush()
+                    os.fsync(output.fileno())
+                path.rename(path.with_suffix(""))
+            else:
+                missed = "No buffered audio was available at this moment"
+        if missed:
+            write(root/"missed-keep.json", {"at": storage.now(), "text": missed})
+        request.unlink(missing_ok=True)
+
 def folder(arc):
     path=arc.root/"laptop-recorder"
     path.mkdir(mode=0o700,exist_ok=True)
@@ -169,7 +245,9 @@ def finish(arc,path,cfg):
             path.unlink()
             write(path.parent/"last-omission.json",{"at":start,"duration":ms})
             return
-    passage=path.name.startswith("passage-");mark=passage or path.name.startswith("mark-")
+    prefix=path.name.split("-",1)[0]
+    mark=prefix in KEEP_TYPES
+    title,category=KEEP_TYPES.get(prefix,("Laptop microphone",""))
     uid=("desk-keep-" if mark else "laptop-")+path.stem.split("-",1)[1]
     with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
         if mark:
@@ -177,17 +255,19 @@ def finish(arc,path,cfg):
             with wave.open(str(wav),"wb") as out,path.open("rb") as src:
                 out.setparams((1,2,RATE,0,"NONE",""));out.writeframes(src.read(size))
             archive=Path(tmp)/"clip.zip"
-            meta=dict(id=uid,title="Spoken passage" if passage else "Laptop bookmark",startedAtMillis=start,durationMs=ms,sha256=storage.sha_file(wav),
-                audio="audio/"+uid+".wav",category="Poem line" if passage else "Manual keep",reason="Passage requested by voice" if passage else "Requested on laptop",transcript="")
+            meta=dict(id=uid,title=title,startedAtMillis=start,durationMs=ms,sha256=storage.sha_file(wav),
+                audio="audio/"+uid+".wav",category=category,reason="Passage requested by voice" if prefix=="passage" else "Requested on laptop",transcript="")
             with zipfile.ZipFile(archive,"w") as z:
-                z.write(wav,meta["audio"]);z.writestr("index.json",json.dumps({"schema":arc.desk.FORMAT,"clips":[meta]}))
+                # A restarted ingest must produce the very same transfer bytes.
+                z.writestr(zipfile.ZipInfo(meta["audio"]),wav.read_bytes())
+                z.writestr(zipfile.ZipInfo("index.json"),json.dumps({"schema":arc.desk.FORMAT,"clips":[meta]}))
             file=archive;kind="clip";mime="application/zip"
         else:
             file=Path(tmp)/"segment.aac"
             subprocess.run(["ffmpeg","-nostdin","-loglevel","error","-f","s16le","-ar",str(RATE),"-ac","1","-i",str(path),
                 "-c:a","aac","-b:a",str(cfg["quality"])+"k","-f","adts",str(file)],check=True,timeout=60)
             kind="segment";mime="audio/aac"
-        stage_record(arc,uid,file,dict(id=uid,kind=kind,title="Laptop bookmark" if mark else "Laptop microphone",
+        stage_record(arc,uid,file,dict(id=uid,kind=kind,title=title,
             sessionId="Mint laptop",startedAtMillis=start,durationMs=ms,bytes=file.stat().st_size,sha256=storage.sha_file(file),mediaType=mime))
         if path.name.split("-")[0] in ("journal","quietjournal"):
             lines=[]
@@ -201,14 +281,22 @@ def finish(arc,path,cfg):
                 text=Path(tmp)/"journal.txt";text.write_text("Total Recall · Mint microphone\n"+"\n".join(lines)+"\n",encoding="utf-8")
                 journal_id="laptop-journal-"+path.stem.split("-",1)[1]
                 stage_record(arc,journal_id,text,dict(id=journal_id,kind="journal",sessionId="Mint laptop",title="Laptop speech journal",startedAtMillis=start,durationMs=ms,bytes=text.stat().st_size,sha256=storage.sha_file(text),mediaType="text/plain"))
-    path.unlink();write(path.parent/"last.json",{"at":start,"duration":ms,"kind":kind})
+    receipt = dict(at=start, duration=ms, kind=kind, id=uid, title=title, savedAt=storage.now())
+    if mark:
+        # Segment rollover must never replace the link to a deliberately kept clip.
+        previous = read(path.parent/"last-keep.json", {})
+        if start + ms >= previous.get("at", 0) + previous.get("duration", 0):
+            write(path.parent/"last-keep.json", receipt)
+    write(path.parent/"last.json", receipt)
+    path.unlink()
+    if mark:sound_cue(path.parent,prefix)
 def room(arc,root):
     reserved=sum(x.stat().st_size for x in root.glob("*.pcm*") if x.is_file())
     capacity=arc.status()
     return reserved<64*1024**2 and capacity["availableBytes"]>8*1024**2 and capacity["freeBytes"]>capacity["floorBytes"]+16*1024**2
 def ingest(arc,root,done):
     while True:
-        files=sorted(root.glob("*.pcm"))
+        files=sorted(root.glob("*.pcm"),key=lambda p:(p.name.split("-",1)[0] not in KEEP_TYPES,p.name))
         if not files:
             if done.is_set():return
             done.wait(.4);continue
@@ -241,9 +329,7 @@ def capture(arc,root,cfg,input_args):
         if matched:
             awake=time.monotonic()+8;cmd=cmd[matched.end():]
             event="Wake heard · ready for a command";event_at=time.monotonic()
-            try:
-                subprocess.Popen(["ffplay","-v","quiet","-nodisp","-autoexit","-f","lavfi","-i","aevalsrc=0.10*sin(2*PI*(660+330*gte(t\\,0.08))*t):d=0.17"],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            except OSError:pass
+            sound_cue(root,"wake")
         if cmd in ("save that","save this","keep that","remember that","keep the last minute","save the last minute","you missed one"):
             (root/"bookmark").touch(mode=0o600);event="Save requested · recent audio";event_at=time.monotonic();awake=0
         elif cmd in ("finish passage","finish the poem","finish the story","finish the draft"):
@@ -262,6 +348,7 @@ def capture(arc,root,cfg,input_args):
                 if label!=cue:last_cue, cue=cue,label
                 cue_at=time.monotonic()
     voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) else None
+    stream_id=secrets.token_hex(12)
     stream_pos=secrets.randbits(61)
     began=time.monotonic()
     def seal():
@@ -280,8 +367,9 @@ def capture(arc,root,cfg,input_args):
                 if len(block)<=len(tail):raise OSError("Microphone unavailable; retrying")
                 tail=block[len(block)//2*2:];block=block[:len(block)//2*2]
                 now=time.time_ns()//1000000
-                if segment and abs(now-(start+seg_bytes*1000/BYTES_PER_SECOND))>4000:seal();flush_passage();ring.clear()
-                if time.monotonic()-last_input>3:seal();flush_passage();ring.clear()
+                if (segment and abs(now-(start+seg_bytes*1000/BYTES_PER_SECOND))>4000) or time.monotonic()-last_input>3:
+                    seal();flush_passage();ring.clear()
+                    stream_id=secrets.token_hex(12)
                 last_input=time.monotonic()
                 if segment is None:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
@@ -293,7 +381,9 @@ def capture(arc,root,cfg,input_args):
                 feed.send(stream_pos,block)
                 stream_pos+=len(block)
                 segment.write(block);seg_bytes+=len(block);ring.extend(block)
-                del ring[:max(0,len(ring)-cfg["keep"]*BYTES_PER_SECOND)]
+                # Leave room for the block that arrives immediately after a click.
+                del ring[:max(0,len(ring)-(cfg["keep"]+1)*BYTES_PER_SECOND)]
+                collect_keeps(root,stream_id,ring,now,cfg["keep"])
                 if passage is not None:
                     passage.extend(block)
                     if len(passage)>=30*BYTES_PER_SECOND:
@@ -306,12 +396,13 @@ def capture(arc,root,cfg,input_args):
                         flush_passage();event="Passage sent for saving";event_at=time.monotonic()
                 if (root/"bookmark").exists():
                     (root/"bookmark").unlink(missing_ok=True)
-                    mark=root/f"mark-{now-round(len(ring)*1000/BYTES_PER_SECOND)}-{secrets.token_hex(6)}.pcm.part"
-                    mark.write_bytes(ring);mark.rename(mark.with_suffix(""))
+                    recent=ring[-cfg["keep"]*BYTES_PER_SECOND:]
+                    mark=root/f"mark-{now-round(len(recent)*1000/BYTES_PER_SECOND)}-{secrets.token_hex(6)}.pcm.part"
+                    mark.write_bytes(recent);mark.rename(mark.with_suffix(""))
                 if time.monotonic()-report>.45:
                     samples=memoryview(block).cast("h")
                     rms=math.sqrt(sum(int(x)*int(x) for x in samples)/max(1,len(samples)))
-                    write(root/"status.json",dict(state="Recording",words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=len(ring)//BYTES_PER_SECOND))
+                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
@@ -394,8 +485,21 @@ def panel(arc):
         else:start(arc)
         tick(False)
     toggle_btn=ttk.Button(controls,text="Start recording",command=toggle);toggle_btn.pack(side="left")
-    def mark():
-        (root/"bookmark").touch(mode=0o600);state.set("Mark requested · saving recent audio")
+    pending = None
+    def mark(kind="mark"):
+        nonlocal pending
+        try:
+            status=read(root/"status.json",{})
+            if "stream" not in status and kind=="mark" and (root/"enabled").exists():
+                # Keep working while an earlier installed recorder is running.
+                (root/"bookmark").touch(mode=0o600)
+                pending=("legacy",storage.now())
+            else:
+                pending=(request_keep(root,kind),storage.now())
+        except (ValueError,OSError) as exc:
+            state.set(str(exc))
+            return
+        tick(False)
     keep=ttk.Button(controls,text="Keep moment",command=mark);keep.pack(side="left",padx=4)
     def open_app():
         subprocess.Popen([sys.executable,"-I",str(Path(arc.desk.__file__).resolve()),"desk"],start_new_session=True)
@@ -407,28 +511,58 @@ def panel(arc):
             server=recall_web.web_server(arc,Path(__file__).parent/"web",0)
             threading.Thread(target=server.serve_forever,daemon=True).start()
         webbrowser.open(recall_web.grant(arc.root,server.server_port)+"#"+view)
-    more=ttk.Frame(box);more.pack(fill="x")
+    more=ttk.Frame(box)
+    typed_buttons=[]
+    for kind,label in (("line","Poem line"),("coinage","Coined word"),("resume","Pick up here")):
+        button=ttk.Button(more,text=label,width=11,command=lambda kind=kind:mark(kind))
+        button.pack(side="left",padx=(0,2));typed_buttons.append(button)
+    last_kept=tk.StringVar()
+    def reopen_keep():
+        receipt=read(root/"last-keep.json",{})
+        if receipt.get("id"):archive("clip/"+receipt["id"])
+    reopen=ttk.Button(box,textvariable=last_kept,command=reopen_keep)
+    # Recover an earlier install's latest intentional capture, including voice passages.
+    if not (root/"last-keep.json").exists():
+        with arc.connection() as db:
+            clip=db.execute("""SELECT id,title,started,duration FROM clips
+                WHERE id GLOB 'desk-keep-*' ORDER BY started+duration DESC LIMIT 1""").fetchone()
+        if clip:write(root/"last-keep.json",dict(id=clip[0],title=clip[1],at=clip[2],duration=clip[3]))
+
     ttk.Button(controls,text="Full journal",command=lambda:archive("journal")).pack(side="left")
 
     login=Path(os.environ.get("XDG_CONFIG_HOME",Path.home()/".config"))/"autostart/total-recall-microphone.desktop"
     def settings():
-        dlg=tk.Toplevel(window);dlg.title("Laptop capture settings");dlg.transient(window);p=ttk.Frame(dlg,padding=12);p.pack()
+        dlg=tk.Toplevel(window);dlg.title("Laptop capture settings");dlg.transient(window)
+        tabs=ttk.Notebook(dlg);tabs.pack(fill="both",expand=True,padx=8,pady=8)
+        capture_settings,voice_settings,panel_settings,backup_settings=[ttk.Frame(tabs,padding=10) for _ in range(4)]
+        for tab,name in ((capture_settings,"Capture"),(voice_settings,"Voice"),(panel_settings,"Panel"),(backup_settings,"Backup")):
+            tabs.add(tab,text=name)
+        p=capture_settings
         c=config(root);vars={}
         for name,label,opts in (("source","Microphone system",("pulse","alsa")),("quality","AAC quality (kbps)",(24,32,48)),("seconds","Segment length (seconds)",(30,60,120)),("keep","Keep moment lookback (seconds)",(15,30,60))):
             ttk.Label(p,text=label).pack(anchor="w");v=tk.StringVar(value=str(c[name]));vars[name]=v
             ttk.Combobox(p,textvariable=v,values=opts,state="readonly").pack(fill="x")
         ttk.Label(p,text="Pulse uses Mint’s selected microphone. Keep moment saves the available audio before your click. Closing the panel leaves capture running. Stop recording releases the microphone.",wraplength=360).pack(anchor="w",pady=4)
+        p=backup_settings
         network=tk.StringVar(value=c["network"]);ttk.Label(p,text="Hosted backup network").pack(anchor="w")
         ttk.Combobox(p,textvariable=network,values=("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour"),state="readonly").pack(fill="x")
+        p=voice_settings
         journal=tk.BooleanVar(value=c["journal"]);commands=tk.BooleanVar(value=c["commands"])
         ttk.Checkbutton(p,text="Save a text journal for new microphone segments",variable=journal).pack(anchor="w")
         ttk.Checkbutton(p,text="Listen for voice commands while recording",variable=commands).pack(anchor="w")
         ttk.Label(p,text="Say Hey Recall or Total Recall for the wake chime. Say save that, keep that, remember that, or you missed one to bookmark recent audio. Say Hey Recall, start a passage before a poem or story. Say finish passage at the end, or Hey Recall, pause recording to release the mic.",wraplength=370).pack(anchor="w")
+        sounds=tk.StringVar(value=read(root/"sound.json",SOUND_MODES[0]))
+        ttk.Label(p,text="Wake and confirmed saves").pack(anchor="w")
+        ttk.Combobox(p,textvariable=sounds,values=SOUND_MODES,state="readonly").pack(fill="x")
+        ttk.Label(p,text="Spoken receipts use local speech when available, with a tone as fallback. Headphones keep confirmations out of the microphone.",wraplength=370).pack(anchor="w")
+        p=capture_settings
         prune=tk.BooleanVar(value=c["prune"])
         ttk.Checkbutton(p,text="Skip near-silent blocks in new recordings",variable=prune).pack(anchor="w")
+        p=panel_settings
         at_login=tk.BooleanVar(value=login.exists())
         for text,var in (("Keep panel above other windows",top),("Compact panel",compact),("Start recording and show panel when I log in",at_login)):
             ttk.Checkbutton(p,text=text,variable=var).pack(anchor="w")
+        p=backup_settings
         paired=bool(read(root/"pair.json",""));share=tk.BooleanVar(value=paired)
         ttk.Checkbutton(p,text="Send laptop audio, saved journals and bookmarks to my hosted archive",variable=share).pack(anchor="w",pady=4)
         entry=ttk.Entry(p,width=39,show="•");entry.pack(fill="x")
@@ -441,6 +575,7 @@ def panel(arc):
                     if entry.get().strip():write(root/"pair.json",credentials(entry.get().strip()))
                     elif not paired:raise ValueError("Enter the hosted pairing code.")
                 else:(root/"pair.json").unlink(missing_ok=True)
+                write(root/"sound.json",sounds.get())
                 write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get(),ultra=ultra.get() and compact.get(),words=show_words.get()))
                 if at_login.get():
                     login.parent.mkdir(parents=True,exist_ok=True)
@@ -453,10 +588,11 @@ def panel(arc):
                 # The capture loop notices a configuration change and seals its current segment.
                 dlg.destroy()
             except (ValueError,OSError) as ex:messagebox.showerror("Capture settings",str(ex),parent=dlg)
-        ttk.Button(p,text="Save settings",command=save).pack(pady=5)
+        ttk.Button(dlg,text="Save settings",command=save).pack(anchor="e",padx=10,pady=(0,8))
     menu=tk.Menu(window,tearoff=False)
     menu.add_command(label="Open recorder",command=open_app)
     menu.add_command(label="Browse & play",command=archive)
+    menu.add_command(label="Open last kept audio",command=reopen_keep)
     menu.add_command(label="Review saved moments",command=lambda:archive("review"))
     menu.add_checkbutton(label="Show live words",variable=show_words,command=lambda:(layout(),tick(False)))
     menu.add_command(label="Settings",command=settings)
@@ -474,23 +610,27 @@ def panel(arc):
     menu_btn=ttk.Button(header,text="More",width=5,command=show_menu)
     mode=ttk.Button(header,text="↙",command=lambda:resize(),width=3)
     mini=ttk.Frame(box);mini_state=tk.StringVar(value="Journal")
-    mini_read=ttk.Button(mini,textvariable=mini_state,command=lambda:archive("journal"),width=10,takefocus=True)
+    mini_read=ttk.Button(mini,textvariable=mini_state,command=lambda:archive("journal"),width=13,takefocus=True)
     mini_read.pack(side="left")
     mini_toggle=ttk.Button(mini,text="Start",width=5,command=toggle);mini_toggle.pack(side="left")
     mini_keep=ttk.Button(mini,text="Save",width=5,command=mark);mini_keep.pack(side="left")
     ttk.Button(mini,text="↗",width=3,command=lambda:resize()).pack(side="left")
+    compact_facts=tk.StringVar()
+    mini_detail=ttk.Label(box,textvariable=compact_facts,font=("Sans",9),wraplength=285)
     def layout():
-        for w in (header,state_label,meter,summary,captions,controls,more,mini):w.pack_forget()
+        for w in (header,state_label,meter,summary,captions,controls,more,mini,mini_detail,reopen):w.pack_forget()
         if compact.get():
             for child in mini.winfo_children():child.pack_forget()
             for child in mini.winfo_children():
                 if not ultra.get() or child not in (mini_toggle,mini_keep):child.pack(side="left")
             mini.pack(fill="x")
+            if not ultra.get():mini_detail.pack(anchor="w",padx=3)
         else:
             header.pack(fill="x");mode.pack(side="right");menu_btn.pack(side="right")
             state_label.pack(anchor="w");meter.pack(fill="x",pady=1)
             if show_words.get():captions.pack(fill="x")
-            summary.pack(anchor="w");controls.pack(fill="x",pady=1)
+            controls.pack(fill="x",pady=1);more.pack(fill="x",pady=1)
+            reopen.pack(fill="x",pady=1);summary.pack(anchor="w")
         write(root/"panel.json",dict(top=top.get(),compact=compact.get(),ultra=ultra.get() and compact.get(),words=show_words.get()))
     def resize():
         if ultra.get():ultra.set(False);compact.set(True)
@@ -498,11 +638,11 @@ def panel(arc):
         layout();tick(False)
     timer=None
     def tick(repeat=True):
-        nonlocal timer,reader
+        nonlocal timer,reader,pending
         if (root/"raise-panel").exists():
             (root/"raise-panel").unlink(missing_ok=True);window.deiconify();window.lift()
         s=read(root/"status.json",{});last=read(root/"last.json",{})
-        active=(root/"enabled").exists();fresh=storage.now()-s.get("at",0)<6500
+        active=(root/"enabled").exists();fresh=0<=storage.now()-s.get("at",0)<6500
         status=s.get("state","Starting microphone") if active and fresh else "Waiting for recorder" if active else "Stopped"
         ready=status=="Recording"
         if ready:
@@ -519,26 +659,68 @@ def panel(arc):
         else:
             if reader:reader.close();reader=None
             words_view.set("Words paused" if not ready else "")
-        keep.configure(text="Keep "+str(s.get("available",config(root)["keep"]))+" s" if ready else "Keep moment")
+        cfg=config(root)
+        available=s.get("available",cfg["keep"])
+        duration=f"{available} s" if available else "<1 s"
+        keep.configure(text="Keep "+duration if ready else "Keep moment")
         meter["value"]=s.get("level",0) if active and fresh else 0
         keep.configure(state="normal" if active and fresh and status=="Recording" else "disabled")
         toggle_btn.configure(text="Stop recording" if active else "Start recording")
+        for btn in typed_buttons:
+            btn.configure(state="normal" if ready and s.get("stream") else "disabled")
+        receipt=read(root/"last-keep.json",{})
+        if receipt:
+            clock=time.strftime("%H:%M:%S",time.localtime((receipt["at"]+receipt["duration"])/1000))
+            last_label=f"{receipt['title']} · {receipt['duration']/1000:.1f} s · {clock}"
+            last_kept.set("Open last keep  ·  "+last_label)
+        else:last_kept.set("No kept moment yet")
+        reopen.configure(state="normal" if receipt else "disabled")
+        menu.entryconfigure("Open last kept audio",state="normal" if receipt else "disabled")
+        missed=read(root/"missed-keep.json",{})
+        feedback=""
+        if pending:
+            token,when=pending
+            if (receipt.get("id","").endswith("-"+token)
+                    or (token=="legacy" and receipt.get("savedAt",0)>=when)):
+                pending=None
+            elif missed.get("at",0)>=when:
+                pending=None
+            elif not active:
+                feedback="Check the archive for the pending keep"
+                if storage.now()-when>12000:pending=None
+            elif storage.now()-when>12000:
+                pending=None
+                feedback="Keep still unconfirmed · check archive"
+            else:feedback="Saving recent audio…"
+        if not feedback and missed and storage.now()-missed.get("at",0)<8000:feedback=missed["text"]
+        if not feedback and receipt and storage.now()-receipt.get("savedAt",0)<8000:
+            feedback="Saved · "+receipt["title"]
         saved=("Last saved "+time.strftime("%H:%M:%S",time.localtime(last["at"]/1000))+" · "+str(round(last["duration"]/1000))+" s") if last else "No laptop audio saved yet"
         if last.get("kind")=="clip":saved+=" · bookmark"
         sync=read(root/"sync.json","Waiting for transfer") if (root/"pair.json").exists() else "Saved on this laptop"
-        segment=(f"Segment {s.get('seconds',0)} / {config(root)['seconds']} s  ·  " if ready else "")
+        segment=(f"Segment {s.get('seconds',0)} / {cfg['seconds']} s  ·  " if ready else "")
         omit=read(root/"last-omission.json",{})
         if omit.get("at",0)>last.get("at",0):saved="Quiet block skipped · "+str(round(omit["duration"]/1000))+" s"
-        facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and config(root)["commands"] else ""
+        facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and cfg["commands"] else ""
         info.set("\n".join(filter(None,(s.get("voice","") if ready else "",facts,segment+saved,read(root/"save-error.json",sync)))))
         alerts=[read(root/(kind+"-limit.json"),{}).get("text","") for kind in ("capture","upload")]
         if any(alerts):info.set("\n".join(filter(None,alerts)))
+        if feedback:info.set(feedback+"\n"+info.get())
+        if ready and "stream" not in s:
+            info.set(info.get()+"\nSign out and back in once to enable Poem line, Coined word and Pick up here on the updated recorder.")
         mini_toggle.configure(text="Pause" if active else "Start")
         mini_keep.configure(state="normal" if ready else "disabled")
-        short=s.get("voice") if ready else None
-        if ready and not short and show_words.get() and reader and reader.line not in ("Listening for words…","Waiting for microphone audio…"):
-            short=reader.line[-16:]
-        mini_state.set((short or (("Live "+str(s.get("elapsed",0)//60)+":"+str(s.get("elapsed",0)%60).zfill(2)) if ready else "Mic busy" if active else "Journal"))[:18])
+        elapsed=s.get("elapsed",0)
+        mini_state.set(f"REC {elapsed//60}:{elapsed%60:02}" if ready else "Opening mic" if active else "Mic off")
+        detail=next((alert for alert in alerts if alert), "")
+        if not detail:detail=read(root/"save-error.json","") or feedback or (s.get("voice","") if ready else "")
+        if not detail and active and not ready:detail=status
+        if not detail and ready and show_words.get() and reader:detail=reader.line
+        if not detail:detail=(s.get("cue") if ready else "") or ("Last · "+receipt["title"] if receipt else "No kept moments")
+        compact_facts.set((f"Mic {s.get('level',0)}% · Keep {duration} · " if ready else "")+detail)
+        if active and not ready and not status.startswith(("Starting","Opening","Waiting for recorder")):
+            mini_state.set("Mic issue")
+        if ultra.get() and feedback:mini_state.set(feedback[:13])
         if repeat:timer=window.after(550,tick)
     layout()
     # First bindtag sees pointer events before Tk button bindings. Once dragging

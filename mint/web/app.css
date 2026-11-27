@@ -24,3 +24,11 @@ dialog{border:1px solid var(--line);border-radius:17px;padding:22px 26px 26px;wi
 .review-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.review-top select,.review-options select{max-width:100%;padding:7px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:7px}
 .review-card,.review-options{padding:16px 18px;margin:12px 0}.review-card audio{width:100%;height:38px;margin:10px 0}.review-title{display:block;text-align:left;font:22px var(--serif);padding:5px 0}.review-snippet{white-space:pre-wrap;overflow-wrap:anywhere}.review-buttons{gap:6px;margin:9px 0}.review-buttons .chosen{background:var(--green);color:white}.review-options label,.detail-block details label,details.detail-block>label{display:grid;margin:9px 0;gap:4px}.review-options textarea,details.detail-block input:not([type=checkbox]),details.detail-block textarea{width:100%;padding:8px;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px}.danger{color:#8b2b22}.delete-box label.delete-confirm{display:block}.delete-confirm input{width:auto}.review-top label{min-width:0}.review-options summary,.detail-block summary{cursor:pointer}
 @media(max-width:480px){.rail nav{gap:1px;flex-wrap:wrap}.rail nav a{padding:7px 6px}}
+
+.review-top {flex-wrap:wrap}
+.review-top label {margin-right:auto}
+.layout-mode[aria-pressed=true] {background:var(--green);color:white}
+.review-feedback {display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 0;padding:10px 14px;border-left:3px solid var(--green);background:var(--card)}
+.match-context {margin:14px 0 3px;color:var(--green);overflow-wrap:anywhere}
+.time-search summary {cursor:pointer;color:var(--green)}
+.time-search .find-filters {margin-top:10px}

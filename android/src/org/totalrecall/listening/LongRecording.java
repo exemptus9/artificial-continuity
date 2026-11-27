@@ -65,9 +65,19 @@ final class LongRecording implements AutoCloseable {
             encoder.write(pcm,0,count);duration=encoder.samples*1000/ArchiveStore.RATE;
         }catch(IOException|RuntimeException error){finish("Audio write interrupted");}
     }
-    void mark(){
-        if(encoder==null)return;
-        addMark(db,active,duration,"Marker "+(marks+1));marks++;message="Marker saved at "+time(duration);
+    boolean mark(String category,long leadIn){
+        if(encoder==null)return false;
+        long at=Math.max(0,duration-leadIn);
+        String label=category.isEmpty()?"Marker "+(marks+1):category;
+        try{
+            addMark(db,active,at,label);
+            marks++;
+            message=label+" saved at "+time(at);
+            return true;
+        }catch(android.database.SQLException failure){
+            message="Could not write the marker · session continues";
+            return false;
+        }
     }
     static void addMark(ArchiveStore db,String id,long ms,String label){
         ContentValues v=new ContentValues();v.put("session",id);v.put("ms",ms);v.put("label",label);
@@ -100,6 +110,7 @@ final class LongRecording implements AutoCloseable {
         try(RandomAccessFile in=new RandomAccessFile(audio,"r")){
             byte[] h=new byte[7];long at=0,previous=0,length=in.length();
             for(long n=0;n<frames && at+7<=length;n++){
+                if((n&255)==0 && Thread.currentThread().isInterrupted())throw new InterruptedIOException("Seek superseded");
                 in.readFully(h);int size=((h[3]&3)<<11)|((h[4]&255)<<3)|((h[5]&255)>>5);
                 if((h[0]&255)!=255 || (h[1]&255)!=241 || size<8 || at+size>length)throw new IOException("Invalid audio frame");
                 previous=at;at+=size;in.seek(at);
@@ -107,6 +118,26 @@ final class LongRecording implements AutoCloseable {
             return at>=length?previous:at;
         }
     }
+    /** Matches the browser marker index's digest of consecutive 4 MiB chunk digests. */
+    static String audioFingerprint(File file)throws IOException{
+        int chunkSize=4*1024*1024;
+        byte[] buffer=new byte[65536];
+        try(InputStream in=new FileInputStream(file)){
+            java.security.MessageDigest chunk=java.security.MessageDigest.getInstance("SHA-256");
+            java.security.MessageDigest whole=java.security.MessageDigest.getInstance("SHA-256");
+            int used=0,count;
+            while((count=in.read(buffer,0,Math.min(buffer.length,chunkSize-used)))!=-1){
+                chunk.update(buffer,0,count);
+                used+=count;
+                if(used==chunkSize){whole.update(chunk.digest());used=0;}
+            }
+            if(used!=0)whole.update(chunk.digest());
+            return "sha256-chunks-4m-v1:"+Store.hex(whole.digest());
+        }catch(java.security.NoSuchAlgorithmException unavailable){
+            throw new IOException("SHA-256 unavailable",unavailable);
+        }
+    }
+
     static long bytes(Context c,ArchiveStore db){
         try(Cursor cur=db.getReadableDatabase().rawQuery("SELECT COALESCE(SUM(bytes),0) FROM long_sessions",null)){
             cur.moveToFirst();long total=cur.getLong(0);

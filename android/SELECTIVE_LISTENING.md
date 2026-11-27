@@ -1,6 +1,10 @@
-# Live listening on Galaxy · 0.27.0
+# Live listening on Galaxy · 0.28.0
 
-Install `TotalRecall-0.27.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.28.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+
+## Teach a coined word from your own line
+
+If the journal is enabled, open **Full journal**, tap a passage and edit the words the phone misheard. **Teach this spelling** extracts the part you changed. Check both fields, narrow the phrase if needed, then tap **Save spelling**. Choose **Save correction** in the passage editor if you also want to keep the edited line. **Compare with original recognition** lets you revisit the recognizer’s wording. Manage or forget a learned phrase under **My words & phrases**.
 
 ## Record a long session
 
@@ -14,7 +18,16 @@ Speak naturally. In the default mode, a 90-second rolling buffer holds recent au
 
 **Live captions** show what the recognizer is hearing. Wording can change during an utterance. Open a saved moment and choose **Playback & trim** to hear the original, mark the part you want and **Save excerpt…**. The new clip keeps its link to the original. If you are still recording, playback offers **Pause & play**. Tap **Start listening** afterward to begin a fresh session.
 
-**Floating controls** on the listening screen opens the overlay settings. Grant display-over-other-apps access and enable the panel. Drag anywhere, including over a button. Choose **Overlay size → Ultra mini** in Floating controls. In Ultra mini, watch the elapsed time, input meter and most recent words. Hold the readout to save up to the preceding minute, or tap it to open the journal. The short level history shows recent sound. Between phrases, the strip can show recent audio available, saved and flagged totals, input, or a current situation cue. Choose the readout in Floating controls. Open **Lock screen controls & sound** to check notification access or put **Mark missed** on the listening card. The paused card also offers **End & close** with confirmation. The expanded panel places capture buttons beside the transcript, followed by recognition status, current and previous situation, and journal access. Tap **×** in any size to review the end-recording confirmation. **Go back** keeps the session running. **End & close** stops the microphone and closes the app. **More → Hide** dismisses only the overlay. Live captions clear when the phone locks or the microphone becomes unavailable.
+## Use the floating controls
+
+On the listening screen, open **Floating controls**, grant display-over-other-apps access and enable the panel. Drag any control to move it. In a tall panel, scroll the body or drag the header. The panel hides on lock and appears again after unlock during an active session.
+
+- **Writing setups.** Choose **Poet** for six caption lines, the available-audio readout and a hold that saves a poem line. **Word collector** uses four lines, saved/flagged totals and a hold for a Forge word. **Restore my settings** brings back your three choices from before the first setup. The presets respect your caption visibility and microphone and backup choices.
+- **Ultra mini.** Between events, the top line shows elapsed listening time and the seconds of recent audio available to save (↶). The trace shows microphone activity. Read the developing words beneath it or choose the between-phrase readout in settings. Tap the readout to open your journal. Hold it to save recent audio. **Ultra mini hold** chooses Recent audio, Forge word, Poem line or Project decision. The default keeps recent audio.
+- **Medium.** Tap **Save** as soon as a line comes to mind, or **Pause** to release the mic. Tap **↗** to expand.
+- **Large.** **Save as…** opens Forge word, Poem line and Project decision. The category you tap saves up to 60 seconds of available audio. During a long session, a successful labeled save also places a bookmark with an eight-second lead-in, limited by the start of the session. **Start session**, **Mark point** and **Finish session** work on the panel. The long-session audio clock and marker count stay above the scrolling controls while a microphone interruption or a service acknowledgment takes the headline. **Open last save** shows the most recent local clip’s category, time and ID and opens its recording.
+- **Readouts.** **Live** shows a provisional recognition and **Heard** introduces completed words. Choose two, four or six visible caption lines in settings. The large panel reports input level, elapsed session time, available rewind audio, word/flag/save totals and situation cues. The extra detail setting shows the reported mic route when available, plus journal and full-audio settings, the paired archive state and the last verified receipt for that destination. **More** also shows the reason for the last clip when captions are on.
+- **Close or hide.** **×** asks before ending recording and closing the app. **Go back** keeps listening. **More → Hide** dismisses the controls. **Lock screen controls & sound** lets you check notification access or put **Mark missed** on the listening card. Android controls which actions are available on a locked phone.
 
 ## Change apps or use voice mode
 

@@ -38,6 +38,38 @@ public class SelectiveEngineTest {
         for(String line:lines) f.say(line);
         f.sound(5,0); f.engine.finish(); check(f.clips.isEmpty());
     }
+    private static void labeledRewinds() {
+        String[][] examples={{"keep that word", SelectiveEngine.FORGE},
+            {"keep that line", SelectiveEngine.POETRY}, {"keep that decision", SelectiveEngine.DECISION}};
+        for(String[] example:examples){
+            Fixture f=new Fixture();
+            f.engine.text("hey recall "+example[0],true); // No mic samples yet.
+            check(f.clips.isEmpty());
+            for(int i=1;i<=70;i++)f.sound(1,i);
+            f.engine.text("purple window",true);
+            f.engine.text("hey recall "+example[0],false);
+            check(f.clips.isEmpty());
+            f.engine.text("hey recall "+example[0],true);
+            f.engine.text("hey recall "+example[0],true); // Second decoder confirms the same request.
+            check(f.clips.size()==1);
+            SelectiveEngine.Clip clip=f.clips.get(0);
+            check(clip.category.equals(example[1]) && clip.labeledRewind && clip.transcript.equals("purple window"));
+            check(clip.audio.length==60*SelectiveEngine.RATE && clip.audio[0]==11 && clip.audio[clip.audio.length-1]==70);
+        }
+        Fixture f=new Fixture();
+        f.say("keep that word"); f.say("word captured"); f.say("project decision saved");
+        check(f.clips.isEmpty());
+        f.say("hey recall"); f.sound(9,300); f.say("keep that line");
+        check(f.clips.isEmpty());
+        f=new Fixture();
+        f.say("hey recall start a passage"); f.sound(4,700); f.engine.text("blue sky",true);
+        f.engine.keepAs(SelectiveEngine.POETRY);
+        check(f.clips.size()==1 && f.clips.get(0).audio.length==5*SelectiveEngine.RATE && f.engine.passageOpen());
+        f.say("white sand"); f.say("finish passage");
+        check(f.clips.size()==2 && f.clips.get(1).transcript.contains("blue sky") && f.clips.get(1).transcript.contains("white sand"));
+        System.out.println("Labeled rewinds passed: wake requirement, decoder dedup, exact samples, warmup and independent passage.");
+    }
+
     private static void prosody() {
         retain(SelectiveEngine.POETRY,"I fold the corners of the night","my palms disclose a stolen light","my knuckles close around the bright");
         retain(SelectiveEngine.POETRY,"I wore a valley painted blue","the ancient glass that I fell through","my broken window knows me too");
@@ -162,6 +194,7 @@ public class SelectiveEngineTest {
         f=new Fixture();f.say("silver dawn walked through my door hey recall save that");
         check(f.clips.size()==1 && f.clips.get(0).transcript.contains("silver dawn"));
         ignore("we went shopping by the road","i had a sandwich for lunch");
+        labeledRewinds();
         System.out.println("Natural save requests, wake expiry, poetry and prose cues, and uninterrupted passage capture verified.");
         System.out.println("Selective engine passed: ephemeral ring, four cues, feedback, lookbacks, overlap, command dedup, pause, finalization, clip bound.");
     }

@@ -10,7 +10,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
-import android.view.WindowManager;
+
 import android.widget.*;
 
 /** The overlay permission is requested solely after an owner gesture on this page. */
@@ -64,6 +64,19 @@ public final class OverlaySettingsActivity extends Activity {
             body.addView(enable);
             enable.setOnCheckedChangeListener((b,on)->{RecallOverlay.choice(this,on);render();});
             if(enabled){
+                button("Writing setups",v->{
+                    String[] setups={"Poet · hold for a poem line, show available audio, six caption lines",
+                        "Word collector · hold for a Forge word, show saved and flagged totals, four caption lines"};
+                    android.app.AlertDialog.Builder chooser=new android.app.AlertDialog.Builder(this)
+                        .setTitle("Writing setups").setItems(setups,(dialog,which)->{
+                            RecallOverlay.applyWritingSetup(this,which);render();
+                        }).setNegativeButton("Keep current settings",null);
+                    if(RecallOverlay.options(this).contains("previousFocus"))
+                        chooser.setNeutralButton("Restore my settings",(dialog,which)->{
+                            RecallOverlay.restoreWritingSetup(this);render();
+                        });
+                    chooser.show();
+                });
                 String[] sizes={"Ultra mini","Medium","Large"};
                 int selected=RecallOverlay.options(this).getBoolean("expanded",false)?2:
                     RecallOverlay.options(this).getBoolean("ultra",false)?0:1;
@@ -78,10 +91,27 @@ public final class OverlaySettingsActivity extends Activity {
                     .setTitle("Between phrases").setSingleChoiceItems(focuses,focus,(dialog,which)->{
                         RecallOverlay.options(this).edit().putString("miniFocus",focusValues[which]).apply();dialog.dismiss();render();
                     }).setNegativeButton("Cancel",null).show());
+                int hold=RecallOverlay.holdChoice(this);
+                button("Ultra mini hold · "+RecallOverlay.SAVE_NAMES[hold],v->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Hold the readout to save").setSingleChoiceItems(RecallOverlay.SAVE_NAMES,hold,(dialog,which)->{
+                        RecallOverlay.options(this).edit().putInt("holdSave",which).apply();
+                        RecallOverlay.refreshOptions();dialog.dismiss();render();
+                    }).setNegativeButton("Cancel",null).show());
+                Switch full=new Switch(this);full.setText("Show mic route, journal, full audio and backup settings on the large panel");
+                full.setChecked(RecallOverlay.options(this).getBoolean("fullDetail",true));
+                full.setOnCheckedChangeListener((b,on)->RecallOverlay.options(this).edit().putBoolean("fullDetail",on).apply());body.addView(full);
                 Switch caption=new Switch(this);caption.setText("Show live captions on the overlay");
                 caption.setChecked(RecallOverlay.options(this).getBoolean("captions",true));
                 caption.setOnCheckedChangeListener((b,on)->RecallOverlay.changeCaptions(this,on));body.addView(caption);
-                label("Drag anywhere on the panel, including its buttons. In Ultra mini, hold the live readout to save recent audio. Tap it to open the journal. Use × in any size to end recording after confirmation. Use More for secondary actions. Tap Live & saved to read the transcript and situation analysis. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
+                String[] depths={"2 lines","4 lines","6 lines"};
+                int depth=Math.max(0,Math.min(2,(RecallOverlay.options(this).getInt("captionLines",4)-2)/2));
+                button("Large panel captions · "+depths[depth],v->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Visible caption lines").setSingleChoiceItems(depths,depth,(dialog,which)->{
+                        RecallOverlay.options(this).edit().putInt("captionLines",2+2*which).apply();
+                        RecallOverlay.refreshOptions();dialog.dismiss();render();
+                    }).setNegativeButton("Cancel",null).show());
+                label("↶ shows how many seconds you can save from before the tap. In Ultra mini, hold the readout to use your chosen save category. In Large, use Save as… for a Forge word, poem line or project decision. Use Start session to record until you finish, and Mark point to bookmark the audio while it runs.",15,false);
+                label("Drag any control to move the panel. Scroll a tall panel from the body or drag its header to move it. Tap the status for the journal, More for secondary actions, or × to end recording after confirmation. The panel disappears when the phone locks. Hiding it keeps listening active.",15,false);
                 button(RecallService.isListening()?"Show controls now":"Preview start control",v->{RecallOverlay.idlePreview(this);finish();});
             }
         }

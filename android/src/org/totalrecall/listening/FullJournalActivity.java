@@ -49,7 +49,7 @@ public final class FullJournalActivity extends Activity {
         button(tools,"My words & phrases",()->SpellingPreferences.open(this));
         Button sessions=new Button(this);sessions.setText("Sessions, export & retention");
         sessions.setOnClickListener(v->startActivity(new Intent(this,RecallListenActivity.class).putExtra("captureDestination","journalOptions")));tools.addView(sessions,new LinearLayout.LayoutParams(0,-2,1));
-        TextView hint=new TextView(this);hint.setText("Tap a passage to correct, copy or share it.");page.addView(hint);
+        TextView hint=new TextView(this);hint.setText("Tap a passage to edit it, teach a spelling or share your words.");page.addView(hint);
         LinearLayout nav=new LinearLayout(this);page.addView(nav);
         newer=button(nav,"Newer lines",()->{if(pages.size()>1){pages.remove(pages.size()-1);read();}});
         older=button(nav,"Older lines",()->{if(next>0){pages.add(next);read();}});
@@ -71,6 +71,10 @@ public final class FullJournalActivity extends Activity {
         LinearLayout actions=new LinearLayout(this);fields.addView(actions);
         button(actions,"Copy words",()->PassageActions.copy(this,field.getText().toString()));
         button(actions,"Share words",()->PassageActions.share(this,field.getText().toString()));
+        Button teach = new Button(this);
+        teach.setText("Teach this spelling");
+        teach.setOnClickListener(v -> SpellingPreferences.fromCorrection(this, raw, field));
+        fields.addView(teach);
         ScrollView scroll=new ScrollView(this);scroll.addView(fields);
         android.app.AlertDialog dialog=new android.app.AlertDialog.Builder(this).setTitle("Journal passage").setView(scroll)
             .setNegativeButton("Close",null).setPositiveButton("Save correction",null).create();

@@ -55,8 +55,12 @@ public final class SelectiveEngine {
         {"Pause the microphone","pause recall","pause recording","stop listening","stop recording"},
         {"Start a long session","start a long session","start a special session"},
         {"Finish a long session","finish the session","finish this session"},
-        {"Mark a point in a long session","mark this point","mark this line"}
+        {"Mark a point in a long session","mark this point","mark this line"},
+        {"Save a Forge word","keep that word","save that word"},
+        {"Save a poem line","keep that line","keep that rhyme"},
+        {"Save a project decision","keep that decision","save that decision"}
     };
+    private static final int KEEP_WORD=8, KEEP_LINE=9, KEEP_DECISION=10;
     static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
     private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
     static int actionFor(String words){
@@ -74,21 +78,22 @@ public final class SelectiveEngine {
         return rest.isEmpty()||actionFor(rest)>=0;
     }
     static String guide(){
-        StringBuilder guide=new StringBuilder("Say Hey Recall, Total Recall, or Lexi. A two-note chime acknowledges the wake word. Speak the command immediately or within eight seconds.\n");
+        StringBuilder guide=new StringBuilder("Say Hey Recall, Total Recall, or Lexi. The panel acknowledges the wake word. Chime and spoken feedback follow your sound settings. Speak the command immediately or within eight seconds.\n");
         for(String[] row:COMMANDS)guide.append("\n").append(row[0]).append(" · ").append(String.join(", ",Arrays.copyOfRange(row,1,row.length)));
-        return guide.append("\n\nSave and missed-moment commands also work alone. Resume from the panel or notification while the microphone is off.").toString();
+        return guide.append("\n\nWord, line and decision saves keep up to the last minute, even mid-passage. In a long session they also add a marker with an eight-second lead-in. Save and missed-moment commands also work alone. Resume from the panel or notification while the microphone is off.").toString();
     }
 
     public static final class Clip {
         public final short[] audio;
         public final String transcript, category, reason;
         public final long startedAtMillis;
-        final boolean finishedByVoice;
+        final boolean finishedByVoice, labeledRewind;
 
         Clip(short[] audio, String transcript, String category, String reason, long startedAtMillis) {
-            this(audio,transcript,category,reason,startedAtMillis,false);
+            this(audio,transcript,category,reason,startedAtMillis,false,false);
         }
-        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice){
+        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice,boolean labeledRewind){
+            this.labeledRewind=labeledRewind;
             finishedByVoice=byVoice;
             this.audio = audio;
             this.transcript = transcript;
@@ -497,6 +502,8 @@ public final class SelectiveEngine {
                 }else if(action==3){
                     if(passage){passage=false;commit(true);listener.onVoice("Passage ended",false);}
                     else listener.onVoice("No passage is open",false);
+                }else if(action==KEEP_WORD || action==KEEP_LINE || action==KEEP_DECISION){
+                    keepAs(action==KEEP_WORD?FORGE:action==KEEP_LINE?POETRY:DECISION);
                 }else if(action>=5){listener.onSession(action);}
                 else{
                     if(passage){passage=false;commit();}
@@ -549,6 +556,27 @@ public final class SelectiveEngine {
         select(MANUAL, "You asked to keep the preceding minute.", RATE * 60);
         commit();
         if(passage)select(POETRY,"Ongoing requested passage.",0);
+    }
+
+    /** A labeled rewind makes its own clip. A passage or automatic selection keeps its boundaries. */
+    synchronized void keepAs(String category) {
+        if (!FORGE.equals(category) && !POETRY.equals(category) && !DECISION.equals(category))
+            throw new IllegalArgumentException("Unknown rewind category");
+        if (stopped || at == 0) {
+            listener.onVoice("No audio buffered yet", false);
+            return;
+        }
+        int count = (int)Math.min(at, 60L * RATE);
+        long first = at - count;
+        short[] audio = new short[count];
+        copyRing(first, audio, 0, count);
+        ArrayList<String> lines = new ArrayList<>();
+        for (Segment segment : recent) if (segment.at >= first) lines.add(segment.text);
+        String words = String.join(" ", lines);
+        if (!interim.isEmpty() && interimAt >= first && !heldVoiceCommand && !words.endsWith(interim))
+            words = (words + " " + interim).trim();
+        listener.onClip(new Clip(audio, words, category, "You chose to keep this as " + category + ".",
+            origin + first * 1000 / RATE, false, true));
     }
 
     public synchronized void missed() {
@@ -639,7 +667,7 @@ public final class SelectiveEngine {
         if (!interim.isEmpty() && interimAt >= start && !heldVoiceCommand && !text.endsWith(interim))
             text = (text + " " + interim).trim();
         Clip clip = new Clip(Arrays.copyOf(selected, length), text, String.join(" + ", tags),
-            String.join(" ", reasons), origin + start * 1000 / RATE,byVoice);
+            String.join(" ", reasons), origin + start * 1000 / RATE,byVoice,false);
         previousEnd = start + length;
         active = false;
         selected = null;

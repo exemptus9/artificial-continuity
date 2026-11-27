@@ -22,8 +22,7 @@ public final class LongSessionsActivity extends Activity {
     private boolean indexExport,visible;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
-    private MediaPlayer player;
-    private int playGeneration;
+    private SessionPlayer playback;
     private long waiting;
     @Override public void onCreate(Bundle b){
         super.onCreate(b);setTitle("Long sessions");
@@ -50,6 +49,7 @@ public final class LongSessionsActivity extends Activity {
     @Override public void onRequestPermissionsResult(int req,String[] permissions,int[] grants){super.onRequestPermissionsResult(req,permissions,grants);if(req==1 && grants.length>0 && grants[0]==0)begin();}
     private final Runnable pulse=new Runnable(){public void run(){if(visible){paint();main.postDelayed(this,400);}}};
     private void paint(){
+        if(playback!=null)playback.refresh();
         String id=LongRecording.active;boolean on=!id.isEmpty();
         if(on||!LongRecording.message.equals("Starting microphone…"))waiting=0;
         boolean loading=waiting>SystemClock.elapsedRealtime();
@@ -80,7 +80,12 @@ public final class LongSessionsActivity extends Activity {
     }
     private JSONArray index(ArchiveStore db,String id)throws JSONException{
         JSONArray marks=new JSONArray();try(Cursor c=db.getReadableDatabase().rawQuery("SELECT ms,label FROM long_marks WHERE session=? ORDER BY ms,rowid",new String[]{id})){
-            while(c.moveToNext())marks.put(new JSONObject().put("ms",c.getLong(0)).put("label",c.getString(1)));
+            while(c.moveToNext()){
+                String label=c.getString(1);
+                String category=SelectiveEngine.FORGE.equals(label)?"Coined word":
+                    SelectiveEngine.POETRY.equals(label)||SelectiveEngine.DECISION.equals(label)?label:"Moment";
+                marks.put(new JSONObject().put("ms",c.getLong(0)).put("label",label).put("category",category));
+            }
         }return marks;
     }
     private void markers(Row r){
@@ -103,27 +108,151 @@ public final class LongSessionsActivity extends Activity {
             try{sql.delete("long_marks","session=?",new String[]{r.id});sql.delete("long_sessions","id=?",new String[]{r.id});sql.setTransactionSuccessful();}finally{sql.endTransaction();}
         }load();
     }
-    private void stopPlayer(){playGeneration++;if(player!=null){player.release();player=null;}}
-    private void play(Row r,long ms){
+    private void stopPlayer(){
+        SessionPlayer current=playback;
+        if(current!=null){playback=null;current.release();current.dialog.dismiss();}
+    }
+    private void play(Row row,long offsetMs){
         if(RecallService.isListening()){
             if(!LongRecording.active.isEmpty()){note("Finish the active session before playback");return;}
             new AlertDialog.Builder(this).setTitle("Pause listening to play audio?").setNegativeButton("Cancel",null)
-            .setPositiveButton("Pause & play",(a,w)->{RecallService.command(this,RecallService.USER_PAUSE);awaitPlay(r,ms,SystemClock.elapsedRealtime()+6000);}).show();return;
+            .setPositiveButton("Pause & play",(a,w)->{RecallService.command(this,RecallService.USER_PAUSE);awaitPlay(row,offsetMs,SystemClock.elapsedRealtime()+6000);}).show();
+            return;
         }
-        stopPlayer();int request=playGeneration;File file=LongRecording.audio(this,r.id,false);
-        io.execute(()->{try{long offset=LongRecording.offset(file,ms);
-            main.post(()->{if(visible && request==playGeneration)playFrom(r,file,offset,ms);});
-        }catch(IOException e){main.post(()->note("Could not locate this point in the recording"));}});
+        if(row.ms<=0){note("This session has no recorded audio");return;}
+        stopPlayer();
+        playback=new SessionPlayer(row);
+        playback.open(offsetMs);
     }
-    private void playFrom(Row r,File file,long offset,long ms){
-        try(FileInputStream stream=new FileInputStream(file)){
-            MediaPlayer p=new MediaPlayer();player=p;p.setDataSource(stream.getFD(),offset,file.length()-offset);
-            p.setOnPreparedListener(v->{if(player==v && visible && !RecallService.isListening()){
-                v.start();AlertDialog dialog=new AlertDialog.Builder(this).setTitle(r.title).setMessage("Playing from "+LongRecording.time(ms)).setPositiveButton("Stop",null).create();
-                dialog.setOnDismissListener(q->{if(player==v)stopPlayer();});v.setOnCompletionListener(done->dialog.dismiss());dialog.show();
-            }else stopPlayer();});
-            p.setOnErrorListener((v,w,e)->{stopPlayer();note("Could not play the recording");return true;});p.prepareAsync();
-        }catch(Exception e){stopPlayer();note("Could not open audio");}
+    /** Seek by complete AAC frames. The source can have variable bitrate and an interrupted tail. */
+    private final class SessionPlayer {
+        final Row row;
+        final File file;
+        final AlertDialog dialog;
+        final SeekBar seek;
+        final TextView position;
+        final Button toggle;
+        MediaPlayer audio;
+        Future<?> seeking;
+        long from;
+        int generation;
+        boolean ready,dragging,playing=true,finished;
+        SessionPlayer(Row row){
+            this.row=row;
+            file=LongRecording.audio(LongSessionsActivity.this,row.id,false);
+            LinearLayout body=new LinearLayout(LongSessionsActivity.this);
+            body.setOrientation(LinearLayout.VERTICAL);
+            body.setPadding(px(20),px(8),px(20),0);
+            position=text(body,"Opening recording…",17);
+            seek=new SeekBar(LongSessionsActivity.this);
+            seek.setContentDescription("Position in recording");
+            seek.setMax(10000);body.addView(seek);
+            LinearLayout transport=new LinearLayout(LongSessionsActivity.this);
+            body.addView(transport);
+            Button back=button(transport,"−10 s",()->jump(current()-10000));
+            toggle=button(transport,"Pause",this::togglePlayback);
+            Button ahead=button(transport,"+10 s",()->jump(current()+10000));
+            back.setContentDescription("Go back ten seconds");
+            ahead.setContentDescription("Go forward ten seconds");
+            for(int i=0;i<transport.getChildCount();i++)
+                transport.getChildAt(i).setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
+            seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+                public void onStartTrackingTouch(SeekBar view){dragging=true;}
+                public void onProgressChanged(SeekBar view,int progress,boolean user){
+                    if(!user)return;
+                    long target=row.ms*progress/seek.getMax();
+                    if(dragging)showPosition(target,"Seek to");
+                    else jump(target); // keyboard or accessibility action
+                }
+                public void onStopTrackingTouch(SeekBar view){
+                    dragging=false;jump(row.ms*view.getProgress()/seek.getMax());
+                }
+            });
+            dialog=new AlertDialog.Builder(LongSessionsActivity.this).setTitle(row.title).setView(body)
+                .setPositiveButton("Close",null).create();
+            dialog.setOnDismissListener(d->{
+                generation++;release();
+                if(playback==this)playback=null;
+            });
+        }
+        void open(long startMs){dialog.show();jump(startMs);}
+        void release(){
+            ready=false;
+            if(seeking!=null){seeking.cancel(true);seeking=null;}
+            if(audio!=null){audio.release();audio=null;}
+        }
+        long current(){
+            if(ready && audio!=null){
+                try{return Math.min(row.ms,from+audio.getCurrentPosition());}catch(IllegalStateException ignored){}
+            }
+            return from;
+        }
+        boolean valid(int request){return visible && playback==this && generation==request && dialog.isShowing();}
+        void jump(long requested){
+            int request=++generation;
+            release();
+            from=Math.max(0,Math.min(row.ms,requested));
+            finished=from>=row.ms;
+            if(finished)playing=false;
+            refresh();
+            if(finished || !valid(request))return;
+            long target=from;
+            seeking=io.submit(()->{
+                try{
+                    long fileOffset=LongRecording.offset(file,target);
+                    main.post(()->{if(valid(request))prepare(request,fileOffset);});
+                }catch(IOException error){
+                    main.post(()->{if(valid(request))failed("Could not locate this point in the recording");});
+                }
+            });
+        }
+        void prepare(int request,long offset){
+            try(FileInputStream in=new FileInputStream(file)){
+                MediaPlayer p=new MediaPlayer();audio=p;
+                p.setDataSource(in.getFD(),offset,file.length()-offset);
+                p.setOnPreparedListener(v->{
+                    if(!valid(request) || audio!=v)return;
+                    if(RecallService.isListening()){failed("Playback stopped · microphone active");return;}
+                    ready=true;
+                    if(playing)startAudio();
+                    refresh();
+                });
+                p.setOnCompletionListener(v->{
+                    if(!valid(request) || audio!=v)return;
+                    release();from=row.ms;finished=true;playing=false;refresh();
+                });
+                p.setOnErrorListener((v,w,e)->{
+                    if(valid(request) && audio==v)failed("Could not play this recording");
+                    return true;
+                });
+                p.prepareAsync();
+            }catch(IOException|RuntimeException error){failed("Could not open this recording");}
+        }
+        void failed(String message){dialog.dismiss();note(message);}
+        void startAudio(){
+            try{audio.start();}catch(IllegalStateException e){failed("Playback could not resume");}
+        }
+        void togglePlayback(){
+            if(finished){playing=true;jump(0);return;}
+            playing=!playing;
+            if(ready){
+                if(playing)startAudio();
+                else try{audio.pause();}catch(IllegalStateException e){failed("Playback could not pause");}
+            }
+            refresh();
+        }
+        void showPosition(long ms,String label){
+            position.setText(label+" · "+LongRecording.time(ms)+" / "+LongRecording.time(row.ms));
+        }
+        void refresh(){
+            if(!dialog.isShowing())return;
+            if(RecallService.isListening()){failed("Playback stopped · microphone active");return;}
+            toggle.setText(finished?"Replay":playing?"Pause":"Play");
+            if(dragging)return;
+            long ms=current();
+            showPosition(ms,finished?"Finished":!ready?"Seeking":playing?"Playing":"Paused");
+            seek.setProgress((int)(ms*seek.getMax()/row.ms));
+        }
     }
     private void awaitPlay(Row r,long ms,long until){if(!visible)return;if(!RecallService.isListening())play(r,ms);else if(SystemClock.elapsedRealtime()<until)main.postDelayed(()->awaitPlay(r,ms,until),150);else note("Microphone still busy");}
     private void export(Row r,boolean index){exportId=r.id;exportTitle=r.title;indexExport=index;
@@ -132,7 +261,13 @@ public final class LongSessionsActivity extends Activity {
         Uri uri=data.getData();String id=exportId,title=exportTitle;boolean idx=indexExport;
         io.execute(()->{try(OutputStream out=getContentResolver().openOutputStream(uri,"wt");ArchiveStore db=new ArchiveStore(this)){
             if(out==null)throw new IOException();
-            if(idx){JSONObject json=new JSONObject().put("format","total-recall-markers-1").put("title",title).put("audioBytes",LongRecording.audio(this,id,false).length()).put("markers",index(db,id));out.write(json.toString(2).getBytes("UTF-8"));}
+            if(idx){
+                File file=LongRecording.audio(this,id,false);
+                JSONObject json=new JSONObject().put("format","total-recall-markers-1").put("title",title)
+                    .put("audioBytes",file.length()).put("audioFingerprint",LongRecording.audioFingerprint(file))
+                    .put("markers",index(db,id));
+                out.write(json.toString(2).getBytes("UTF-8"));
+            }
             else try(InputStream in=new FileInputStream(LongRecording.audio(this,id,false))){byte[] buf=new byte[65536];for(int n;(n=in.read(buf))>=0;)out.write(buf,0,n);}
         }catch(Exception e){main.post(()->note("Export failed"));return;}main.post(()->note("Export complete"));});
     }

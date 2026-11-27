@@ -38,22 +38,45 @@ def item(row,details=False):
     if result["kind"]=="journal" and details: result["text"]=content
     return result
 
-def search_preview(row, terms):
-    if not terms:
-        return None
-    meta=json.loads(row["metadata"])
-    for label,value in (("Transcript",row["content"]),("Correction",meta.get("correction")),("Note",meta.get("note"))):
-        if not isinstance(value,str): continue
-        for term in terms:
-            hit=re.search(re.escape(term),value,re.IGNORECASE)
-            if hit:
-                left=max(0,hit.start()-52)
-                right=min(len(value),max(hit.end()+90,left+155))
-                snippet=" ".join(value[left:right].split())
-                return {"field":label,"text":("…" if left else "")+snippet+("…" if right<len(value) else "")}
+def matched_excerpt(value,terms):
+    if not value or not terms:return None
+    for term in terms:
+        hit=re.search(re.escape(term),value,re.IGNORECASE)
+        if hit:
+            left=max(0,hit.start()-52)
+            right=min(len(value),max(hit.end()+90,left+155))
+            return ("…" if left else "")+" ".join(value[left:right].split())+("…" if right<len(value) else "")
+    # SQLite search uses Unicode case folding, including expanding characters.
+    if any(term in value.casefold() for term in terms):return value[:160]
     return None
 
-def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
+def search_preview(db,row,terms,recognized):
+    if not terms:return None
+    meta=json.loads(row["metadata"])
+    labels=json.loads(row["filedLabels"] or "[]")
+    for label,value,needles in (
+            ("Filed title",row["filedName"],terms),("Correction",meta.get("correction"),terms),
+            ("Transcript",row["content"],terms),("Filed writing",row["filedWriting"],terms),
+            ("Recording story",row["savedStory"],terms),("Note",meta.get("note"),terms),
+            ("Filed under",", ".join(labels),terms),("Recognized spelling",row["heard"],terms),
+            ("Clip label",meta.get("category"),terms),("Original title",row["title"],terms),
+            ("Recognized spelling",row["content"],recognized)):
+        snippet=matched_excerpt(value,needles) if isinstance(value,str) else None
+        if snippet:return dict(field=label,text=snippet)
+    cues=db.execute("""SELECT ev.mode,ec.value FROM recording_evidence ev,json_each(ev.cues) ec
+                       WHERE ev.id=? AND ev.kind=? ORDER BY ev.offset,ec.key,ev.mode""",(row["id"],row["kind"]))
+    for mode,raw in cues:
+        cue=json.loads(raw)
+        snippet=matched_excerpt(cue.get("quote"),terms)
+        if snippet:
+            result=dict(field="Recognized in audio",text=snippet)
+            at=cue.get("seconds")
+            if isinstance(at,(int,float)) and 0<=at<row["durationMs"]/1000:
+                result.update(seconds=at,stamp=situation.stamp(at))
+            return result
+    return None
+
+def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all",overlap=False):
     if kind not in ("all","clip","segment","journal") or len(q)>500 or not 1<=limit<=200 or not 0<=offset<=10_000_000:
         raise Failure(400,"Invalid archive query")
     if category and category not in {*CLIP_LABELS.values(),"other"}:raise Failure(400,"Unknown clip category")
@@ -65,19 +88,25 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
     if device!="all":where.append(laptop if device=="laptop" else "NOT "+laptop)
     if kind!="all": where.append("a.kind=?");args.append(kind)
     if start is not None:
-        where.append("startedAtMillis>=? AND startedAtMillis<?");args.extend((start,end))
+        if overlap:
+            where.append("startedAtMillis<? AND startedAtMillis+max(coalesce(durationMs,0),1)>?")
+            args.extend((end,start))
+        else:
+            where.append("startedAtMillis>=? AND startedAtMillis<?");args.extend((start,end))
     if category:
         where.append("a.kind='clip' AND has_clip_label(json_extract(metadata,'$.category'),?)")
         args.append(category)
     terms=q.casefold().split()[:12]
     with arc.connection() as db:
         aliases=[(r[0].casefold(),r[1].casefold()) for r in db.execute("SELECT DISTINCT name,heard FROM owner_reviews WHERE name!='' AND heard!='' LIMIT 10000")] if terms else []
+    recognized=[]
     for term in terms:
         where.append("instr(fold_text(title||' '||content||' '||coalesce(json_extract(metadata,'$.note'),'')||' '||coalesce(json_extract(metadata,'$.category'),'')||' '||coalesce(json_extract(metadata,'$.correction'),'')),?)>0")
         variants=[heard for name,heard in aliases if name==term][:8]
+        recognized.extend(variants)
         prepared=where.pop()
         parts=[prepared for _ in [term,*variants]]
-        parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')||' '||coalesce(st.body,'')),?)>0 OR EXISTS(SELECT 1 FROM recording_evidence ev,json_each(ev.cues) ec WHERE ev.id=a.id AND ev.kind=a.kind AND instr(fold_text(json_extract(ec.value,'$.quote')),?)>0)")
+        parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')||' '||coalesce(rv.heard,'')||' '||coalesce(st.body,'')),?)>0 OR EXISTS(SELECT 1 FROM recording_evidence ev,json_each(ev.cues) ec WHERE ev.id=a.id AND ev.kind=a.kind AND instr(fold_text(json_extract(ec.value,'$.quote')),?)>0)")
         where.append("("+ " OR ".join(parts)+")")
         args.extend((term,*variants,term,term))
     sql=" FROM ("+BASE_SQL+") a LEFT JOIN owner_reviews rv ON rv.kind=a.kind AND rv.id=a.id LEFT JOIN item_stories st ON st.kind=a.kind AND st.id=a.id"+(" WHERE "+" AND ".join(where) if where else "")
@@ -85,11 +114,14 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all"):
         if category: db.create_function("has_clip_label",2,lambda value,wanted: wanted in category_keys(value),deterministic=True)
         if terms: db.create_function("fold_text",1,str.casefold,deterministic=True)
         total=db.execute("SELECT count(*)"+sql,args).fetchone()[0]
-        rows=db.execute("SELECT a.*"+sql+" ORDER BY startedAtMillis DESC,a.id DESC,a.kind LIMIT ? OFFSET ?",[*args,limit,offset])
+        rows=db.execute("SELECT a.*,rv.name filedName,rv.labels filedLabels,rv.writing filedWriting,rv.heard heard,st.body savedStory"+sql+" ORDER BY startedAtMillis DESC,a.id DESC,a.kind LIMIT ? OFFSET ?",[*args,limit,offset])
         matches=[]
         for row in rows:
             found=item(row)
-            snippet=search_preview(row,terms)
+            for key in ("filedWriting","heard","savedStory","filedLabels"):found.pop(key,None)
+            if found.get("filedName"):found["title"]=found["filedName"]
+            found.pop("filedName",None)
+            snippet=search_preview(db,row,terms,recognized)
             if snippet: found["match"]=snippet
             matches.append(found)
         return {"items":matches,"total":total}
@@ -309,7 +341,7 @@ class OwnerHandler(BaseHTTPRequestHandler):
             if path=="/api/items":
                 start=param("from",None);end=param("to",None)
                 return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
-                    int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all")))
+                    int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all"),param("overlap","0")=="1"))
             if path=="/api/overlaps":return self.json(200,overlaps(arc,param("kind",""),param("id","")))
             if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0"))))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))

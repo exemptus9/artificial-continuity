@@ -116,9 +116,10 @@ public final class LiveCapture {
             return "";
         }
         /** Only show lines completed after the overlay became visible. */
-        String overlayWords(long after){
+        String overlayWords(long after){return overlayWords(after,2);}
+        String overlayWords(long after,int maxFinals){
             if(waiting || finalSequence<after)return "";
-            int count=(int)Math.min(2,Math.min(finals.size(), finalSequence-after));
+            int count=(int)Math.min(Math.max(0,maxFinals),Math.min(finals.size(),finalSequence-after));
             List<String> lines=new ArrayList<>();for(int i=finals.size()-count;i<finals.size();i++)lines.add(attributed(i));
             String committed=String.join("\n",lines);
             if(partial.isEmpty())return committed;

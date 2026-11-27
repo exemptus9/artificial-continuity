@@ -18,6 +18,13 @@ public final class RecallService extends Service {
     private static final String NS="org.totalrecall.listening.";
     public static final String BEGIN_TAKE=NS+"BEGIN_TAKE", END_TAKE=NS+"END_TAKE";
     static final String BEGIN_LONG=NS+"BEGIN_LONG",FINISH_LONG=NS+"FINISH_LONG",MARK_LONG=NS+"MARK_LONG";
+    static final String KEEP_WORD=NS+"KEEP_WORD",KEEP_LINE=NS+"KEEP_LINE",KEEP_DECISION=NS+"KEEP_DECISION";
+    private static String rewindCategory(String action){
+        if(KEEP_WORD.equals(action))return SelectiveEngine.FORGE;
+        if(KEEP_LINE.equals(action))return SelectiveEngine.POETRY;
+        if(KEEP_DECISION.equals(action))return SelectiveEngine.DECISION;
+        return null;
+    }
     public static final String REFRESH_NOTICE=NS+"REFRESH_NOTICE";
     public static final String LEARN_ROOM=NS+"LEARN_ROOM";
     public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",END=NS+"END",KEEP=NS+"KEEP",
@@ -47,7 +54,8 @@ public final class RecallService extends Service {
     private int lastStart;
     private volatile boolean longOnly;
     private long startedElapsed;
-    private volatile String inputRoute="";
+    private static volatile String inputRoute="";
+    static String activeInputRoute(){return running?inputRoute:"";}
     private final Handler noticeHandler=new Handler(Looper.getMainLooper());
     private boolean channelReady;
     private final Runnable refreshNotice=new Runnable(){public void run(){
@@ -135,7 +143,8 @@ public final class RecallService extends Service {
         if(headline==null || headline.isEmpty())headline="Preparing microphone";
         if(snapshot.active && !receiving && !snapshot.waiting && snapshot.event.isEmpty())headline="Waiting for microphone input";
         boolean longOpen=!LongRecording.active.isEmpty();
-        if(longOpen)headline="Long session · "+LongRecording.time(LongRecording.duration);
+        if(longOpen && receiving && !snapshot.waiting && snapshot.event.isEmpty() && !take.recording)
+            headline="Long session · "+LongRecording.time(LongRecording.duration);
         String counts=snapshot.words+" words · "+snapshot.savedCount+" saved · "+snapshot.flags+" flagged";
         StringBuilder details=new StringBuilder(snapshot.waiting?snapshot.state:snapshot.registration(0));
         if(receiving){
@@ -147,7 +156,7 @@ public final class RecallService extends Service {
             if(!line.isEmpty())details.append(snapshot.partial.isEmpty()?"\nHeard · ":"\nIn progress · ").append(line.substring(0,Math.min(line.length(),120)));
             details.append("\n").append(snapshot.situationLines(0));
         }
-        if(longOpen)details.append("\nLong session · ").append(LongRecording.marks).append(" markers");
+        if(longOpen)details.append("\nLong session · ").append(LongRecording.time(LongRecording.duration)).append(" · ").append(LongRecording.marks).append(" markers");
         details.append("\n").append(counts);
         if(!snapshot.lastSave.isEmpty())details.append(" · Latest: ").append(snapshot.lastSave).append(" at ").append(java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(new Date(snapshot.savedAt)));
         details.append("\n").append(captureSettings()).append("\n").append(backupStatus());
@@ -241,6 +250,9 @@ public final class RecallService extends Service {
             else if(FINISH_LONG.equals(action)||MARK_LONG.equals(action)){
                 String id=intent.getStringExtra("longId");
                 if(id!=null && !id.isEmpty() && id.equals(LongRecording.active))commands.offer(action+id);
+            }else if(rewindCategory(action)!=null){
+                if(capturing && !stopping.get() && LiveCapture.snapshot().receiving)commands.offer(action);
+                else {LiveCapture.feedback("Waiting for microphone input · no clip saved");noticeSoon();}
             }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action)||LEARN_ROOM.equals(action)||BEGIN_TAKE.equals(action)||END_TAKE.equals(action))commands.offer(action);
         }else stopSelf(startId);
         return START_NOT_STICKY;
@@ -416,9 +428,14 @@ public final class RecallService extends Service {
                         LiveCapture.feedback("Writing clip to phone…");
                         try{lastSaved[0]=store.save(clip);LiveCapture.saved(lastSaved[0],clip.category,clip.reason,stopping.get() && userPaused);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
-                        boolean requested=clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED);
+                        if(clip.labeledRewind && !LongRecording.active.isEmpty()){
+                            long leadIn=Math.min(8000,clip.audio.length*1000L/SelectiveEngine.RATE);
+                            boolean marked=sessionAudio.mark(clip.category,leadIn);
+                            LiveCapture.feedback(clip.category+" saved · "+(marked?"session marker at "+LongRecording.time(Math.max(0,LongRecording.duration-leadIn)):"session marker failed"));
+                        }
+                        boolean requested=clip.labeledRewind || clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED);
                         if(!requested && getSharedPreferences("recall-speech",0).getBoolean("spokenAuto",false))sound(CaptureCues.category(clip.category),true);
-                        if(clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
+                        if(requested){
                             sound(CaptureCues.category(clip.category));
                             try {Vibrator h=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(h!=null&&h.hasVibrator())h.vibrate(45);}
                             catch(SecurityException ignored){}
@@ -475,6 +492,7 @@ public final class RecallService extends Service {
                             }
                             if(count>0 || unavailable!=null)zeroSince=0;
                             if(unavailable!=null){
+                                inputRoute="";
                                 if(sessionAudio.finish("Microphone interrupted")){LiveCapture.feedback(LongRecording.message);sound(CaptureCues.Cue.ENDED);noticeSoon();}
                                 if(commands.remove(BEGIN_LONG))LongRecording.message="Microphone unavailable · tap Start when ready";
                                 if(longOnly)command(this,USER_PAUSE);
@@ -530,14 +548,15 @@ public final class RecallService extends Service {
                                 }else if(action.startsWith(FINISH_LONG)||action.startsWith(MARK_LONG)){
                                     String id=LongRecording.active;if(id.isEmpty())continue;
                                     if(action.equals(FINISH_LONG+id)){if(sessionAudio.finish("Finished"))sound(CaptureCues.Cue.ENDED);if(longOnly)command(this,USER_PAUSE);}
-                                    else if(action.equals(MARK_LONG+id)){sessionAudio.mark();sound(CaptureCues.Cue.MARKED);}
+                                    else if(action.equals(MARK_LONG+id)){if(sessionAudio.mark("",0))sound(CaptureCues.Cue.MARKED);}
                                     LiveCapture.feedback(LongRecording.message);noticeSoon();
                                 }else if(BEGIN_TAKE.equals(action)||END_TAKE.equals(action))window.takeAction(BEGIN_TAKE.equals(action));
                                 else if(LEARN_ROOM.equals(action)){
                                     if(getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false)){
                                         window.reduceRoom=true;speech.learnRoom();
                                     }
-                                }else if(KEEP.equals(action))window.engine.keep();
+                                }else if(rewindCategory(action)!=null)window.engine.keepAs(rewindCategory(action));
+                                else if(KEEP.equals(action))window.engine.keep();
                                 else if(MISSED.equals(action))window.engine.missed();
                                 else if(DISCARD_LAST.equals(action)&&lastSaved[0]>=0){
                                     store.delete(lastSaved[0]);lastSaved[0]=-1;progress("Latest saved clip removed");
@@ -564,7 +583,7 @@ public final class RecallService extends Service {
             }
         }catch(RuntimeException failure){end="Listening stopped · "+message(failure);}
         finally{
-            liveRecorder=null;release(rec);if(lock.isHeld())lock.release();
+            inputRoute="";liveRecorder=null;release(rec);if(lock.isHeld())lock.release();
             String result=end;LiveCapture.stop(result);RecallOverlay.sessionEnded(this);
             new Handler(Looper.getMainLooper()).post(()->{
                 worker=null;commands.clear();prefs.edit().putBoolean("active",false).putString("last",result).commit();

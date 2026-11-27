@@ -753,27 +753,31 @@ public final class RecallSmoke extends Instrumentation {
             Class<?> type=Class.forName("org.totalrecall.listening.LongRecording");
             java.lang.reflect.Constructor<?> ctor=type.getDeclaredConstructor(Context.class,ArchiveStore.class);ctor.setAccessible(true);
             Object recorder=ctor.newInstance(target,db);
-            Method begin=method(type,"begin"), accept=method(type,"accept",short[].class,int.class),mark=method(type,"mark"),finish=method(type,"finish",String.class);
+            Method begin=method(type,"begin"), accept=method(type,"accept",short[].class,int.class),mark=method(type,"mark",String.class,long.class),finish=method(type,"finish",String.class);
             java.lang.reflect.Field active=type.getDeclaredField("active");active.setAccessible(true);
             begin.invoke(recorder);String id=(String)active.get(null);require(!id.isEmpty(),"Long recorder did not start");
             short[] tone=new short[16000],quiet=new short[16000];
             for(int i=0;i<tone.length;i++)tone[i]=(short)(4000*Math.sin(2*Math.PI*220*i/16000));
             for(int sec=0;sec<3601;sec++){
                 accept.invoke(recorder,(sec/300)%2==0?tone:quiet,16000);
-                if(sec==137 || sec==3599)mark.invoke(recorder);
+                if(sec==1)require((boolean)mark.invoke(recorder,SelectiveEngine.FORGE,8000L),"Could not mark opening word");
+                if(sec==47)require((boolean)mark.invoke(recorder,SelectiveEngine.POETRY,8000L),"Could not mark recent line");
+                if(sec==137 || sec==3599)require((boolean)mark.invoke(recorder,"",0L),"Could not mark current point");
             }
             require((boolean)finish.invoke(recorder,"Finished"),"Hour-long recording was not finalized");
             File audio=(File)method(type,"audio",Context.class,String.class,boolean.class).invoke(null,target,id,false);
             try(android.database.Cursor c=db.getReadableDatabase().rawQuery("SELECT ms,bytes FROM long_sessions WHERE id=?",new String[]{id})){
                 require(c.moveToFirst() && c.getLong(0)==3601000 && c.getLong(1)==audio.length(),"Hour duration or byte count wrong");
             }
-            try(android.database.Cursor c=db.getReadableDatabase().rawQuery("SELECT ms FROM long_marks WHERE session=? ORDER BY ms",new String[]{id})){
-                require(c.moveToFirst()&&c.getLong(0)==138000 && c.moveToNext()&&c.getLong(0)==3600000,"Marker position wrong");
+            try(android.database.Cursor c=db.getReadableDatabase().rawQuery("SELECT ms,label FROM long_marks WHERE session=? ORDER BY ms",new String[]{id})){
+                require(c.moveToFirst() && c.getLong(0)==0 && SelectiveEngine.FORGE.equals(c.getString(1)),"Opening word crossed the session boundary");
+                require(c.moveToNext() && c.getLong(0)==40000 && SelectiveEngine.POETRY.equals(c.getString(1)),"Line marker lost its lead-in");
+                require(c.moveToNext() && c.getLong(0)==138000 && c.moveToNext() && c.getLong(0)==3600000 && !c.moveToNext(),"Marker position wrong");
             }
             long offset=(Long)method(type,"offset",File.class,long.class).invoke(null,audio,3600000L);
             require(offset>0 && offset<audio.length(),"Late marker outside recording");
             try(java.io.RandomAccessFile stream=new java.io.RandomAccessFile(audio,"r")){stream.seek(offset);require(stream.readUnsignedShort()==65521,"Marker did not land on ADTS frame");}
-            passed("Encoded 3,601 seconds of synthetic 16 kHz audio including five-minute quiet passages into one "+audio.length()+"-byte AAC file; both markers and the one-hour frame boundary verified.");
+            passed("Encoded 3,601 seconds of synthetic 16 kHz audio including five-minute quiet passages into one "+audio.length()+"-byte AAC file; four markers, typed lead-in and the one-hour frame boundary verified.");
             int budget=ArchiveStore.budgetMiB(target);
             try{ArchiveStore.setBudgetMiB(target,1);begin.invoke(recorder);require(((String)active.get(null)).isEmpty(),"Storage limit allowed a new session");}
             finally{ArchiveStore.setBudgetMiB(target,budget);}

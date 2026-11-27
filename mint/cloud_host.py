@@ -44,6 +44,8 @@ APK_SHA = "a49d4a3ee8576c629cf81e830359b274562c75b0c9a61a110e1347a1abd6b7c0"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
+MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.28.0_all.deb"
+
 def login_page(failed=False):
     prompt = "That key did not match. Try the owner key from your private access file." if failed else "Use the owner key from your private access file."
     return ("""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Total Recall · Sign in</title><style>
@@ -245,6 +247,19 @@ class HostedHandler(recall_web.OwnerHandler):
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
         if path=="/downloads/android":return self.download_apk()
+        if path=="/downloads/mint":
+            try:
+                package = MINT_INSTALLER.read_bytes()
+            except OSError:
+                return self.json(503, {"error": "The Mint installer is temporarily unavailable."})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.debian.binary-package")
+            self.send_header("Content-Disposition", 'attachment; filename="' + MINT_INSTALLER.name + '"')
+            self.send_header("Content-Length", str(len(package)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(package)
+            return
         if path=="/early-access/roster":
             return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")
         if path=="/api/early-access":

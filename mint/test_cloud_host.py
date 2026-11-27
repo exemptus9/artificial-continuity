@@ -129,6 +129,21 @@ class HostedArchiveTests(unittest.TestCase):
         rows=json.loads(self.request("GET","/api/early-access",headers=self.login())[2])["signups"]
         self.assertEqual([row["email"] for row in rows],["person@example.com"])
 
+    def test_mint_installer_requires_sign_in_and_returns_the_package(self):
+        package = self.root / "total-recall-desk_0.28.0_all.deb"
+        package.write_bytes(b"!<arch>\nfixture")
+        with patch.object(cloud_host, "MINT_INSTALLER", package):
+            path = "/downloads/mint"
+            self.assertEqual(self.request("GET", path)[0], 401)
+            cookie = self.login()
+            status, headers, data = self.request("GET", path, headers=cookie)
+            self.assertEqual((status, data), (200, package.read_bytes()))
+            self.assertIn(package.name, headers["Content-Disposition"])
+            status, headers, data = self.request("HEAD", path, headers=cookie)
+            self.assertEqual((status, int(headers["Content-Length"]), data), (200, package.stat().st_size, b""))
+            package.unlink()
+            self.assertEqual(self.request("GET", path, headers=cookie)[0], 503)
+
     def test_installer_resumes_without_redirect_or_signin(self):
         payload=b"0123456789abcdefghij";digest=hashlib.sha256(payload).hexdigest()
         name="TotalRecall-fixture.apk";release=(name,len(payload),digest)

@@ -41,6 +41,13 @@ public final class LiveCaptureTest{
         check(LiveCapture.snapshot().situationLines(boundary).equals("Now · Question\nLast · Creative idea"));
         check(LiveCapture.at(TimeUnit.NANOSECONDS.toMillis(System.nanoTime())+46000).situationLines(0).equals("Now · Waiting for context\nLast · Question"));
         check(!LiveCapture.snapshot().situationLines(LiveCapture.snapshot().finalSequence).contains("Question"));
+        long visible=LiveCapture.snapshot().finalSequence;
+        for(int i=1;i<=6;i++)LiveCapture.words("new "+i,true);
+        check(LiveCapture.snapshot().overlayWords(visible,6).equals("new 1\nnew 2\nnew 3\nnew 4\nnew 5\nnew 6"));
+        check(LiveCapture.snapshot().overlayWords(visible+4,6).equals("new 5\nnew 6"));
+        check(LiveCapture.snapshot().overlayWords(visible).equals("new 5\nnew 6"));
+        LiveCapture.words("working",false);
+        check(LiveCapture.snapshot().overlayWords(visible,1).equals("new 6\nworking"));
         LiveCapture.buffered(83);check(LiveCapture.snapshot().bufferLabel().equals("60s ready"));
         LiveCapture.waitFor("busy");check(LiveCapture.snapshot().bufferSeconds==0);check(!LiveCapture.snapshot().situationLines(0).contains("Question"));check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
         LiveCapture.stop("Paused");check(!LiveCapture.snapshot().active && LiveCapture.snapshot().finals.isEmpty());

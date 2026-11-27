@@ -3,12 +3,14 @@ from contextlib import nullcontext
 import fcntl
 import json
 import re
+import secrets
 
 from recall_archive import Failure,UID,archive_lock,now,sync_dir
 
 DEFAULT_LABELS=["Forge Lexicon","Poem draft","Project decision","To do","Connection"]
 SCHEMA="""
 CREATE TABLE IF NOT EXISTS owner_reviews(kind TEXT,id TEXT,state TEXT,labels TEXT,name TEXT,writing TEXT,heard TEXT,updated INTEGER,PRIMARY KEY(kind,id));
+CREATE TABLE IF NOT EXISTS recent_filing_undo(kind TEXT,id TEXT,token TEXT,state TEXT,labels TEXT,clear_seed INTEGER,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS item_stories(kind TEXT,id TEXT,body TEXT,rev INTEGER,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS recording_evidence(kind TEXT,id TEXT,offset INTEGER,mode TEXT,cues TEXT,PRIMARY KEY(kind,id,offset,mode));
 CREATE TABLE IF NOT EXISTS owner_options(slot INTEGER PRIMARY KEY,config TEXT);
@@ -54,7 +56,19 @@ def classify(arc,data):
             if type(data.get("revision"))!=int or data["revision"]!=revision:raise Failure(409,"Story changed. Reopen the item to see the saved version.")
             db.execute("INSERT OR REPLACE INTO item_stories VALUES(?,?,?,?)",(kind,uid,body,revision+1))
             return dict(body=body,revision=revision+1)
-        if action in ("add","remove"):
+        receipt=None
+        if action in ("add","remove","dismiss","reopen"):
+            receipt=dict(state=r["state"],labels=list(r["labels"]),clearSeed=False)
+        if action=="undo":
+            token=data.get("before")
+            if not isinstance(token,str) or len(token)>100:
+                raise Failure(400,"Invalid undo receipt")
+            saved=db.execute("SELECT state,labels,clear_seed FROM recent_filing_undo WHERE kind=? AND id=? AND token=?",(kind,uid,token)).fetchone()
+            if not saved:
+                raise Failure(409,"This filing can no longer be undone. Reopen the item to see its current state.")
+            r["state"],r["labels"]=saved[0],json.loads(saved[1])
+            if saved[2]:r["writing"]=""
+        elif action in ("add","remove"):
             label=clean_text(data.get("label"),42)
             if not label:raise Failure(400,"Choose a category")
             if action=="add" and label not in r["labels"]:
@@ -62,7 +76,8 @@ def classify(arc,data):
                 r["labels"].append(label)
                 if label in ("Poem draft","To do","Project decision","Connection") and kind=="clip" and not r["writing"]:
                     source=db.execute("""SELECT coalesce(nullif(json_extract(metadata,'$.correction'),''),transcript) FROM clips WHERE id=?""",(uid,)).fetchone()
-                    r["writing"]=source[0][:40000]
+                    r["writing"]=(source[0] or "")[:40000]
+                    receipt["clearSeed"]=bool(r["writing"])
             if action=="remove" and label in r["labels"]:r["labels"].remove(label)
             r["state"]="filed" if r["labels"] else "inbox"
         elif action in ("dismiss","reopen"):r["state"]="dismissed" if action=="dismiss" else "inbox"
@@ -70,7 +85,12 @@ def classify(arc,data):
             for key,limit in (("name",180),("writing",40000),("heard",180)):
                 r[key]=clean_text(data.get(key,""),limit)
         else:raise Failure(400,"Unknown review action")
+        db.execute("DELETE FROM recent_filing_undo WHERE kind=? AND id=?",(kind,uid))
         db.execute("INSERT OR REPLACE INTO owner_reviews VALUES(?,?,?,?,?,?,?,?)",(kind,uid,r["state"],json.dumps(r["labels"]),r["name"],r["writing"],r["heard"],now()))
+        if receipt is not None:
+            r["undo"]=secrets.token_urlsafe(24)
+            db.execute("INSERT INTO recent_filing_undo VALUES(?,?,?,?,?,?)",(kind,uid,r["undo"],receipt["state"],json.dumps(receipt["labels"]),receipt["clearSeed"]))
+            db.execute("DELETE FROM recent_filing_undo WHERE rowid IN (SELECT rowid FROM recent_filing_undo ORDER BY rowid DESC LIMIT -1 OFFSET 128)")
         return r
 def inbox(arc,shelf,offset):
     from recall_web import BASE_SQL
@@ -108,7 +128,7 @@ def delete(arc,data):
                     if head.get("Metadata",{}).get("archive")!=cloud.instance:raise Failure(409,"Storage ownership changed")
                     cloud._call(cloud.s3.delete_object,Key=obj[0])
                 db.execute("DELETE FROM "+table+" WHERE id=?",(uid,))
-        for table in ("owner_reviews","item_stories","recording_evidence"):
+        for table in ("owner_reviews","item_stories","recording_evidence","recent_filing_undo"):
             db.execute("DELETE FROM "+table+" WHERE kind=? AND id=?",(kind,uid))
         db.execute("INSERT INTO deleted_items VALUES(?,?)",(kind,uid))
         if kind=="clip":

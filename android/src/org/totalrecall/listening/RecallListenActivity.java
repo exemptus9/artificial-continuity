@@ -312,7 +312,12 @@ public final class RecallListenActivity extends Activity {
         PopupMenu menu=new PopupMenu(this,anchor);
         String[] options={"Missed one","How listening works","Coverage gaps","Export all clips","Restore ZIP","Connect to Mint","Open phone vault","Capture sensitivity"};
         for(int i=0;i<options.length;i++)menu.getMenu().add(0,i,i==7?1:(i==0?0:i+1),options[i]);
-        menu.getMenu().findItem(0).setEnabled(RecallService.isListening() && manualActions.findViewWithTag("live-keep").isEnabled());
+        android.view.SubMenu labeled=menu.getMenu().addSubMenu(0,8,1,"Save recent audio as…");
+        String[] kinds={SelectiveEngine.FORGE,SelectiveEngine.POETRY,SelectiveEngine.DECISION};
+        for(int i=0;i<kinds.length;i++)labeled.add(0,9+i,i,kinds[i]);
+        boolean canKeep=RecallService.isListening() && LiveCapture.snapshot().receiving;
+        labeled.getItem().setEnabled(canKeep);
+        menu.getMenu().findItem(0).setEnabled(canKeep);
         menu.getMenu().findItem(3).setEnabled(!exporting&&!importing);
         menu.getMenu().findItem(4).setEnabled(!exporting&&!importing);
         menu.setOnMenuItemClickListener(item->{switch(item.getItemId()){
@@ -326,6 +331,9 @@ public final class RecallListenActivity extends Activity {
             case 6: startActivity(new Intent(this,org.continuity.recall.MainActivity.class)
                         .setAction("org.totalrecall.action.OPEN_VAULT").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));break;
             case 7: sensitivity();break;
+            case 9: command(RecallService.KEEP_WORD);break;
+            case 10: command(RecallService.KEEP_LINE);break;
+            case 11: command(RecallService.KEEP_DECISION);break;
             default:return false;}return true;});menu.show();
     }
     private void sensitivity(){
