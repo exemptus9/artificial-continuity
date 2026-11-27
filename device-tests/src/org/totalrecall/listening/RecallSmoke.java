@@ -70,6 +70,7 @@ public final class RecallSmoke extends Instrumentation {
             else if ("microphone".equals(phase)) microphone();
             else if ("journal".equals(phase)) journal();
             else if ("overlay".equals(phase)) overlay();
+            else if ("shade".equals(phase)) lockedShade();
             else if ("contention".equals(phase)) contention();
             else throw new IllegalArgumentException(phase);
             b.putString("receipt",receipt.toString()); b.putString("outcome","PASS_"+phase);
@@ -504,7 +505,7 @@ public final class RecallSmoke extends Instrumentation {
     }
     private void readWindows(){
         AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();
-        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         getUiAutomation().setServiceInfo(info);
     }
     private AccessibilityNodeInfo node(String label){
@@ -705,6 +706,47 @@ public final class RecallSmoke extends Instrumentation {
     private void deviceShell(String command)throws Exception {
         android.os.ParcelFileDescriptor fd=getUiAutomation().executeShellCommand(command);
         try(InputStream in=new android.os.ParcelFileDescriptor.AutoCloseInputStream(fd)){bytes(in);}
+    }
+    private AccessibilityNodeInfo shadeButton(){
+        AccessibilityNodeInfo found=node("Save last min");
+        return found!=null && found.isVisibleToUser() && "com.android.systemui".contentEquals(found.getPackageName())?found:null;
+    }
+    private void touch(AccessibilityNodeInfo item)throws Exception{
+        Rect bounds=new Rect();item.getBoundsInScreen(bounds);
+        require(!bounds.isEmpty(),"Empty System UI control");
+        deviceShell("input tap "+bounds.centerX()+" "+bounds.centerY());
+    }
+    private void lockedShade()throws Exception{
+        readWindows();Activity activity=launch();
+        android.app.KeyguardManager keyguard=target.getSystemService(android.app.KeyguardManager.class);
+        android.os.PowerManager power=target.getSystemService(android.os.PowerManager.class);
+        try{
+            startListening(activity);waitForButton("Save last min");
+            deviceShell("input keyevent KEYCODE_SLEEP");
+            until(()->!power.isInteractive(),6000,"Screen did not turn off");
+            SystemClock.sleep(1500);deviceShell("input keyevent KEYCODE_WAKEUP");
+            until(keyguard::isKeyguardLocked,8000,"Swipe lock did not engage on disposable emulator");
+            deviceShell("cmd statusbar expand-notifications");SystemClock.sleep(1200);
+            if(shadeButton()==null){
+                AccessibilityNodeInfo title=node("Listening");
+                if(title==null)title=node("Total Recall");
+                for(AccessibilityNodeInfo row=title;row!=null;row=row.getParent()){
+                    java.util.List<AccessibilityNodeInfo> expand=row.findAccessibilityNodeInfosByViewId("android:id/expand_button");
+                    if(expand.isEmpty())expand=row.findAccessibilityNodeInfosByViewId("com.android.systemui:id/expand_button");
+                    if(!expand.isEmpty()){touch(expand.get(0));break;}
+                }
+            }
+            until(()->shadeButton()!=null,12000,"Save last min was not visible in System UI");
+            require(keyguard.isKeyguardLocked(),"Shade dismissed keyguard before save");
+            int before=LiveCapture.snapshot().savedCount;
+            touch(shadeButton());
+            until(()->LiveCapture.snapshot().savedCount>before,16000,"Touching the rendered lock-screen button did not save");
+            require(keyguard.isKeyguardLocked(),"Saving from the shade dismissed the swipe lock");
+            passed("Tapped Android System UI's rendered Save last min action while the swipe keyguard was active and verified a new on-device save.");
+        }finally{
+            deviceShell("cmd statusbar collapse");deviceShell("wm dismiss-keyguard");stopListening();
+            runOnMainSync(activity::finish);
+        }
     }
     private android.app.PendingIntent noticeButton(String title){
         android.app.NotificationManager manager=target.getSystemService(android.app.NotificationManager.class);
