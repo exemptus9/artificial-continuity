@@ -64,6 +64,10 @@ public final class RecallOverlay {
         if(value && RecallService.isListening()) sessionStarted(c);
         else if(!value) MAIN.post(RecallOverlay::stop);
     }
+    static void changeSize(Context c,boolean mini,boolean large){
+        options(c).edit().putBoolean("ultra",mini).putBoolean("expanded",large).apply();
+        MAIN.post(()->{if(active!=null && active.visible)active.setSize(mini,large);});
+    }
     static void changeCaptions(Context c,boolean value) {
         options(c).edit().putBoolean("captions",value).apply();
         MAIN.post(()->{ if(active!=null && active.visible) { active.rebuild(); } });
@@ -223,8 +227,12 @@ public final class RecallOverlay {
             }
             if(detail!=null){
                 String stats=s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
-                showText(detail,s.registration(firstVisibleFinal)+"\n"+stats
-                    +(LiveCapture.clipping()?" · Mic clipping":""));
+                String diagnostics=s.registration(firstVisibleFinal)+"\n"+stats+(LiveCapture.clipping()?" · Mic clipping":"");
+                if(toolsOpen){
+                    diagnostics+="\nText journal "+(JournalStore.enabled(app)?"on":"off")+" · Full audio "+(ArchiveStore.enabled(app)?"on":"off");
+                    if(!s.lastFlag.isEmpty())diagnostics+="\nLast flag · "+s.lastFlag;
+                }
+                showText(detail,diagnostics);
             }
             if(caption!=null){
                 boolean showWords=prefs.getBoolean("captions",true);
@@ -330,6 +338,7 @@ public final class RecallOverlay {
                     });latest.setVisibility(View.GONE);
                 }
             }else if(expanded){
+                if(!preview){detail=label(body,"",12);detail.setTextColor(0xffc0d5cd);}
                 LinearLayout sizes=row(body);
                 control(sizes,"Ultra mini","Use the smallest panel with live status and words",v->setSize(true,false));
                 LinearLayout nav=row(body);

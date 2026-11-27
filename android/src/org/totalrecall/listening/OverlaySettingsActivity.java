@@ -64,6 +64,13 @@ public final class OverlaySettingsActivity extends Activity {
             body.addView(enable);
             enable.setOnCheckedChangeListener((b,on)->{RecallOverlay.choice(this,on);render();});
             if(enabled){
+                String[] sizes={"Ultra mini","Medium","Large"};
+                int selected=RecallOverlay.options(this).getBoolean("expanded",false)?2:
+                    RecallOverlay.options(this).getBoolean("ultra",false)?0:1;
+                button("Overlay size · "+sizes[selected],v->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Overlay size").setSingleChoiceItems(sizes,selected,(dialog,which)->{
+                        RecallOverlay.changeSize(this,which==0,which==2);dialog.dismiss();render();
+                    }).setNegativeButton("Cancel",null).show());
                 Switch caption=new Switch(this);caption.setText("Show live captions on the overlay");
                 caption.setChecked(RecallOverlay.options(this).getBoolean("captions",true));
                 caption.setOnCheckedChangeListener((b,on)->RecallOverlay.changeCaptions(this,on));body.addView(caption);
