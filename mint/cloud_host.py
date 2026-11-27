@@ -34,9 +34,10 @@ LAST_APK = ("TotalRecall-0.15.0.apk",56138026,"c4383289901e275f0a4102877dd4e0f1d
 RESUME_APK = ("TotalRecall-0.16.0.apk",56138026,"427cfca878e980e95e49b645957f4e6ee3e20e77c016daa9553aa81c4d1b3e55")
 SPEAKER_APK = ("TotalRecall-0.17.0.apk",70027652,"da51ecdbb9ec9db9a67b0b4c98badfdaa594da884ff3839e42d5db545c6232dd")
 PASSAGE_APK = ("TotalRecall-0.18.0.apk",70035844,"734ae0915ee467b9e91b4867e6664bd15b7b5b1e029392d0f62b6617cddff2b0")
-APK_NAME = "TotalRecall-0.19.0.apk"
-APK_SIZE = 70044036
-APK_SHA = "b69eb035739c0a84793857d7c585e124885ad0cd002ed305d6f8d7802df16cd7"
+VOICE_PROFILE_APK = ("TotalRecall-0.19.0.apk",70044036,"b69eb035739c0a84793857d7c585e124885ad0cd002ed305d6f8d7802df16cd7")
+APK_NAME = "TotalRecall-0.20.0.apk"
+APK_SIZE = 70048132
+APK_SHA = "007de41a553afa0143308bbbb0627cdbbf721db5c4ee39776f91c4dae60436c2"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
@@ -153,7 +154,7 @@ class HostedHandler(recall_web.OwnerHandler):
     def download_apk(self,release=None):
         media=self.server.archive.media_store
         try:
-            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
+            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),VOICE_PROFILE_APK,PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
             for name,size,digest in choices:
                 key="total-recall/installers/"+digest+"/"+name
                 head=media._head(key)
@@ -224,7 +225,7 @@ class HostedHandler(recall_web.OwnerHandler):
                     ContentType=APK_MIME,ContentDisposition='attachment; filename="'+APK_NAME+'"',Metadata={"sha256":APK_SHA})
         except recall_archive.Failure as err:return self.json(err.status,{"error":str(err)})
         except Exception:return self.json(503,{"error":"Could not store the installer."})
-        return self.json(200,{"path":self.apk_path()})
+        return self.json(200,{"path":"/downloads/android","version":"0.20.0"})
 
     def do_GET(self):
         path=urlsplit(self.path).path
@@ -233,8 +234,7 @@ class HostedHandler(recall_web.OwnerHandler):
         if path in ("/early-access","/early-access/received"):
             content=early_access.SAVED if path.endswith("/received") else early_access.FORM
             return self.emit(200,early_access.page(self.server.assets,content),"text/html; charset=utf-8")
-        if path==self.apk_path():return self.download_apk((APK_NAME,APK_SIZE,APK_SHA))
-        for old in (PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK):
+        for old in (VOICE_PROFILE_APK,PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK):
             if path==self.apk_path(old[0],old[2]):return self.download_apk(old)
         if path=="/v2/status": return recall_desk.TransferHandler.do_GET(self)
         if path.startswith("/open/"): return self.json(404,{"error":"Unknown route"})
@@ -246,7 +246,7 @@ class HostedHandler(recall_web.OwnerHandler):
             return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")
         if path=="/api/early-access":
             return self.json(200,{"signups":early_access.roster(self.server.archive.root)})
-        if path=="/api/android-installer":return self.json(200,{"path":self.apk_path()})
+        if path=="/api/android-installer":return self.json(200,{"path":"/downloads/android","version":"0.20.0"})
         if path=="/api/phone-pairing":return self.json(200,{"code":self.get_pair(),"origin":"https://"+self.server.public_host})
         if path=="/api/phone-qr.png":
             try:return self.emit(200,qr_png(self.get_pair()),"image/png")

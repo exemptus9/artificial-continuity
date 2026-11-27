@@ -120,7 +120,8 @@ class HostedArchiveTests(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertIn(b"Request an invitation",page)
         self.assertNotIn(b".apk",page)
-        self.assertEqual(self.request("GET","/api/early-access")[0],401)
+        for private_path in ("/api/early-access","/early-access/roster","/downloads/android"):
+            self.assertEqual(self.request("GET",private_path)[0],401)
         self.assertEqual(self.request("POST","/early-access","email=test%40example.com",self.origin)[0],400)
         for email in ("person@example.com","PERSON@example.com"):
             status,headers,_=self.request("POST","/early-access",urlencode({"email":email,"invite":"yes"}),self.origin)

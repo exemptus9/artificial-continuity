@@ -73,6 +73,7 @@ function storage(info){const box=e('div','panel storage');add(box,add(e('div','s
   if(hosted){
     box.append(button('Pair phone',openPairing,'btn pair-action'));
     const installer=e('a','btn','Download Android app');installer.href='/downloads/android';box.append(installer);
+    const roster=e('a','btn','Early-access requests');roster.href='/early-access/roster#join';box.append(roster);
     const form=e('form');form.method='post';form.action='/logout';
     const signOut=e('button','btn','Sign out');signOut.type='submit';form.append(signOut);box.append(form);
   }return box;}
