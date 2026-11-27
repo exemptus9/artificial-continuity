@@ -32,6 +32,11 @@ public final class RecallOverlay {
         restoreAfterReview=false;
     }
 
+    static void leaveEndDialog(Context c,boolean ending){
+        if(ending)restoreAfterReview=false;
+        reviewVisible(c,false);
+    }
+
     private RecallOverlay() {}
     static SharedPreferences options(Context c) { return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE); }
     static boolean enabled(Context c) { return options(c).getBoolean("enabled",false); }
@@ -96,7 +101,7 @@ public final class RecallOverlay {
         TextView caption, status, detail, keep, missed, words;
         ProgressBar meter;
         boolean toolsOpen;
-        boolean expanded,registered,visible,wasWaiting;
+        boolean ultra,expanded,registered,visible,wasWaiting;
         long firstVisibleFinal,requestUntil;
         int requestedAtCount;
         String requestLabel="",lastContextLine="",liveCue="";
@@ -122,7 +127,7 @@ public final class RecallOverlay {
                 windowContext=c.createDisplayContext(display).createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,null);
             }else windowContext=c;
             wm=(WindowManager)windowContext.getSystemService(Context.WINDOW_SERVICE);
-            expanded=prefs.getBoolean("expanded",false);
+            expanded=prefs.getBoolean("expanded",false);ultra=!expanded && prefs.getBoolean("ultra",false);
             layout=new WindowManager.LayoutParams(-2,-2,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT);
             layout.gravity=Gravity.TOP|Gravity.LEFT;
@@ -189,7 +194,7 @@ public final class RecallOverlay {
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
             String compact=s.waiting?"Mic busy":!s.event.isEmpty()?s.event:ready?"Live "+elapsed:headline;
-            showText(status,expanded?headline+" · "+elapsed:compact);
+            showText(status,expanded?headline+" · "+elapsed:ultra && ready && s.event.isEmpty()?"● "+s.words+"w · "+s.savedCount+" saved":compact);
             String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
             String contextKey=s.aliasVersion+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
             if(detail!=null && !contextKey.equals(lastContextLine)){
@@ -211,6 +216,7 @@ public final class RecallOverlay {
                 String state=s.waiting?s.state:s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
                 if(expanded)state+=" · Journal "+(JournalStore.enabled(app)?"on":"off");
 
+                if(LiveCapture.clipping())state+=" · Mic clipping: move farther away";
                 state+="\nSituation · "+(liveCue.isEmpty()?"Waiting for context":liveCue);
                 showText(detail,state);
             }
@@ -262,13 +268,13 @@ public final class RecallOverlay {
                     if(!expanded)caption.setSingleLine(true);
                 }
             }
-            if(!expanded && !preview){
+            if(!expanded && !ultra && !preview){
                 keep=key(header,"Save","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Saving…"));
                 key(header,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
             }
-            if(preview && !expanded)key(header,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
+            if(preview && !expanded && !ultra)key(header,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
             if(expanded)key(header,toolsOpen?"Back":"More",toolsOpen?"Back to live controls":"More overlay actions",v->{toolsOpen=!toolsOpen;rebuild();});
-            TextView size=key(header,expanded?"↙":"↗",expanded?"Shrink panel":"Expand panel",v->resize());size.setTextSize(22);
+            TextView size=key(header,expanded?"↙":"↗",expanded?"Shrink panel":ultra?"Open medium panel":"Expand panel",v->resize());size.setTextSize(22);
             if(expanded && !toolsOpen){
                 if(!preview){
                     detail=label(root,"",12);detail.setMaxLines(3);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setTextColor(0xffc0d5cd);
@@ -281,6 +287,9 @@ public final class RecallOverlay {
                 }
                 control(actions,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
             }else if(expanded){
+                LinearLayout sizes=row(root);
+                control(sizes,"Ultra mini","Use the smallest panel with live status and words",v->setSize(true,false));
+                control(sizes,"End & close","Stop listening and close Total Recall",v->openScreen(EndListeningActivity.class,false));
                 LinearLayout nav=row(root);
                 control(nav,"Voices","Teach or manage remembered voices",v->openScreen(VoiceProfilesActivity.class,false));
                 control(nav,"Journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
@@ -294,7 +303,7 @@ public final class RecallOverlay {
                 }
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
-            int width=expanded?268:preview?160:212;
+            int width=expanded?268:ultra?148:preview?160:212;
             float font=windowContext.getResources().getConfiguration().fontScale;
             width+=Math.round(Math.max(0,Math.min(font-1,1))*60);
             layout.width=Math.min(dp(width),Math.max(dp(100),screenWidth-dp(8)));
@@ -310,7 +319,11 @@ public final class RecallOverlay {
             t.setIncludeFontPadding(false);t.setPadding(dp(2),dp(1),dp(2),dp(1));parent.addView(t);return t;
         }
         void resize(){
-            toolsOpen=false;expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
+            setSize(false,!expanded && !ultra);
+        }
+        void setSize(boolean mini,boolean large){
+            toolsOpen=false;ultra=mini;expanded=large;
+            prefs.edit().putBoolean("ultra",mini).putBoolean("expanded",large).apply();
             rebuild();
         }
         void newGuide(){

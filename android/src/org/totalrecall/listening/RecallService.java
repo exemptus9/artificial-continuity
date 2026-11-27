@@ -16,12 +16,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Single user-started microphone owner. All speech and detection work runs off the activity thread. */
 public final class RecallService extends Service {
     private static final String NS="org.totalrecall.listening.";
-    public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",KEEP=NS+"KEEP",
+    public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",END=NS+"END",KEEP=NS+"KEEP",
         MISSED=NS+"MISSED",DISCARD_LAST=NS+"DISCARD_LAST",ACTION_CHANGED=NS+"CHANGED";
     private static final String CHANNEL="total_recall_listening";
     private static final String PREFS="total_recall_session";
     private static final int NOTIFICATION=9021, RESUME_NOTIFICATION=9022;
-    private volatile boolean userPaused;
+    private volatile boolean userPaused,ending;
     private static volatile boolean running;
     private static volatile String current="";
     private final ConcurrentLinkedQueue<String> commands=new ConcurrentLinkedQueue<>();
@@ -159,12 +159,13 @@ public final class RecallService extends Service {
                 changed();stopSelf(startId);return START_NOT_STICKY;
             }
             if(worker==null){
-                notifications().cancel(RESUME_NOTIFICATION);userPaused=false;stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
+                notifications().cancel(RESUME_NOTIFICATION);userPaused=false;ending=false;stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
                 startedElapsed=SystemClock.elapsedRealtime();inputRoute="";worker=new Thread(this::listen,"Recall-Mic");worker.start();
                 noticeHandler.removeCallbacks(refreshNotice);noticeHandler.postDelayed(refreshNotice,5000);
             }
         }else if(worker!=null){
-            if(PAUSE.equals(action)||USER_PAUSE.equals(action)){
+            if(PAUSE.equals(action)||USER_PAUSE.equals(action)||END.equals(action)){
+                ending=END.equals(action);
                 userPaused=USER_PAUSE.equals(action);
                 stopping.set(true);LiveCapture.stop("Pausing");RecallOverlay.sessionEnded(this);progress("Pausing");
                 // stop() also unblocks a native read if the microphone route went away.
@@ -211,7 +212,7 @@ public final class RecallService extends Service {
         final OfflineSpeech speech;
         final SelectiveEngine.Listener listener;
         SelectiveEngine engine;
-        boolean liftQuiet;
+        boolean liftQuiet,skipMedia,deferUntilSpeaker;
         long epoch=-1,session=-1,nextPartial,nextFeedback,nextPrune,nextSensitivity;
         Window(Store s,JournalStore j,OfflineSpeech asr,SelectiveEngine.Listener l){
             store=s;journal=j;speech=asr;listener=l;
@@ -248,6 +249,8 @@ public final class RecallService extends Service {
             if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
             if(clock>=nextSensitivity){
                 liftQuiet=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("liftQuiet",true);
+                skipMedia=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("skipMedia",true);
+                deferUntilSpeaker=skipMedia && speech.hasMediaProfiles();
                 engine.setSensitivity(getSharedPreferences("recall-detector",MODE_PRIVATE).getInt("sensitivity",0));
                 nextSensitivity=clock+500;
             }
@@ -261,9 +264,9 @@ public final class RecallService extends Service {
             }else if(clock>=nextPartial){
                 nextPartial=clock+140;String partial=speech.partial();
                 LiveCapture.words(partial,false);
-                if(command==null && partial!=null)engine.text(partial,false);
+                if(command==null && partial!=null)engine.text(partial,false,!deferUntilSpeaker);
             }
-            if(utterance!=null)engine.text(utterance,true);
+            if(utterance!=null)engine.text(utterance,true,!(skipMedia && speech.isMedia()));
             if(command!=null && !command.equals(utterance) && !stopping.get())engine.text(command,true);
             if(!stopping.get())engine.pcm(data,count);
         }
@@ -278,9 +281,9 @@ public final class RecallService extends Service {
                     String finalWords=speech.finish();
                     if(finalWords!=null){
                         remember();journal.append(session,epoch,finalWords,false,speech.lastVoice());
-                        if(gap && !stopping.get())engine.text(finalWords,true);
+                        if(gap && !stopping.get())engine.text(finalWords,true,!(skipMedia && speech.isMedia()));
                     }else if(partial!=null){journal.append(session,epoch,partial,true);}
-                    if((gap && !stopping.get()) || (userPaused && engine.passageOpen()))engine.finish();
+                    if((gap && !stopping.get()) || (userPaused && engine.passageOpen()) || (ending && engine.isSelecting()))engine.finish();
                 }
             }finally{
                 engine.pause();engine=null;speech.resetStream();

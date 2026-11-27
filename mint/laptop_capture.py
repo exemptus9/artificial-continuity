@@ -366,6 +366,7 @@ def panel(arc):
     except BlockingIOError:(root/"raise-panel").touch();window.destroy();lock.close();return
     prefs=read(root/"panel.json",{})
     top=tk.BooleanVar(value=prefs.get("top",True));compact=tk.BooleanVar(value=prefs.get("compact",True))
+    ultra=tk.BooleanVar(value=prefs.get("ultra",False))
     window.attributes("-topmost",top.get())
     location=read(root/"position.json",{})
     if all(type(location.get(k))==int for k in ("x","y")):
@@ -434,7 +435,7 @@ def panel(arc):
                     if entry.get().strip():write(root/"pair.json",credentials(entry.get().strip()))
                     elif not paired:raise ValueError("Enter the hosted pairing code.")
                 else:(root/"pair.json").unlink(missing_ok=True)
-                write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get(),words=show_words.get()))
+                write(root/"settings.json",new);write(root/"panel.json",dict(top=top.get(),compact=compact.get(),ultra=ultra.get() and compact.get(),words=show_words.get()))
                 if at_login.get():
                     login.parent.mkdir(parents=True,exist_ok=True)
                     login.write_text("[Desktop Entry]\nType=Application\nName=Total Recall laptop microphone\nExec=total-recall-desk laptop-login\nX-GNOME-Autostart-enabled=true\n")
@@ -453,6 +454,13 @@ def panel(arc):
     menu.add_command(label="Review saved moments",command=lambda:archive("review"))
     menu.add_checkbutton(label="Show live words",variable=show_words,command=lambda:(layout(),tick(False)))
     menu.add_command(label="Settings",command=settings)
+    def smallest():
+        ultra.set(True);compact.set(True);layout();tick(False)
+    def end_session():
+        if messagebox.askyesno("End recording and close?", "Stop the laptop microphone and close this panel? Saved recordings and journal entries will remain.",parent=window):
+            stop(arc);close()
+    menu.add_command(label="Ultra mini panel",command=smallest)
+    menu.add_command(label="End recording & close",command=end_session)
     menu.add_command(label="Hide panel",command=window.iconify)
     def show_menu():
         try:menu.tk_popup(menu_btn.winfo_rootx(),menu_btn.winfo_rooty()+menu_btn.winfo_height())
@@ -467,15 +475,21 @@ def panel(arc):
     ttk.Button(mini,text="↗",width=3,command=lambda:resize()).pack(side="left")
     def layout():
         for w in (header,state_label,meter,summary,captions,controls,more,mini):w.pack_forget()
-        if compact.get():mini.pack(fill="x")
+        if compact.get():
+            for child in mini.winfo_children():child.pack_forget()
+            for child in mini.winfo_children():
+                if not ultra.get() or child not in (mini_toggle,mini_keep):child.pack(side="left")
+            mini.pack(fill="x")
         else:
             header.pack(fill="x");mode.pack(side="right");menu_btn.pack(side="right")
             state_label.pack(anchor="w");meter.pack(fill="x",pady=1)
             if show_words.get():captions.pack(fill="x")
             summary.pack(anchor="w");controls.pack(fill="x",pady=1)
-        write(root/"panel.json",dict(top=top.get(),compact=compact.get(),words=show_words.get()))
+        write(root/"panel.json",dict(top=top.get(),compact=compact.get(),ultra=ultra.get() and compact.get(),words=show_words.get()))
     def resize():
-        compact.set(not compact.get());layout();tick(False)
+        if ultra.get():ultra.set(False);compact.set(True)
+        else:compact.set(not compact.get())
+        layout();tick(False)
     timer=None
     def tick(repeat=True):
         nonlocal timer,reader

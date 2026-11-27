@@ -15,6 +15,8 @@ public final class LiveCapture {
     private static String partial="",lastSave="",reason="",state="Paused";
     private static long partialAt=-WINDOW,lastLevel=-1000;
     private static float level;
+    private static long clipWarningUntil;
+    static synchronized boolean clipping(){return active && !waiting && now()<clipWarningUntil;}
     private static long finalSequence, sessionStart;
     private static int savedCount, flags;
     private static long wordCount,eventAt;
@@ -99,7 +101,7 @@ public final class LiveCapture {
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){voiceSession(-1,false);event="";recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){voiceSession(-1,false);clipWarningUntil=0;event="";recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){if(active){savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
@@ -124,8 +126,9 @@ public final class LiveCapture {
     static synchronized void samples(short[] pcm,int count){meterAt(pcm,count,now());}
     static synchronized void meterAt(short[] pcm,int count,long t){
         if(!active||waiting||count<=0||t-lastLevel<90)return;
-        double energy=0;int samples=0;
-        for(int i=0;i<count;i+=4){double x=pcm[i];energy+=x*x;samples++;}
+        double energy=0;int samples=0,peaks=0;
+        for(int i=0;i<count;i+=4){double x=pcm[i];energy+=x*x;samples++;if(Math.abs(x)>=32700)peaks++;}
+        if(peaks>=3 && peaks*100>=samples)clipWarningUntil=t+2200;
         double rms=Math.sqrt(energy/samples)/32768.0;
         float relative=(float)Math.max(0,Math.min(1,(20*Math.log10(Math.max(0.0001,rms))+65)/60));
         level=relative>level?relative:0.65f*level+0.35f*relative;lastLevel=t;

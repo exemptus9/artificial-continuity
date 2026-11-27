@@ -14,6 +14,8 @@ public final class Situation {
     private String first="";
     public String cue(){return evidence.isEmpty()?"":evidence.keySet().iterator().next();}
     private int passages;
+    private final Map<String,Integer> lastSeen=new HashMap<>();
+    private boolean recent(String cue){return passages-lastSeen.getOrDefault(cue,-10)<=2;}
     public Situation(Context c) throws IOException {
         synchronized(Situation.class){
             if(rules==null){
@@ -35,9 +37,8 @@ public final class Situation {
             if(first.isEmpty())first=quote(line,stamp,0);
             String match=line.replace('’','\'');
             for(Map.Entry<String,Pattern> rule:cues.entrySet()){
-                if(evidence.containsKey(rule.getKey()))continue;
                 Matcher found=rule.getValue().matcher(match);
-                if(found.find()){evidence.put(rule.getKey(),quote(line,stamp,found.start()));}
+                if(found.find()){lastSeen.put(rule.getKey(),passages);evidence.putIfAbsent(rule.getKey(),quote(line,stamp,found.start()));}
             }
         }
     }
@@ -49,6 +50,9 @@ public final class Situation {
         boolean decision=evidence.containsKey("Possible decision"),step=evidence.containsKey("Possible next step");
         boolean question=evidence.containsKey("Question"),obstacle=evidence.containsKey("Possible obstacle");
         boolean idea=evidence.containsKey("Creative idea"),time=evidence.containsKey("Time reference");
+        if(recent("Media sign-off"))return "Possible media playback · a broadcast-style phrase was heard.";
+        if(recent("Draft revision") && recent("Creative idea"))return "Possible spoken drafting · an idea and a revision were heard close together.";
+        if(recent("Personal recollection") && recent("Sensory detail"))return "Possible storytelling · a personal memory and a sensory detail were heard close together.";
         if(obstacle && (step||question))return "Possible troubleshooting · an obstacle and a question or next step were mentioned.";
         if(idea && (decision||step))return "Possible creative planning · an idea and a choice or next step were mentioned.";
         if(decision && step)return "Possible planning · a choice and a follow-up were mentioned.";

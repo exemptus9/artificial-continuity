@@ -99,7 +99,18 @@ public final class AudioSituation {
         void consume(ByteBuffer b,int rate,int channels)throws IOException{
             if(channels<1||channels>32||rate<4000||rate>384000)throw new IOException("Invalid audio format");
             b.order(ByteOrder.LITTLE_ENDIAN);
-            while(b.remaining()>=2*channels){int sum=0;for(int i=0;i<channels;i++)sum+=b.getShort();
+            boolean useLeft=false;
+            if(channels==2){
+                // Opposite-polarity stereo microphones can cancel during mono downmix.
+                long mixed=0,left=0,right=0;
+                for(int i=b.position();i+3<b.limit();i+=16){
+                    int l=b.getShort(i),r=b.getShort(i+2);
+                    mixed+=(long)(l+r)*(l+r);left+=(long)l*l;right+=(long)r*r;
+                }
+                useLeft=left>0 && right>0 && mixed<(left+right)/8;
+            }
+            while(b.remaining()>=2*channels){int sum=0;
+                for(int i=0;i<channels;i++){int v=b.getShort();if(useLeft){if(i==0)sum=v*channels;}else sum+=v;}
                 short value=(short)(sum/channels);phase+=16000;
                 while(phase>=rate){phase-=rate;window[used++]=value;samples++;energy+=(double)value*value;peak=Math.max(peak,Math.abs((int)value));
                     if(used==window.length)flush();}
@@ -137,7 +148,7 @@ public final class AudioSituation {
             return "Audio decoded  "+time(samples/16000)+"\nAbove −50 dBFS  "+Math.round(active*100d/samples)+"% of decoded time"+
                 "\nLongest quiet stretch  "+String.format(Locale.ROOT,"%.1f s",longest/16000d)+"\nPeak level  "+
                 (peak==0?"silence":String.format(Locale.ROOT,"%.1f dBFS",20*Math.log10(peak/32768d)))+
-                "\n\nFrom offline speech recognition\n"+context.result()+(turns.isEmpty()?"":"\n\nRecognized passages (first 40)\n"+String.join("\n",turns))+"\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
+                "\nDifficult passages checked across three decodes  "+speech.compared+" · matching enhanced readings "+speech.agreed+" · unresolved "+speech.uncertain+"\n\nFrom offline speech recognition\n"+context.result()+(turns.isEmpty()?"":"\n\nRecognized passages (first 40)\n"+String.join("\n",turns))+"\n\nTimes are approximate. The level threshold measures sound, including background noise.\n\nSuggested account\n"+context.draft();
         }
     }
 }

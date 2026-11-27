@@ -21,6 +21,7 @@ import zlib
 import recall_archive
 import recall_desk
 import recall_web
+import early_access
 
 COOKIE = "__Host-total_recall"
 DAY = 86400
@@ -120,7 +121,7 @@ class HostedHandler(recall_web.OwnerHandler):
         for key,value in (
             ("Cache-Control","private, no-store"),("Strict-Transport-Security","max-age=31536000"),
             ("Referrer-Policy","same-origin"),("X-Content-Type-Options","nosniff"),
-            ("X-Frame-Options","DENY"),("X-Robots-Tag","noindex, nofollow"),
+            ("X-Frame-Options","DENY"),("X-Robots-Tag","index, follow" if urlsplit(self.path).path=="/early-access" else "noindex, nofollow"),
             ("Content-Security-Policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")):
             self.send_header(key,value)
         BaseHTTPRequestHandler.end_headers(self)
@@ -229,6 +230,9 @@ class HostedHandler(recall_web.OwnerHandler):
         path=urlsplit(self.path).path
         if path=="/healthz": return self.json(200,{"ok":True})
         if not self.valid_host(self.headers.get("Host","")): return self.json(403,{"error":"Unrecognized origin"})
+        if path in ("/early-access","/early-access/received"):
+            content=early_access.SAVED if path.endswith("/received") else early_access.FORM
+            return self.emit(200,early_access.page(self.server.assets,content),"text/html; charset=utf-8")
         if path==self.apk_path():return self.download_apk((APK_NAME,APK_SIZE,APK_SHA))
         for old in (PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK):
             if path==self.apk_path(old[0],old[2]):return self.download_apk(old)
@@ -238,6 +242,8 @@ class HostedHandler(recall_web.OwnerHandler):
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
         if path=="/downloads/android":return self.download_apk()
+        if path=="/api/early-access":
+            return self.json(200,{"signups":early_access.roster(self.server.archive.root)})
         if path=="/api/android-installer":return self.json(200,{"path":self.apk_path()})
         if path=="/api/phone-pairing":return self.json(200,{"code":self.get_pair(),"origin":"https://"+self.server.public_host})
         if path=="/api/phone-qr.png":
@@ -257,6 +263,18 @@ class HostedHandler(recall_web.OwnerHandler):
                     and self.headers.get("Sec-Fetch-Mode")=="navigate")
         if origin and origin!="https://"+self.server.public_host and not local_form:
             return self.json(403,{"error":"Use the archive sign-in page."})
+        if self.path=="/early-access":
+            if origin!="https://"+self.server.public_host:return self.json(403,{"error":"Use the invitation form."})
+            if self.headers.get_content_type()!="application/x-www-form-urlencoded":return self.json(415,{"error":"Use the invitation form."})
+            try:size=self.length(1800)
+            except recall_archive.Failure as e:return self.json(e.status,{"error":str(e)})
+            if not self.server.signup_limiter(self.headers.get("X-Real-IP",self.client_address[0])[:100]):
+                return self.json(429,{"error":"Too many attempts. Try again later."})
+            if not early_access.register(self.rfile.read(size),self.server.archive.root):
+                form='<p role="alert">Enter a valid email and check the invitation box.</p>'+early_access.FORM
+                return self.emit(400,early_access.page(self.server.assets,form),"text/html; charset=utf-8")
+            self.send_response(303);self.send_header("Location","/early-access/received#join")
+            self.send_header("Content-Length","0");self.end_headers();return
         if self.path in ("/api/review/file","/api/review/options","/api/archive/delete","/api/analyze-recording"):return super().do_POST()
         if self.path=="/api/storage-check":
             if not self.auth():return self.json(401,{"error":"Sign in to your archive."})
@@ -329,6 +347,9 @@ class CloudServer(ThreadingHTTPServer):
         self.archive=archive;self.public_host=public_host;self.owner_hash=owner_hash;self.token=phone_token
         self.session_key=bytes.fromhex(session_key);self.assets=Path(__file__).resolve().parent/"web"
         self.guard=threading.Lock();self.attempts=OrderedDict();self.aggregate_start=0;self.aggregate_count=0;self.slots=threading.BoundedSemaphore(24)
+        from types import SimpleNamespace
+        signup=SimpleNamespace(guard=threading.Lock(),attempts=OrderedDict(),aggregate_start=0,aggregate_count=0)
+        self.signup_limiter=lambda identity:CloudServer.login_allowed(signup,identity)
         super().__init__(address,handler)
     def login_allowed(self,identity):
         now=time.monotonic()

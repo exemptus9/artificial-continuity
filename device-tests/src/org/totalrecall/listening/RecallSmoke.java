@@ -474,6 +474,8 @@ public final class RecallSmoke extends Instrumentation {
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
             assertOverlayInScreenshot(handle);tapNode(handle);assertOverlayInScreenshot("Shrink panel");waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
+            tapNode("More overlay actions");tapNode("Use the smallest panel with live status and words");
+            assertOverlayInScreenshot("Open medium panel");tapNode("Open medium panel");waitNode(handle);tapNode(handle);
             tapNode("More overlay actions");tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");
             tapNode("Show live captions as speech is recognized");waitNode("Hide live captions; transcription continues");
             deviceShell("input keyevent KEYCODE_HOME");tapNode("Open the main listening screen");
@@ -491,6 +493,12 @@ public final class RecallSmoke extends Instrumentation {
             waitNode("Shrink panel");tapNode("Shrink panel");waitNode(handle);tapNode(handle);tapNode("More overlay actions");tapNode("Dismiss the overlay and keep the current microphone state");
             until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
             require(RecallService.isListening(),"Hiding the overlay stopped listening");
+            RecallOverlay.sessionStarted(target);waitNode("Shrink panel");tapNode("More overlay actions");
+            tapNode("Stop listening and close Total Recall");tapNode("Go back");
+            require(RecallService.isListening(),"Canceling End stopped the microphone");
+            tapNode("More overlay actions");
+            tapNode("Stop listening and close Total Recall");tapNode("End & close");
+            until(()->!RecallService.isListening() && node("Shrink panel")==null && node(handle)==null && RecallService.pausedAt(target)==0,12000,"End did not stop the recording and close the panel");
             passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, locking hid the window, and Hide left the microphone running.");
             stopListening();require(liveCleared(),"Live data survived explicit pause");
         }finally{

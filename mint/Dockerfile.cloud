@@ -4,6 +4,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libqrenc
 WORKDIR /app
 COPY requirements-cloud.txt .
 RUN pip install --no-cache-dir -r requirements-cloud.txt
-COPY recall_archive.py recall_desk.py recall_web.py situation.py cloud_host.py cloud_media.py archive_backup.py recall_review.py ./
+COPY recall_archive.py recall_desk.py recall_web.py situation.py cloud_host.py early_access.py cloud_media.py archive_backup.py recall_review.py ./
 COPY web ./web
 CMD ["python", "cloud_host.py"]

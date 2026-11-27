@@ -32,6 +32,76 @@ public final class OfflineSpeech implements AutoCloseable {
     VoiceProfiles.Profile known(){return known;}
     void offerExample(String words){VoiceProfiles.offer(words,latestVector,frames);}
     private int voice;
+    private boolean archiveReview;
+    private Recognizer retry;
+    private final QuietSpeech reviewGain=new QuietSpeech();
+    private short[] passage;
+    private int used;
+    private boolean overflow;
+    private long energy;
+    int compared, agreed, uncertain;
+    private double confidence;
+    private static double confidence(JSONObject json){
+        JSONArray a=json.optJSONArray("result");
+        if(a==null||a.length()==0)return 0;
+        double sum=0;
+        for(int i=0;i<a.length();i++){JSONObject word=a.optJSONObject(i);if(word!=null)sum+=word.optDouble("conf",0);}
+        return sum/a.length();
+    }
+    boolean hasMediaProfiles(){for(VoiceProfiles.Profile p:profiles.list())if(p.source.equals("Media"))return true;return false;}
+    boolean isMedia(){return known!=null && known.source.equals("Media");}
+    private void rememberPcm(short[] pcm,int n){
+        if(overflow)return;
+        if(used==0){
+            int peak=0;for(int i=0;i<n;i++)peak=Math.max(peak,Math.abs((int)pcm[i]));
+            if(peak<16)return;
+        }
+        if(used+n>passage.length){overflow=true;return;}
+        System.arraycopy(pcm,0,passage,used,n);used+=n;
+        for(int i=0;i<n;i++)energy+=(long)pcm[i]*pcm[i];
+    }
+    private String verified(String json){
+        String original=finalized(json);
+        if(!archiveReview)return original;
+        try{
+            if(overflow || used<8000 || energy/Math.max(1,used)<100 || (original!=null && confidence>=.83))return original;
+            compared++;
+            if(retry==null){retry=new Recognizer(model,16000f);retry.setWords(true);}
+            String[] alternatives=new String[2];double[] scores=new double[2];
+            for(int pass=0;pass<2;pass++){
+                retry.reset();reviewGain.reset();
+                StringBuilder text=new StringBuilder();double total=0;int words=0;
+                double prev=0,filtered=0;
+                for(int off=0;off<used;off+=1600){
+                    int n=Math.min(1600,used-off);
+                    short[] input=java.util.Arrays.copyOfRange(passage,off,off+n);
+                    if(pass==1)for(int i=0;i<n;i++){
+                        double current=input[i];filtered=.965*(filtered+current-prev);prev=current;
+                        input[i]=(short)Math.round(Math.max(-32768,Math.min(32767,filtered)));
+                    }
+                    short[] boosted=reviewGain.apply(input,n);
+                    if(retry.acceptWaveForm(boosted,n)){
+                        JSONObject part=new JSONObject(retry.getResult());int count=appendRetry(text,part);
+                        total+=count*confidence(part);words+=count;
+                    }
+                }
+                JSONObject part=new JSONObject(retry.getFinalResult());int count=appendRetry(text,part);
+                alternatives[pass]=text.toString().trim();
+                scores[pass]=(total+count*confidence(part))/Math.max(1,words+count);
+            }
+            if(!alternatives[0].isEmpty() && alternatives[0].equals(alternatives[1]) &&
+                Math.min(scores[0],scores[1])>=Math.max(.78,confidence)){
+                agreed++;return alternatives[0];
+            }
+            uncertain++;return original;
+        }catch(IOException|JSONException|RuntimeException failed){uncertain++;return original;}
+        finally{used=0;overflow=false;energy=0;}
+    }
+    private static int appendRetry(StringBuilder text,JSONObject part){
+        String words=part.optString("text","").trim();
+        if(words.isEmpty())return 0;
+        text.append(words).append(' ');return words.split(" +").length;
+    }
     int lastVoice(){return voice;}
     boolean groupsReady(){return speakerModel!=null;}
     private Recognizer recognizer;
@@ -49,6 +119,8 @@ public final class OfflineSpeech implements AutoCloseable {
         try {
             model = new Model(dir.getAbsolutePath());
             recognizer = new Recognizer(model, 16000f);
+            archiveReview=!commands;
+            if(archiveReview){recognizer.setWords(true);passage=new short[16*16000];}
             if(groupVoices)try{
                 File path=unpack(context.getApplicationContext(),"vosk-model-spk-0.4");
                 speakerModel=new org.vosk.SpeakerModel(path.getAbsolutePath());recognizer.setSpeakerModel(speakerModel);
@@ -83,7 +155,8 @@ public final class OfflineSpeech implements AutoCloseable {
                 pendingCommand = heard;
             }
         }
-        return recognizer.acceptWaveForm(input, count) ? finalized(recognizer.getResult()) : null;
+        if(archiveReview)rememberPcm(input,count);
+        return recognizer.acceptWaveForm(input, count) ? verified(recognizer.getResult()) : null;
     }
 
     /** An exact full-utterance command from a restricted decoder that also models unknown words. */
@@ -105,13 +178,13 @@ public final class OfflineSpeech implements AutoCloseable {
     }
 
     public String finish() {
-        return finalized(recognizer.getFinalResult());
+        return verified(recognizer.getFinalResult());
     }
 
     private String finalized(String json){
         voice=speakerModel==null?0:-1;known=null;latestVector=null;frames=0;
         try{
-            JSONObject words=new JSONObject(json);
+            JSONObject words=new JSONObject(json);confidence=confidence(words);
             if(speakerModel!=null){
                 JSONArray raw=words.optJSONArray("spk");frames=words.optInt("spk_frames",0);
                 latestVector=VoiceProfiles.vector(raw);
@@ -139,6 +212,7 @@ public final class OfflineSpeech implements AutoCloseable {
     }
 
     @Override public void close() {
+        if(retry!=null){retry.close();retry=null;}
         if (commandRecognizer != null) {
             commandRecognizer.close();
             commandRecognizer = null;

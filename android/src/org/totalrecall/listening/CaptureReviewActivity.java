@@ -71,6 +71,9 @@ public final class CaptureReviewActivity extends Activity {
             action(people,"Remember voices",()->startActivity(new Intent(this,VoiceProfilesActivity.class)));
             voiceState=text(people,"",15,false);
             action(people,"Name voices or correct a line",()->{LiveCapture.Snapshot live=LiveCapture.snapshot();new VoiceEditor(this,io,live.journalId,this::paintLive).open();});
+            Switch media=new Switch(this);media.setText("Skip automatic clip suggestions from remembered media voices");
+            media.setChecked(getSharedPreferences("recall-speech",0).getBoolean("skipMedia",true));people.addView(media);
+            media.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("skipMedia",on).apply());
             Switch grouping=new Switch(this);grouping.setText("Group similar voices in new sessions");grouping.setMinHeight(dp(48));
             grouping.setChecked(getSharedPreferences("recall-speech",0).getBoolean("voices",true));people.addView(grouping);
             grouping.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("voices",on).apply());

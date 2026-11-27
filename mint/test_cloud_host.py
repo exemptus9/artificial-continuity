@@ -115,6 +115,19 @@ class HostedArchiveTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_public_invitation_and_private_roster(self):
+        status,_,page=self.request("GET","/early-access")
+        self.assertEqual(status,200)
+        self.assertIn(b"Request an invitation",page)
+        self.assertNotIn(b".apk",page)
+        self.assertEqual(self.request("GET","/api/early-access")[0],401)
+        self.assertEqual(self.request("POST","/early-access","email=test%40example.com",self.origin)[0],400)
+        for email in ("person@example.com","PERSON@example.com"):
+            status,headers,_=self.request("POST","/early-access",urlencode({"email":email,"invite":"yes"}),self.origin)
+            self.assertEqual((status,headers["Location"]),(303,"/early-access/received#join"))
+        rows=json.loads(self.request("GET","/api/early-access",headers=self.login())[2])["signups"]
+        self.assertEqual([row["email"] for row in rows],["person@example.com"])
+
     def test_installer_resumes_without_redirect_or_signin(self):
         payload=b"0123456789abcdefghij";digest=hashlib.sha256(payload).hexdigest()
         name="TotalRecall-fixture.apk";release=(name,len(payload),digest)

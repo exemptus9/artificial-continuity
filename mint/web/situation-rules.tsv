@@ -6,3 +6,7 @@ Creative idea	\b(?:what if|idea for|line for|a poem about|wordplay|here (?:is|co
 Time reference	\b(?:tomorrow|tonight|next (?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at (?:[0-1]?\d(?::[0-5]\d)? ?(?:am|pm)|noon|midnight))\b
 Needs checking	\b(?:i(?:'m| am) not sure|we(?:'re| are) not sure|need to (?:verify|confirm|check)|might have|as far as i (?:know|remember))\b
 Playback mentioned	\b(?:on (?:the )?(?:television|tv|radio|podcast)|watching (?:a|the) (?:show|movie|film)|listening to (?:a|the) podcast)\b
+Draft revision	\b(?:scratch that|let me rephrase|a better (?:line|word|ending)|change that line|another way to say|rewrite (?:that|the) line)\b
+Personal recollection	\b(?:i remember when|when i was (?:little|younger|a child)|that summer|years later i|it takes me back)\b
+Sensory detail	\b(?:i could (?:smell|hear|feel|taste)|the (?:smell|sound) of|it smelled like)\b
+Media sign-off	\b(?:thanks for watching|like and subscribe|after (?:this|the) commercial break|back after the break|this episode is sponsored by)\b

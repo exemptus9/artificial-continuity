@@ -14,13 +14,17 @@ public final class FullJournalActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final List<Long> pages=new ArrayList<>();
-    private TextView transcript;
+    private TextView transcript,hearing;
     private Button older,newer;
-    private long next;
+    private long next,nextRefresh;
     private int generation;
     private boolean visible,busy;
     private final Runnable poll=new Runnable(){public void run(){
         if(!visible)return;
+        LiveCapture.Snapshot live=LiveCapture.snapshot();
+        String words=live.active&&!live.waiting?live.partial:"";
+        hearing.setText(words.isEmpty()?"":"Hearing now · "+words);
+        hearing.setVisibility(words.isEmpty()?android.view.View.GONE:android.view.View.VISIBLE);
         if(pages.size()==1&&!busy)read();
         main.postDelayed(this,2400);
     }};
@@ -42,13 +46,14 @@ public final class FullJournalActivity extends Activity {
         LinearLayout nav=new LinearLayout(this);page.addView(nav);
         newer=button(nav,"Newer lines",()->{if(pages.size()>1){pages.remove(pages.size()-1);read();}});
         older=button(nav,"Older lines",()->{if(next>0){pages.add(next);read();}});
+        hearing=new TextView(this);hearing.setMaxLines(3);hearing.setTextSize(16);page.addView(hearing);
         ScrollView sc=new ScrollView(this);page.addView(sc);transcript=new TextView(this);
         transcript.setTextSize(17);transcript.setTextIsSelectable(true);sc.addView(transcript);pages.add(Long.MAX_VALUE);
     }
     private Button button(LinearLayout row,String text,Runnable action){
         Button b=new Button(this);b.setText(text);b.setOnClickListener(v->action.run());row.addView(b,new LinearLayout.LayoutParams(0,-2,1));return b;
     }
-    @Override public void onResume(){super.onResume();visible=true;RecallOverlay.reviewVisible(this,true);read();main.postDelayed(poll,2400);}
+    @Override public void onResume(){super.onResume();visible=true;RecallOverlay.reviewVisible(this,true);read();main.post(poll);}
     @Override public void onPause(){visible=false;generation++;busy=false;main.removeCallbacks(poll);RecallOverlay.reviewVisible(this,false);super.onPause();}
     @Override public void onDestroy(){io.shutdownNow();super.onDestroy();}
     private void read(){

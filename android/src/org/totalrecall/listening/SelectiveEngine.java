@@ -440,7 +440,8 @@ public final class SelectiveEngine {
     }
 
     /** Feed one recognizer hypothesis. Partials replace each other; finals append exactly once. */
-    public synchronized void text(String words, boolean isFinal) {
+    public synchronized void text(String words, boolean isFinal) {text(words,isFinal,true);}
+    synchronized void text(String words, boolean isFinal,boolean allowAutomatic) {
         if (stopped || words == null) return;
         String body = words.trim();
         if (body.length() > MAX_TEXT) body = body.substring(body.length() - MAX_TEXT);
@@ -455,7 +456,7 @@ public final class SelectiveEngine {
             java.util.regex.Matcher tail=TRAILING_REQUEST.matcher(n);
             if(tail.find() && actionFor(tail.group(2))>=0){
                 String leading=n.substring(0,tail.start());
-                text(leading,true);
+                text(leading,true,allowAutomatic);
                 n=n.substring(tail.start()+1);
             }
         }
@@ -503,6 +504,7 @@ public final class SelectiveEngine {
         // A fast uninterrupted passage may not endpoint for many seconds. Score a growing
         // hypothesis sparingly, and require two independent signals (or a clear coining cue).
         if (!isFinal) {
+            if(!allowAutomatic)return;
             String suffix = body.substring(Math.max(0, body.length()-60));
             boolean growing = body.length() >= lastPartialLength + 15 || body.length() == MAX_TEXT && !suffix.equals(partialSuffix);
             if (at - scoredPartialAt >= 2L * RATE && growing) {
@@ -524,7 +526,7 @@ public final class SelectiveEngine {
         discardExpired();
         Segment current = new Segment(body, at);
         if (active) keptWords.add(body);
-        Hit hit = detect(current);
+        Hit hit = allowAutomatic?detect(current):null;
         recent.addLast(current);
         while (recent.size() > MAX_SEGMENTS) recent.removeFirst();
         if (hit != null) select(hit.category, hit.reason, hit.category.equals(POETRY) ? RATE * 45 : CONTEXT);
@@ -673,6 +675,9 @@ public final class SelectiveEngine {
         if(!earlier.isEmpty() && has(earlier,"by the time","that winter","that summer","years later","as a child","when i was little","i still remember")
                 && has(s,"i could hear","i could smell","i could feel","it sounded like","it smelled like","the sound of","the smell of"))
             options.add(new Hit(POETRY,"A scene-setting memory is followed by a sensory detail.",5));
+        if(has(s,"let me rephrase","a better ending","change that line","another way to say","rewrite that line")
+                && has(earlier,"here is a poem","a line","a stanza","my poem","the opening","working title"))
+            options.add(new Hit(POETRY,"A draft cue was followed by an explicit revision.",6));
         Hit invented = coinage(s, earlier);
         if (invented != null) options.add(invented);
         Hit verse = verse(current);
@@ -691,6 +696,10 @@ public final class SelectiveEngine {
         double bestKeep = 0, bestSkip = 0;
         for (Example example : examples) {
             double similarity = similarity(words, example.terms);
+            if(!earlier.isEmpty()){
+                Set<String> present=new HashSet<>(words);present.retainAll(example.terms);
+                if(present.size()>=2)similarity=Math.max(similarity,.88*similarity(learningTerms(earlier+" "+current.text),example.terms));
+            }
             if (example.positive) bestKeep = Math.max(bestKeep, similarity);
             else bestSkip = Math.max(bestSkip, similarity);
         }
@@ -702,6 +711,8 @@ public final class SelectiveEngine {
         } else if (bestSkip >= 0.45 && bestSkip > bestKeep + 0.08) {
             reviewAdjustment = -2;
         }
+        boolean broadcast=has(s,"thanks for watching","like and subscribe","after this commercial break","this episode is sponsored by");
+        if(broadcast && bestKeep<.60)return null;
         Hit best = null;
         for (Hit h : options) {
             int net = feedback.containsKey(h.category) ? feedback.get(h.category) : 0;
