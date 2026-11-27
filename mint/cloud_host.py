@@ -39,7 +39,7 @@ OWNER_PREVIOUS_APK = ("TotalRecall-0.23.0.apk",70072789,"4227d66588215e5a3350070
 LOCK_SCREEN_APK = ("TotalRecall-0.24.0.apk",70101738,"bf8b090d2b08fb36efcae7d185f5e382dcd8aed7e67e65c55f83db6c8b7e7454")
 APK_NAME = "TotalRecall-0.25.0.apk"
 APK_SIZE = 70105834
-APK_SHA = "0ef1c1546f75802d2a6a10be08f2f0f3420dd50f1e558934b9c5d72fe914692d"
+APK_SHA = "74342539fe5c88593938d772c8872a1492d866b9b61d073997ea1ab6f1443d61"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
