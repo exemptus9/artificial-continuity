@@ -229,7 +229,7 @@ public final class RecallService extends Service {
             SelectiveEngine.Clip clip=take.finish();
             if(clip==null){SpokenTake.failed("No audio arrived. Try recording again.");return;}
             try{
-                long id=store.save(clip);SpokenTake.saved(id);LiveCapture.saved("Voice take",clip.reason);
+                long id=store.save(clip);SpokenTake.saved(id);LiveCapture.saved(id,"Voice take",clip.reason);
             }catch(java.io.IOException|RuntimeException e){SpokenTake.failed("Could not save the take · "+message(e));return;}
             try{MintSync.schedule(RecallService.this);ArchiveSync.schedule(RecallService.this);}
             catch(RuntimeException e){LiveCapture.feedback("Voice take saved · transfer pending");}
@@ -342,7 +342,7 @@ public final class RecallService extends Service {
                     @Override public void onClip(SelectiveEngine.Clip clip){
                         if(!ListenPolicy.allowed(RecallService.this) || (stopping.get() && !userPaused))return;
                         LiveCapture.feedback("Writing clip to phone…");
-                        try{lastSaved[0]=store.save(clip);LiveCapture.saved(clip.category,clip.reason);progress("Saved · "+clip.category);}
+                        try{lastSaved[0]=store.save(clip);LiveCapture.saved(lastSaved[0],clip.category,clip.reason);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
                         if(clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
                             sound(false);
