@@ -19,7 +19,7 @@ public final class LiveCapture {
     static synchronized void buffered(int seconds){if(active && !waiting)buffered=seconds;}
     private static long clipWarningUntil;
     static synchronized boolean clipping(){return active && !waiting && now()<clipWarningUntil;}
-    static volatile String roomStatus="Room filter off";
+    static volatile String roomStatus="Room filter off",micSignal="";
     private static String situation="",previousSituation="";
     private static long situationAt,situationSeq,previousSituationSeq;
     static synchronized void noteSituation(String label){
@@ -145,7 +145,7 @@ public final class LiveCapture {
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){buffered=0;roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){buffered=0;roomStatus="Room filter off";micSignal="";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){saved(-1,what,why);}
     static synchronized void saved(long id,String what,String why){saved(id,what,why,false);}
     static synchronized void saved(long id,String what,String why,boolean finishingPause){

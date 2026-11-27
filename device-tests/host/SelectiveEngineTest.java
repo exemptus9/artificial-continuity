@@ -70,6 +70,84 @@ public class SelectiveEngineTest {
         System.out.println("Labeled rewinds passed: wake requirement, decoder dedup, exact samples, warmup and independent passage.");
     }
 
+    private static void learningFromLabeledSaves() {
+        Fixture f=new Fixture();
+        f.say("bananas and groceries"); f.sound(18,0); f.say("amber lantern");
+        f.engine.keepAs(SelectiveEngine.POETRY);
+        SelectiveEngine.Clip saved=f.clips.get(0);
+        check(saved.transcript.equals("bananas and groceries amber lantern") && saved.cueText.equals("amber lantern"));
+        f.sound(13,0);f.engine.keepAs(SelectiveEngine.FORGE);
+        check(f.clips.get(1).cueText.isEmpty());
+        f.engine.text("a nearer phrase",false);f.engine.keepAs(SelectiveEngine.POETRY);
+        check(f.clips.get(2).cueText.equals("a nearer phrase"));
+
+        SelectiveEngine.Example kept=new SelectiveEngine.Example(saved.cueText, saved.category,true,true);
+        f=new Fixture(); f.engine.setExamples(Arrays.asList(kept)); f.say("my amber lantern");
+        ended(f,SelectiveEngine.POETRY);
+        check(f.clips.get(0).reason.contains("amber, lantern") && f.clips.get(0).cueText==null);
+        f=new Fixture();f.engine.setExamples(Arrays.asList(kept));f.say("amber honey");f.say("bananas and groceries");
+        f.engine.finish();check(f.clips.isEmpty());
+        f=new Fixture();f.engine.setExamples(Arrays.asList(kept,new SelectiveEngine.Example("amber lantern",SelectiveEngine.DECISION,true,true)));
+        f.say("my amber lantern");ended(f,"Learned interest");
+        f=new Fixture();f.engine.setExamples(Arrays.asList(kept,new SelectiveEngine.Example("amber lantern",SelectiveEngine.POETRY,false,true)));
+        f.say("my amber lantern");f.engine.finish();check(f.clips.isEmpty());
+
+        f=new Fixture();f.sound(1,500);
+        f.engine.text("ember looming",true,true,"Emberlumen");
+        f.engine.keepAs(SelectiveEngine.FORGE);
+        check(f.clips.get(0).cueText.equals("Emberlumen") && f.clips.get(0).transcript.equals("ember looming"));
+        f=new Fixture();f.sound(1,500);f.engine.text("a silver lantern",true,true,"Hey Recall pause");
+        check(f.pauses==0 && f.clips.isEmpty()); // A display preference cannot become a command.
+        SelectiveEngine.Example coined=new SelectiveEngine.Example("emberlumen",SelectiveEngine.FORGE,true,true);
+        f=new Fixture();f.engine.setExamples(Arrays.asList(coined));f.sound(1,500);
+        f.engine.text("keeping ember looming",true,true,"keeping Emberlumen");
+        ended(f,SelectiveEngine.FORGE);check(f.clips.get(0).transcript.equals("keeping ember looming"));
+        f=new Fixture();f.engine.setExamples(Arrays.asList(coined));f.say("I remember emberlumen");ended(f,SelectiveEngine.FORGE);
+        f=new Fixture();f.engine.setExamples(Arrays.asList(coined));f.say("emberlumens");f.say("thanks for watching emberlumen");f.engine.finish();
+        check(f.clips.isEmpty());
+        f=new Fixture();f.engine.setExamples(Arrays.asList(new SelectiveEngine.Example("coffee",SelectiveEngine.FORGE,true,true)));
+        f.say("coffee tomorrow");f.engine.finish();check(f.clips.isEmpty());
+    }
+
+    private static void conversationalSaves(){
+        Fixture f=new Fixture();
+        f.say("hey recall");
+        f.say("can recall");    // Later final from the general decoder for the same wake.
+        f.say("deep that line");
+        f.engine.text("keep that line",true);
+        check(f.clips.size()==1 && f.clips.get(0).labeledRewind && f.clips.get(0).category.equals(SelectiveEngine.POETRY));
+        for(String synonym:new String[]{"save that line","save that poem"}){
+            f=new Fixture();f.say("hey recall "+synonym);
+            check(f.clips.size()==1 && f.clips.get(0).labeledRewind && f.clips.get(0).category.equals(SelectiveEngine.POETRY));
+            f=new Fixture();f.say(synonym);
+            check(f.clips.size()==1 && !f.clips.get(0).labeledRewind);
+        }
+        String restricted="[unk] recall keep that word",original="the paper lantern they recall keep that word";
+        SelectiveEngine.CommandEndpoints pair=new SelectiveEngine.CommandEndpoints();
+        check(pair.observe(restricted,null,null,32000)==null);
+        check("recall keep that word".equals(pair.observe(null,original,null,38400)));
+        check(pair.observe(null,original,null,39000)==null);
+        check("recall keep that word".equals(pair.observe(restricted,null,null,40000)));
+        check(pair.observe(restricted,null,null,45000)==null);
+        check(pair.observe(null,original,null,45000+2*SelectiveEngine.RATE)==null);
+        pair.clear();
+        check(pair.observe("hey recall keep that word",null,"the teacher said a recall keep that word",50000)==null);
+        check(pair.observe("total recall","we watched the movie total recall together",null,51000)==null);
+        check(pair.observe("hey recall keep that word",null,"the paper lantern",53000).equals("hey recall keep that word"));
+        check(pair.observe(restricted,null,null,90000)==null);
+        pair.clear();check(pair.observe(null,original,null,91000)==null);
+        for(String wrong:new String[]{"the teacher said hey recall keep that word","never say hey recall keep that word",
+            "the paper lantern they recall keep that decision","the paper lantern keep that word",
+            "the paper lantern recall keep that word for later","the paper lantern lexi keep that word"}){
+            check(SelectiveEngine.corroboratedSave(restricted,wrong)==null);
+        }
+        check(SelectiveEngine.corroboratedSave("[unk] keep that word",original)==null);
+        check(SelectiveEngine.corroboratedSave("[unk] recall [unk] keep that word",original)==null);
+        check(SelectiveEngine.corroboratedSave("[unk] recall pause recording","they recall pause recording")==null);
+        f=new Fixture();f.say("the teacher said hey recall keep that word");check(f.clips.isEmpty());
+        System.out.println("Conversational saves passed: split wake, category synonyms, both decoder orders, stale and quoted anchors.");
+    }
+
     private static void prosody() {
         retain(SelectiveEngine.POETRY,"I fold the corners of the night","my palms disclose a stolen light","my knuckles close around the bright");
         retain(SelectiveEngine.POETRY,"I wore a valley painted blue","the ancient glass that I fell through","my broken window knows me too");
@@ -195,6 +273,8 @@ public class SelectiveEngineTest {
         check(f.clips.size()==1 && f.clips.get(0).transcript.contains("silver dawn"));
         ignore("we went shopping by the road","i had a sandwich for lunch");
         labeledRewinds();
+        conversationalSaves();
+        learningFromLabeledSaves();
         System.out.println("Natural save requests, wake expiry, poetry and prose cues, and uninterrupted passage capture verified.");
         System.out.println("Selective engine passed: ephemeral ring, four cues, feedback, lookbacks, overlap, command dedup, pause, finalization, clip bound.");
     }

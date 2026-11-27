@@ -32,3 +32,6 @@ dialog{border:1px solid var(--line);border-radius:17px;padding:22px 26px 26px;wi
 .match-context {margin:14px 0 3px;color:var(--green);overflow-wrap:anywhere}
 .time-search summary {cursor:pointer;color:var(--green)}
 .time-search .find-filters {margin-top:10px}
+
+.result-audio {display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 14px 12px}
+.result-audio .section-note {margin:0}

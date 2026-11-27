@@ -7,7 +7,6 @@ import hashlib
 import http.client
 import io
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -27,13 +26,14 @@ import zipfile
 
 import situation
 import live_words
+import mic_input
 import speech_context
 import recall_archive as storage
 
 HOST="total-recall-archive-production.up.railway.app"
 RATE=16000
 BYTES_PER_SECOND=2*RATE
-BASE={"source":"pulse","quality":32,"seconds":60,"keep":30,"journal":False,"commands":True,"prune":False,"network":"Any network"}
+BASE={"source":"pulse","device":"default","recognitionGain":0,"creativeCatches":False,"quality":32,"seconds":60,"keep":30,"journal":False,"commands":True,"prune":False,"network":"Any network"}
 # The spool prefix travels with the original PCM through an interrupted save.
 # Keep legacy mark/passage prefixes readable for already-running recorders.
 KEEP_TYPES = {
@@ -44,6 +44,36 @@ KEEP_TYPES = {
     "resume": ("Pick up here", "Resume point"),
 }
 
+CREATIVE_CUES = {
+    "autoword": ("Possible coined word","Forge Lexicon",re.compile(r"\b(?:i (?:just )?(?:coined|invented) (?:a|the|this) (?:new )?(?:word|term)|my (?:new|coined) word)\b")),
+    "autoline": ("Possible poem line","Poem line",re.compile(r"\b(?:here(?:'s| is) (?:a|the) (?:refrain|poem|stanza)|the (?:opening line|next (?:stanza|verse)) (?:is|goes)|a line for (?:a|the|my) poem)\b")),
+    "autorevision": ("Possible draft revision","Draft revision",re.compile(r"\b(?:let me (?:try|say) that line again|a better (?:line|ending) (?:is|would be)|replace the last line)\b")),
+}
+KEEP_TYPES.update({kind:(title,category) for kind,(title,category,_) in CREATIVE_CUES.items()})
+
+def creative_cue(words):
+    text=words.casefold().replace("’","'")
+    return next((key for key,(_,_,pattern) in CREATIVE_CUES.items() if pattern.search(text)),None)
+
+class CreativeTail:
+    """A short trailing window appended to the optional creative bookmark on disk."""
+    def __init__(self,root,kind,recent,now):
+        start=now-round(len(recent)*1000/BYTES_PER_SECOND)
+        self.path=root/f"{kind}-{start}-{secrets.token_hex(6)}.pcm.part"
+        self.file=self.path.open("xb")
+        self.file.write(recent)
+        self.remaining=5*BYTES_PER_SECOND
+
+    def add(self,block):
+        count=min(len(block),self.remaining)
+        self.file.write(block[:count])
+        self.remaining-=count
+        return self.remaining==0
+
+    def finish(self):
+        self.file.flush();os.fsync(self.file.fileno());self.file.close()
+        self.path.rename(self.path.with_suffix(""))
+
 SOUND_MODES = ("Wake chime only", "Wake and save tones", "Wake and spoken saves", "Visual only")
 SPOKEN_RECEIPTS = {"line":"Line captured","coinage":"Word captured","resume":"Place marked","passage":"Passage saved","mark":"Moment saved"}
 
@@ -53,7 +83,7 @@ def sound_cue(root, event):
         return
     if event!="wake" and mode=="Wake and spoken saves":
         speaker=shutil.which("espeak-ng") or shutil.which("espeak")
-        command=[speaker,SPOKEN_RECEIPTS[event]] if speaker else None
+        command=[speaker,SPOKEN_RECEIPTS.get(event,"Creative candidate saved")] if speaker else None
     else:command=None
     if not command:
         pattern=("aevalsrc=0.10*sin(2*PI*(660+330*gte(t\\,0.08))*t):d=0.17" if event=="wake"
@@ -65,7 +95,7 @@ def sound_cue(root, event):
         pass
 
 def request_keep(root, kind):
-    if kind not in KEEP_TYPES or kind == "passage":
+    if kind not in ("mark","line","coinage","resume"):
         raise ValueError("Unknown bookmark type")
     status = read(root/"status.json", {})
     age = storage.now() - status.get("at", 0)
@@ -124,8 +154,11 @@ def read(path,default):
     except (FileNotFoundError,ValueError):return default
 def config(path):
     raw=read(path/"settings.json",{})
-    return {k:raw[k] if raw.get(k) in choices else BASE[k] for k,choices in {
-        "source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60),"prune":(True,False),"journal":(True,False),"commands":(True,False),"network":("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour")}.items()}
+    cfg={k:raw[k] if raw.get(k) in choices else BASE[k] for k,choices in {
+        "creativeCatches":(True,False),"recognitionGain":(0,6,12),"source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60),"prune":(True,False),"journal":(True,False),"commands":(True,False),"network":("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour")}.items()}
+    device = raw.get("device")
+    cfg["device"] = device if mic_input.valid_device(device) else "default"
+    return cfg
 def credentials(code):
     if not code.startswith("TR1.") or len(code)>1024:raise ValueError("Paste the pairing code from the hosted archive.")
     try:obj=json.loads(base64.urlsafe_b64decode(code[4:]+"==="))
@@ -256,7 +289,7 @@ def finish(arc,path,cfg):
                 out.setparams((1,2,RATE,0,"NONE",""));out.writeframes(src.read(size))
             archive=Path(tmp)/"clip.zip"
             meta=dict(id=uid,title=title,startedAtMillis=start,durationMs=ms,sha256=storage.sha_file(wav),
-                audio="audio/"+uid+".wav",category=category,reason="Passage requested by voice" if prefix=="passage" else "Requested on laptop",transcript="")
+                audio="audio/"+uid+".wav",category=category,reason="Possible creative phrase heard by the offline recognizer" if prefix in CREATIVE_CUES else "Passage requested by voice" if prefix=="passage" else "Requested on laptop",transcript="")
             with zipfile.ZipFile(archive,"w") as z:
                 # A restarted ingest must produce the very same transfer bytes.
                 z.writestr(zipfile.ZipInfo(meta["audio"]),wav.read_bytes())
@@ -284,9 +317,10 @@ def finish(arc,path,cfg):
     receipt = dict(at=start, duration=ms, kind=kind, id=uid, title=title, savedAt=storage.now())
     if mark:
         # Segment rollover must never replace the link to a deliberately kept clip.
-        previous = read(path.parent/"last-keep.json", {})
+        receipt_file = path.parent/("last-candidate.json" if prefix in CREATIVE_CUES else "last-keep.json")
+        previous = read(receipt_file, {})
         if start + ms >= previous.get("at", 0) + previous.get("duration", 0):
-            write(path.parent/"last-keep.json", receipt)
+            write(receipt_file, receipt)
     write(path.parent/"last.json", receipt)
     path.unlink()
     if mark:sound_cue(path.parent,prefix)
@@ -314,6 +348,7 @@ def capture(arc,root,cfg,input_args):
     feed=live_words.WordFeed(root)
     voice_feed=live_words.WordFeed(root,"voice-control.fifo")
     requests=queue.SimpleQueue();passage=None;passage_start=0
+    candidate=None;last_candidate=float("-inf")
     counter=0;awake=0;event="";event_at=0;cue="";cue_at=0;last_cue=""
     def flush_passage():
         nonlocal passage,passage_start
@@ -322,35 +357,41 @@ def capture(arc,root,cfg,input_args):
             path.write_bytes(passage);path.rename(path.with_suffix(""))
         passage=None
     def heard(words):
-        nonlocal counter,awake,event,event_at,cue,cue_at,last_cue
+        nonlocal counter,awake,event,event_at,cue,cue_at,last_cue,last_candidate
         if not (root/"enabled").exists():return
         counter+=len(words.split());cmd=words.lower().strip()
+        if cfg.get("creativeCatches") and time.monotonic()-last_candidate>=90:
+            kind=creative_cue(words)
+            if kind:
+                requests.put(kind);last_candidate=time.monotonic()
         matched=re.match(r"^(?:hey recall|total recall|hey lexi|lexi)(?: |$)",cmd)
-        if matched:
-            awake=time.monotonic()+8;cmd=cmd[matched.end():]
-            event="Wake heard · ready for a command";event_at=time.monotonic()
-            sound_cue(root,"wake")
-        if cmd in ("save that","save this","keep that","remember that","keep the last minute","save the last minute","you missed one"):
-            (root/"bookmark").touch(mode=0o600);event="Save requested · recent audio";event_at=time.monotonic();awake=0
-        elif cmd in ("finish passage","finish the poem","finish the story","finish the draft"):
-            requests.put("finish");awake=0
-        elif cmd and time.monotonic()<awake:
-            if cmd in ("pause recall","pause recording","stop listening"):
-                (root/"enabled").unlink(missing_ok=True);event="Pause heard"
-            elif cmd in ("start a passage","start a poem","start a story","start a draft"):
-                requests.put("start");event="Passage requested"
-            else:event="Command unclear · try save that"
-            awake=0;event_at=time.monotonic()
+        if cfg.get("commands",True):
+            if matched:
+                awake=time.monotonic()+8;cmd=cmd[matched.end():]
+                event="Wake heard · ready for a command";event_at=time.monotonic()
+                sound_cue(root,"wake")
+            if cmd in ("save that","save this","keep that","remember that","keep the last minute","save the last minute","you missed one"):
+                (root/"bookmark").touch(mode=0o600);event="Save requested · recent audio";event_at=time.monotonic();awake=0
+            elif cmd in ("finish passage","finish the poem","finish the story","finish the draft"):
+                requests.put("finish");awake=0
+            elif cmd and time.monotonic()<awake:
+                if cmd in ("pause recall","pause recording","stop listening"):
+                    (root/"enabled").unlink(missing_ok=True);event="Pause heard"
+                elif cmd in ("start a passage","start a poem","start a story","start a draft"):
+                    requests.put("start");event="Passage requested"
+                else:event="Command unclear · try save that"
+                awake=0;event_at=time.monotonic()
         if cmd:
             found=situation.interpret([(speech_context.correct(words),"",None)])
             if found and found[0]["label"]!="Source excerpt":
                 label=found[0]["label"]
                 if label!=cue:last_cue, cue=cue,label
                 cue_at=time.monotonic()
-    voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) else None
+    voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) or cfg.get("creativeCatches") else None
     stream_id=secrets.token_hex(12)
     stream_pos=secrets.randbits(61)
     began=time.monotonic()
+    levels=mic_input.LevelWindow()
     def seal():
         nonlocal segment,seg_bytes
         if segment:
@@ -368,8 +409,10 @@ def capture(arc,root,cfg,input_args):
                 tail=block[len(block)//2*2:];block=block[:len(block)//2*2]
                 now=time.time_ns()//1000000
                 if (segment and abs(now-(start+seg_bytes*1000/BYTES_PER_SECOND))>4000) or time.monotonic()-last_input>3:
+                    if candidate:candidate.finish();candidate=None
                     seal();flush_passage();ring.clear()
-                    stream_id=secrets.token_hex(12)
+                    stream_id=secrets.token_hex(12);stream_pos=secrets.randbits(61)
+                    levels=mic_input.LevelWindow()
                 last_input=time.monotonic()
                 if segment is None:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
@@ -377,8 +420,10 @@ def capture(arc,root,cfg,input_args):
                     prefix="quietcheck" if cfg.get("prune") else "segment"
                     if cfg.get("journal"):prefix="quietjournal" if cfg.get("prune") else "journal"
                     segment=(root/f"{prefix}-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
-                if voice:voice_feed.send(stream_pos,block)
-                feed.send(stream_pos,block)
+                levels.add(block)
+                recognized = mic_input.recognition_pcm(block,cfg.get("recognitionGain",0))
+                if voice:voice_feed.send(stream_pos,recognized)
+                feed.send(stream_pos,recognized)
                 stream_pos+=len(block)
                 segment.write(block);seg_bytes+=len(block);ring.extend(block)
                 # Leave room for the block that arrives immediately after a click.
@@ -388,9 +433,14 @@ def capture(arc,root,cfg,input_args):
                     passage.extend(block)
                     if len(passage)>=30*BYTES_PER_SECOND:
                         flush_passage();passage=bytearray();passage_start=now
+                if candidate and candidate.add(block):
+                    candidate.finish();candidate=None
                 while not requests.empty():
                     cmd=requests.get()
-                    if cmd=="start" and passage is None:
+                    if cmd in CREATIVE_CUES and candidate is None:
+                        candidate=CreativeTail(root,cmd,ring[-cfg["keep"]*BYTES_PER_SECOND:],now)
+                        event="Possible creative phrase · keeping five more seconds";event_at=time.monotonic()
+                    elif cmd=="start" and passage is None:
                         passage=bytearray(ring[-4*BYTES_PER_SECOND:]);passage_start=now-round(len(passage)*1000/BYTES_PER_SECOND)
                     elif cmd=="finish" and passage is not None:
                         flush_passage();event="Passage sent for saving";event_at=time.monotonic()
@@ -400,9 +450,10 @@ def capture(arc,root,cfg,input_args):
                     mark=root/f"mark-{now-round(len(recent)*1000/BYTES_PER_SECOND)}-{secrets.token_hex(6)}.pcm.part"
                     mark.write_bytes(recent);mark.rename(mark.with_suffix(""))
                 if time.monotonic()-report>.45:
-                    samples=memoryview(block).cast("h")
-                    rms=math.sqrt(sum(int(x)*int(x) for x in samples)/max(1,len(samples)))
-                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,level=min(100,round(rms*100/5500)),seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
+                    measured=levels.snapshot()
+                    recognition_error=getattr(voice,"line","")
+                    if not recognition_error.startswith("Live words unavailable"):recognition_error=""
+                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,system=cfg["source"],device=cfg.get("device","default"),recognitionGain=cfg.get("recognitionGain",0),recognitionError=recognition_error,**measured,seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
@@ -413,6 +464,7 @@ def capture(arc,root,cfg,input_args):
         try:proc.wait(timeout=3)
         except subprocess.TimeoutExpired:proc.kill();proc.wait()
         proc.stdout.close();seal();flush_passage()
+        if candidate:candidate.finish()
 def worker(arc):
     os.umask(0o077);root=folder(arc)
     with (root/"worker.lock").open("a") as lock:
@@ -434,10 +486,10 @@ def worker(arc):
                 try:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
                     limit_notice(root,"capture","")
-                    capture(arc,root,cfg,["-f",source,"-i","default"])
+                    capture(arc,root,cfg,mic_input.arguments(source,cfg["device"]))
                 except (OSError,subprocess.SubprocessError) as e:
                     if "Storage low" in str(e):limit_notice(root,"capture","Recording paused at the storage limit. Review free space in the archive.")
-                    write(root/"status.json",dict(state=str(e)[:90],level=0,at=storage.now()));time.sleep(2)
+                    write(root/"status.json",dict(state=str(e)[:90],level=0,system=source,device=cfg["device"],at=storage.now()));time.sleep(2)
         finally:
             done.set();writer.join();write(root/"status.json",dict(state="Stopped",level=0,at=storage.now()))
 def running(root):
@@ -525,7 +577,7 @@ def panel(arc):
     if not (root/"last-keep.json").exists():
         with arc.connection() as db:
             clip=db.execute("""SELECT id,title,started,duration FROM clips
-                WHERE id GLOB 'desk-keep-*' ORDER BY started+duration DESC LIMIT 1""").fetchone()
+                WHERE id GLOB 'desk-keep-*' AND reason!='Possible creative phrase heard by the offline recognizer' ORDER BY started+duration DESC LIMIT 1""").fetchone()
         if clip:write(root/"last-keep.json",dict(id=clip[0],title=clip[1],at=clip[2],duration=clip[3]))
 
     ttk.Button(controls,text="Full journal",command=lambda:archive("journal")).pack(side="left")
@@ -539,10 +591,92 @@ def panel(arc):
             tabs.add(tab,text=name)
         p=capture_settings
         c=config(root);vars={}
-        for name,label,opts in (("source","Microphone system",("pulse","alsa")),("quality","AAC quality (kbps)",(24,32,48)),("seconds","Segment length (seconds)",(30,60,120)),("keep","Keep moment lookback (seconds)",(15,30,60))):
+        backend=tk.StringVar(value=c["source"])
+        ttk.Label(p,text="Microphone system").pack(anchor="w")
+        system_choice=ttk.Combobox(p,textvariable=backend,values=("pulse","alsa"),state="readonly")
+        system_choice.pack(fill="x")
+        default_label="Follow Mint’s default input"
+        device=tk.StringVar(value=default_label if c["device"]=="default" else c["device"])
+        options={default_label:"default"}
+        ttk.Label(p,text="Microphone").pack(anchor="w")
+        source_choice=ttk.Combobox(p,textvariable=device,values=(default_label,),width=40)
+        source_choice.pack(fill="x")
+        rows=ttk.Frame(p);rows.pack(fill="x",pady=2)
+        mic_note=tk.StringVar()
+        ttk.Label(p,textvariable=mic_note,wraplength=370).pack(anchor="w")
+        pending_jobs=queue.SimpleQueue()
+        generation=0
+        def background_job(job,then):
+            def run():
+                try:result=job()
+                except (OSError,ValueError,subprocess.SubprocessError) as exc:result=exc
+                pending_jobs.put((then,result))
+            threading.Thread(target=run,daemon=True).start()
+        timer_id=None
+        def ui_results():
+            nonlocal timer_id
+            while not pending_jobs.empty():
+                then,result=pending_jobs.get()
+                then(result)
+            timer_id=dlg.after(150,ui_results)
+        def selected_device():
+            return options.get(device.get(),device.get().strip())
+        def refresh_devices(reset=False):
+            nonlocal generation
+            generation+=1;seq=generation
+            if reset:
+                device.set(default_label)
+                options.clear();options[default_label]="default"
+                source_choice.configure(values=(default_label,))
+            system=backend.get()
+            def show_devices(found):
+                if seq!=generation:return
+                if isinstance(found,Exception):
+                    mic_note.set("Device list unavailable. Use the system default or enter a known source ID.")
+                    return
+                current=selected_device()
+                options.clear();options[default_label]="default"
+                for identifier,label in found.items():
+                    if identifier!="default":
+                        display=label if label not in options else f"{label} · {identifier}"
+                        options[display]=identifier
+                source_choice.configure(values=tuple(options))
+                device.set(next((key for key,value in options.items() if value==current),current))
+                if not check_active[0]:
+                    mic_note.set("A pinned microphone waits for that input if disconnected.")
+            background_job(lambda:mic_input.device_list(system),show_devices)
+        check_active=[False]
+        def check():
+            system=backend.get();identifier=selected_device()
+            try:args=mic_input.arguments(system,identifier)
+            except ValueError as exc:mic_note.set(str(exc));return
+            if (root/"enabled").exists():
+                status=read(root/"status.json",{})
+                if (status.get("state")=="Recording" and 0<=storage.now()-status.get("at",0)<6500
+                    and status.get("system")==system and status.get("device")==identifier and "rmsDb" in status):
+                    mic_note.set("Live · "+mic_input.report(status)+" · "+(status["inputHint"] or "Receiving audio"))
+                else:mic_note.set("Save the selected input and wait for live levels, or stop recording to test separately.")
+                return
+            check_active[0]=True
+            test.configure(state="disabled")
+            mic_note.set("Speak for three seconds. This microphone check saves no audio.")
+            def checked(result):
+                check_active[0]=False;test.configure(state="normal")
+                if (system,identifier)!=(backend.get(),selected_device()):return
+                if isinstance(result,Exception):
+                    mic_note.set("Input check failed. Check the microphone and selected input.")
+                else:mic_note.set(mic_input.report(result)+" · "+(result["inputHint"] or "Received test audio"))
+            background_job(lambda:mic_input.microphone_check(args),checked)
+        ttk.Button(rows,text="Refresh inputs",command=refresh_devices).pack(side="left")
+        test=ttk.Button(rows,text="Check microphone",command=check);test.pack(side="left",padx=3)
+        system_choice.bind("<<ComboboxSelected>>",lambda _event:refresh_devices(True))
+        def stop_jobs(event):
+            if event.widget is dlg and timer_id is not None:dlg.after_cancel(timer_id)
+        dlg.bind("<Destroy>",stop_jobs,add="+")
+        refresh_devices();ui_results()
+        for name,label,opts in (("quality","AAC quality (kbps)",(24,32,48)),("seconds","Segment length (seconds)",(30,60,120)),("keep","Keep moment lookback (seconds)",(15,30,60))):
             ttk.Label(p,text=label).pack(anchor="w");v=tk.StringVar(value=str(c[name]));vars[name]=v
             ttk.Combobox(p,textvariable=v,values=opts,state="readonly").pack(fill="x")
-        ttk.Label(p,text="Pulse uses Mint’s selected microphone. Keep moment saves the available audio before your click. Closing the panel leaves capture running. Stop recording releases the microphone.",wraplength=360).pack(anchor="w",pady=4)
         p=backup_settings
         network=tk.StringVar(value=c["network"]);ttk.Label(p,text="Hosted backup network").pack(anchor="w")
         ttk.Combobox(p,textvariable=network,values=("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour"),state="readonly").pack(fill="x")
@@ -551,6 +685,13 @@ def panel(arc):
         ttk.Checkbutton(p,text="Save a text journal for new microphone segments",variable=journal).pack(anchor="w")
         ttk.Checkbutton(p,text="Listen for voice commands while recording",variable=commands).pack(anchor="w")
         ttk.Label(p,text="Say Hey Recall or Total Recall for the wake chime. Say save that, keep that, remember that, or you missed one to bookmark recent audio. Say Hey Recall, start a passage before a poem or story. Say finish passage at the end, or Hey Recall, pause recording to release the mic.",wraplength=370).pack(anchor="w")
+        automatic=tk.BooleanVar(value=c["creativeCatches"])
+        ttk.Checkbutton(p,text="Keep possible creative phrases automatically",variable=automatic).pack(anchor="w")
+        ttk.Label(p,text="Offline speech cues such as “I coined a word” or “let me try that line again” save recent audio and up to five seconds after recognition. Review these in the archive.",wraplength=370).pack(anchor="w")
+        gain=tk.StringVar(value=next(label for label,value in mic_input.GAIN_CHOICES.items() if value==c["recognitionGain"]))
+        ttk.Label(p,text="Input gain for live words and voice commands").pack(anchor="w")
+        ttk.Combobox(p,textvariable=gain,values=tuple(mic_input.GAIN_CHOICES),state="readonly").pack(fill="x")
+        ttk.Label(p,text="The microphone meter and saved audio use the original level.",wraplength=370).pack(anchor="w")
         sounds=tk.StringVar(value=read(root/"sound.json",SOUND_MODES[0]))
         ttk.Label(p,text="Wake and confirmed saves").pack(anchor="w")
         ttk.Combobox(p,textvariable=sounds,values=SOUND_MODES,state="readonly").pack(fill="x")
@@ -562,6 +703,15 @@ def panel(arc):
         at_login=tk.BooleanVar(value=login.exists())
         for text,var in (("Keep panel above other windows",top),("Compact panel",compact),("Start recording and show panel when I log in",at_login)):
             ttk.Checkbutton(p,text=text,variable=var).pack(anchor="w")
+        ttk.Label(p,text="Bookmark while another app has focus").pack(anchor="w",pady=(8,1))
+        shortcut=tk.StringVar(value="line")
+        ttk.Combobox(p,textvariable=shortcut,values=("moment","line","coinage","resume"),state="readonly").pack(fill="x")
+        copy_label=tk.StringVar(value="Copy shortcut command")
+        def copy_shortcut():
+            dlg.clipboard_clear();dlg.clipboard_append("total-recall-desk keep "+shortcut.get())
+            copy_label.set("Command copied")
+        ttk.Button(p,textvariable=copy_label,command=copy_shortcut).pack(anchor="w",pady=3)
+        ttk.Label(p,text="Paste it as a custom command in Mint’s Keyboard settings and assign your preferred keys. It works while laptop recording is active.",wraplength=370).pack(anchor="w")
         p=backup_settings
         paired=bool(read(root/"pair.json",""));share=tk.BooleanVar(value=paired)
         ttk.Checkbutton(p,text="Send laptop audio, saved journals and bookmarks to my hosted archive",variable=share).pack(anchor="w",pady=4)
@@ -569,7 +719,9 @@ def panel(arc):
         ttk.Label(p,text="For hosted backup, paste the website’s Pair phone code here once. Eligible laptop recordings already on disk will also upload.",wraplength=360).pack(anchor="w")
         def save():
             try:
-                new={key:(v.get() if key=="source" else int(v.get())) for key,v in vars.items()}
+                new={key:int(v.get()) for key,v in vars.items()}
+                new.update(source=backend.get(),device=selected_device(),recognitionGain=mic_input.GAIN_CHOICES[gain.get()],creativeCatches=automatic.get())
+                mic_input.arguments(new["source"],new["device"])
                 new["journal"]=journal.get();new["commands"]=commands.get();new["prune"]=prune.get();new["network"]=network.get()
                 if share.get():
                     if entry.get().strip():write(root/"pair.json",credentials(entry.get().strip()))
@@ -701,10 +853,18 @@ def panel(arc):
         segment=(f"Segment {s.get('seconds',0)} / {cfg['seconds']} s  ·  " if ready else "")
         omit=read(root/"last-omission.json",{})
         if omit.get("at",0)>last.get("at",0):saved="Quiet block skipped · "+str(round(omit["duration"]/1000))+" s"
-        facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and cfg["commands"] else ""
-        info.set("\n".join(filter(None,(s.get("voice","") if ready else "",facts,segment+saved,read(root/"save-error.json",sync)))))
+        facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and (cfg["commands"] or cfg["creativeCatches"]) else ""
+        source=""
+        if s.get("system") and (ready or active):
+            name="Mint default" if s.get("device")=="default" else s.get("device","")
+            source=f"{s['system'].upper()} · {name}"
+            if ready and "rmsDb" in s:source+="\n"+mic_input.report(s)
+        info.set("\n".join(filter(None,(source,s.get("inputHint","") if ready else "",s.get("recognitionError","") if ready else "",s.get("voice","") if ready else "",facts,segment+saved,read(root/"save-error.json",sync)))))
         alerts=[read(root/(kind+"-limit.json"),{}).get("text","") for kind in ("capture","upload")]
         if any(alerts):info.set("\n".join(filter(None,alerts)))
+        candidate=read(root/"last-candidate.json",{})
+        if candidate and storage.now()-candidate.get("savedAt",0)<8000 and not feedback:
+            feedback="Candidate saved · "+candidate["title"]
         if feedback:info.set(feedback+"\n"+info.get())
         if ready and "stream" not in s:
             info.set(info.get()+"\nSign out and back in once to enable Poem line, Coined word and Pick up here on the updated recorder.")
@@ -715,6 +875,7 @@ def panel(arc):
         detail=next((alert for alert in alerts if alert), "")
         if not detail:detail=read(root/"save-error.json","") or feedback or (s.get("voice","") if ready else "")
         if not detail and active and not ready:detail=status
+        if not detail and ready:detail=s.get("inputHint","") or s.get("recognitionError","")
         if not detail and ready and show_words.get() and reader:detail=reader.line
         if not detail:detail=(s.get("cue") if ready else "") or ("Last · "+receipt["title"] if receipt else "No kept moments")
         compact_facts.set((f"Mic {s.get('level',0)}% · Keep {duration} · " if ready else "")+detail)

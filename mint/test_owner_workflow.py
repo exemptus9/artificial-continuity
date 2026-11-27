@@ -94,6 +94,29 @@ class OwnerWorkflow(unittest.TestCase):
             self.assertNotIn("filedWriting",result)
         self.assertEqual(result["match"]["seconds"],.5)
 
+    def test_similar_spelling_requires_source_words_and_current_filters(self):
+        uid=self.stage(True)
+        ref=dict(kind="clip",id=uid)
+        review.classify(self.arc,dict(ref,action="edit",name="Suffralchemy",writing="A word smith remembers",heard=""))
+        for word in ("suffralchmey","suffrralchemy","suffalchemy","suffralchemi"):
+            res=web.items(self.arc,"clip",word+" remembers",10,0,device="laptop",similar=True)
+            self.assertEqual(res["total"],0)
+            near=res["similar"]["items"]
+            self.assertEqual(len(near),1)
+            self.assertEqual((near[0]["id"],near[0]["similar"]["found"]),(uid,"Suffralchemy"))
+        joined=web.items(self.arc,"clip","wordsmith remembers",10,0,similar=True)["similar"]["items"]
+        self.assertEqual(joined[0]["similar"]["found"],"word smith")
+        self.assertNotIn("similar",web.items(self.arc,"clip","suffralchemy",10,0,similar=True))
+        self.assertNotIn("similar",web.items(self.arc,"clip","suffralchmey",10,0))
+        for query,device in (("suffralchmey absent","all"),("suffralchmey","other"),("unrelated","all")):
+            self.assertEqual(web.items(self.arc,"clip",query,10,0,device=device,similar=True)["similar"]["items"],[])
+        with patch.object(web,"SPELLING_LIMIT",0):
+            capped=web.items(self.arc,"clip","suffralchmey",10,0,similar=True)["similar"]
+            self.assertTrue(capped["limited"]);self.assertEqual(capped["checked"],0)
+        self.assertIsNone(web.journal_match("2026-12-12 10:03:20 -05:00  [capture status] blue clock",["clock"]))
+        stamp=web.journal_match("2026-12-12 10:03:20 -05:00  Blue clock",["clock"])
+        self.assertEqual(stamp["at"],1797087800000)
+
     def test_quiet_pruning_preserves_marks_old_spools_and_audible_frames(self):
         stamp=recall_archive.now()-4000
         for i,(prefix,peak) in enumerate((("quietcheck",4),("quietcheck",7),("mark",0),("segment",0))):

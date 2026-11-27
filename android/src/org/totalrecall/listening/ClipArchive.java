@@ -83,6 +83,7 @@ final class ClipArchive {
                 }
                 for(String key:new String[]{"transcript","title","category","reason","feedback"})text(row,key,1_000_000);
                 for(String key:new String[]{"note","correction"})if(row.has(key))text(row,key,1_000_000);
+                if(row.has("cueText"))text(row,"cueText",240);
                 if(!Arrays.asList("none","keep","skip").contains(row.getString("feedback")))throw new IOException("Unsupported feedback value");
                 archive.clips.add(row);
             }

@@ -23,7 +23,9 @@ public final class CreativeSpeechSmoke {
         try (Store store=new Store(target); OfflineSpeech asr=new OfflineSpeech(target)) {
             String verse=replay(test, store, asr, "verse", SelectiveEngine.POETRY, "rhym");
             asr.resetStream();
-            return verse + "\n" + replay(test, store, asr, "coin", SelectiveEngine.FORGE, "invented");
+            String coin=replay(test, store, asr, "coin", SelectiveEngine.FORGE, "invented");
+            asr.resetStream();
+            return verse+"\n"+coin+"\n"+replay(test, store, asr, "address", SelectiveEngine.POETRY, "you chose");
         }
     }
 
@@ -36,6 +38,10 @@ public final class CreativeSpeechSmoke {
             for (int count; (count=input.read(part))!=-1;) bytes.write(part,0,count);
             original=bytes.toByteArray();
         }
+        boolean addressed=name.equals("address");
+        Method liveAccept=OfflineSpeech.class.getDeclaredMethod("accept",short[].class,int.class,boolean.class,boolean.class);
+        Method rawFinal=OfflineSpeech.class.getDeclaredMethod("rawWords"),rawPartial=OfflineSpeech.class.getDeclaredMethod("rawPartial");
+        liveAccept.setAccessible(true);rawFinal.setAccessible(true);rawPartial.setAccessible(true);
         List<Long> saved=new ArrayList<>();
         List<String> heard=new ArrayList<>();
         Method save=Store.class.getDeclaredMethod("save",SelectiveEngine.Clip.class);
@@ -55,16 +61,19 @@ public final class CreativeSpeechSmoke {
                 int at=offset/2;
                 int count=Math.min(frame.length,(stream.length-offset)/2);
                 for(int i=0;i<count;i++)frame[i]=(short)((stream[offset++]&255)|((stream[offset++]&255)<<8));
-                String words=asr.accept(frame,count);
-                if(asr.pollCommand()!=null)throw new AssertionError("Creative fixture triggered a manual command");
+                String words=addressed?(String)liveAccept.invoke(asr,frame,count,true,false):asr.accept(frame,count);
+                String originalWords=words==null?null:(String)rawFinal.invoke(asr);
+                String command=asr.pollCommand();
+                if(!addressed && command!=null)throw new AssertionError("Creative fixture triggered a manual command");
                 if(words!=null && !words.isEmpty()){
                     heard.add(words);
-                    engine.text(words,true);
+                    engine.text(originalWords,true);
                 } else if(at>=nextPartial){
-                    nextPartial=at+SelectiveEngine.RATE/4;
+                    nextPartial=at+SelectiveEngine.RATE*14/100;
                     String partial=asr.partial();
-                    if(partial!=null && !partial.isEmpty())engine.text(partial,false);
+                    if(command==null && partial!=null && !partial.isEmpty())engine.text((String)rawPartial.invoke(asr),false);
                 }
+                if(command!=null && !command.equals(originalWords))engine.text(command,true);
                 engine.pcm(frame,count);
             }
             if(saved.size()!=1)throw new AssertionError(name+" saved "+saved.size()+" clips; heard "+heard);
@@ -81,7 +90,7 @@ public final class CreativeSpeechSmoke {
                 for(byte value:MessageDigest.getInstance("SHA-256").digest(wav))hex.append(String.format(Locale.ROOT,"%02x",value&255));
                 if(!hex.toString().equals(row.sha256))throw new AssertionError("Catalog hash mismatch");
                 if(row.transcript.isEmpty())throw new AssertionError("Missing stored transcript");
-                return "Automatic "+category+" saved and checked "+original.length+" PCM bytes against catalog WAV and SHA-256. "
+                return (addressed?"Addressed split-wake save · ":"Automatic ")+category+" saved and checked "+original.length+" PCM bytes against catalog WAV and SHA-256. "
                         +row.reason+" Heard: "+heard;
             }
             throw new AssertionError("Missing saved "+name+" row");

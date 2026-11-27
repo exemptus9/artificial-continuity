@@ -1,16 +1,19 @@
 package org.totalrecall.listening;
 
-/** Bounded gain for quiet speech. Only the dictation decoder receives the adjusted samples. */
+/** Bounded gain for quiet speech. Adjusted samples feed speech recognition only. */
 final class QuietSpeech {
     private short[] output=new short[1600];
     private double envelope,gain=1;
     void reset(){envelope=0;gain=1;}
-    short[] apply(short[] original,int count){
+    double gain(){return gain;}
+    short[] apply(short[] original,int count){return apply(original,count,12);}
+    short[] apply(short[] original,int count,double ceiling){
         if(count<=0)return original;
         int peak=0;
         for(int i=0;i<count;i++)peak=Math.max(peak,Math.abs((int)original[i]));
         envelope=Math.max(peak,envelope*Math.exp(-count/16000.0/.65));
-        double target=envelope<16?1:Math.min(12,Math.max(1,3500/envelope));
+        if(ceiling<=1){gain=1;return original;}
+        double target=envelope<(ceiling>12?8:16)?1:Math.min(ceiling,Math.max(1,3500/envelope));
         double next=target<gain?target:gain+(target-gain)*(1-Math.exp(-count/16000.0/.08));
         if(next==1 && gain==1)return original;
         if(output.length<count)output=new short[count];

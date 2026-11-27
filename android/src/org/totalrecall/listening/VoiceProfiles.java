@@ -70,6 +70,27 @@ public final class VoiceProfiles {
         if(best!=null && first>=(best.examples.size()==1?.76:.68) && first-second>=.09)return new Match(best,false);
         return new Match(null,first>=.52);
     }
+    /** Preserve the first enrollment and scarce delivery examples when the eight slots are full. */
+    static void retainExample(List<double[]> bank,double[] sample){
+        for(double[] v:bank)if(similarity(v,sample)>.995)return;
+        bank.add(sample.clone());
+        if(bank.size()<=MAX_SAMPLES)return;
+        int redundant=1;
+        double best=Double.NEGATIVE_INFINITY,secondBest=Double.NEGATIVE_INFINITY;
+        // Every endpoint of the closest pair has the same nearest score. Their next-nearest
+        // neighbor tells us which endpoint is better covered by the rest of the bank.
+        for(int i=1;i<bank.size();i++){
+            double first=-2,second=-2;
+            for(int j=0;j<bank.size();j++)if(j!=i){
+                double score=similarity(bank.get(i),bank.get(j));
+                if(score>=first){second=first;first=score;}else if(score>second)second=score;
+            }
+            if(first>best || first==best && second>=secondBest){
+                best=first;secondBest=second;redundant=i;
+            }
+        }
+        bank.remove(redundant);
+    }
     private void write(List<Profile> updated){
         JSONArray rows=new JSONArray();
         try{for(Profile p:updated){
@@ -121,8 +142,7 @@ public final class VoiceProfiles {
                 if(!next.wordings.containsKey(key) && next.wordings.size()>=48)throw new IllegalArgumentException("Forget an older voice correction before adding another.");
                 next.wordings.put(key,wording.wanted);
             }
-            if(next.examples.size()>=MAX_SAMPLES)next.examples.remove(1);
-            next.examples.add(sample.clone());all.add(next);write(all);
+            retainExample(next.examples,sample);all.add(next);write(all);
         }
     }
     void forgetWording(String id,String heard){
@@ -141,11 +161,20 @@ public final class VoiceProfiles {
     }
     private static long opened=-1;
     private static Example example;
-    static synchronized void listen(){opened=SystemClock.elapsedRealtime();example=null;}
-    static synchronized void cancel(){opened=-1;example=null;}
+    private static String attempt="";
+    static synchronized String attempt(){return attempt;}
+    static synchronized void listen(){opened=SystemClock.elapsedRealtime();example=null;attempt="";}
+    static synchronized void cancel(){opened=-1;example=null;attempt="";}
     static synchronized void offer(String words,double[] v,int frames){
         long age=SystemClock.elapsedRealtime()-opened;
-        if(opened>=0&&age<=90000&&age+200>=frames*10L&&example==null&&frames>=150&&v!=null&&words.trim().split("\\s+").length>=3)example=new Example(words,v);
+        if(opened<0 || age>90000 || example!=null || age+200<frames*10L)return;
+        int count=words.trim().isEmpty()?0:words.trim().split("\\s+").length;
+        if(count<3){attempt="Heard "+count+(count==1?" word":" words")+" · say a whole sentence, then pause.";return;}
+        if(frames<150 || v==null){
+            attempt="Heard “"+words+"” · too little clear speech to compare voices. Try one longer phrase.";
+            return;
+        }
+        attempt="";example=new Example(words,v);
     }
     static synchronized Example sample(){return example;}
 }

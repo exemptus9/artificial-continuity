@@ -122,8 +122,18 @@ public final class RecallSmoke extends Instrumentation {
             try{meta.setDataSource(m.audio.getAbsolutePath());require(Long.parseLong(meta.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION))>=8000,"Unplayable audio duration");}
             finally{meta.release();}
             MediaPlayer player=new MediaPlayer();
-            try{player.setVolume(0,0);player.setDataSource(m.audio.getAbsolutePath());player.prepare();player.start();
-                SystemClock.sleep(240);require(player.isPlaying()||player.getCurrentPosition()>0,"Player did not start");}
+            try{player.setVolume(0,0);player.setDataSource(m.audio.getAbsolutePath());player.prepare();
+                final String[] levelReceipt={""};
+                runOnMainSync(()->{
+                    Button setting=new Button(target);PlaybackLevel level=new PlaybackLevel(setting);
+                    try{
+                        level.select(1);level.attach(player);level.select(2);
+                        levelReceipt[0]=setting.getText().toString();
+                        level.select(0);require(setting.getText().toString().contains("Original"),"Playback level did not reset");
+                    }finally{level.detach();}
+                });
+                player.start();SystemClock.sleep(240);require(player.isPlaying()||player.getCurrentPosition()>0,"Player did not start");
+                passed("Session-specific playback gain: "+levelReceipt[0]+". Original restored and muted player still playable.");}
             finally{player.release();}
             passed("Android decoded the retained WAV and started muted playback.");
             store.feedback(m.id,"keep");store.edit(m.id,"Fixture title",marker+" note","corrected words");

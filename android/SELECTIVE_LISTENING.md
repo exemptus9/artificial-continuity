@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.28.1
+# Live listening on Galaxy · 0.29.0
 
-Install `TotalRecall-0.28.1.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.29.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Teach a coined word from your own line
 
@@ -28,6 +28,14 @@ On the listening screen, open **Floating controls**, grant display-over-other-ap
 - **Large.** **Save as…** opens Forge word, Poem line and Project decision. The category you tap saves up to 60 seconds of available audio. During a long session, a successful labeled save also places a bookmark with an eight-second lead-in, limited by the start of the session. **Start session**, **Mark point** and **Finish session** work on the panel. The long-session audio clock and marker count stay above the scrolling controls while a microphone interruption or a service acknowledgment takes the headline. **Open last save** shows the most recent local clip’s category, time and ID and opens its recording.
 - **Readouts.** **Live** shows a provisional recognition and **Heard** introduces completed words. Choose two, four or six visible caption lines in settings. The large panel reports input level, elapsed session time, available rewind audio, word/flag/save totals and situation cues. The extra detail setting shows the reported mic route when available, plus journal and full-audio settings, the paired archive state and the last verified receipt for that destination. **More** also shows the reason for the last clip when captions are on.
 - **Close or hide.** **×** asks before ending recording and closing the app. **Go back** keeps listening. **More → Hide** dismisses the controls. **Lock screen controls & sound** lets you check notification access or put **Mark missed** on the listening card. Android controls which actions are available on a locked phone.
+
+## Check a quiet voice or external microphone
+
+Open **More → Microphone check** on the recorder, or **More → Mic check** on the large overlay. Start listening first to see the actual input route. Plug in your mic and check whether the route changes. Speak at your usual distance. The input and room values use the same speech-band dBFS scale. A rise from −70 to −50 dBFS is a 20 dB rise above background. When they stay close together, move the microphone closer or reduce nearby noise.
+
+**Learn room noise · 2 seconds** measures the current room while you stay quiet. A sample that varies widely prompts you to try again. Relearn it after changing rooms or microphones. **Boost quiet speech for transcription** allows up to 12× decoder gain. **Extended reach for very quiet speech** raises the ceiling to 32× when the input rises above the background. The live readout shows the applied gain. Both captions and wake commands use this signal. Clips, full audio and long sessions keep the original input samples before encoding. When boost is enabled, a faint passage that remains above the room level can keep an already-selected clip open. Recognition and device routing still depend on the microphone, distance and background.
+
+For an existing quiet recording, open a clip in **Playback & trim**, or play a long session, and tap **Playback level**. Try **+6 dB** or **+12 dB**. This affects that player only. A newly opened recording starts at **Original**.
 
 ## Change apps or use voice mode
 
@@ -67,6 +75,8 @@ A completed receipt matches the original item ID, byte count and SHA-256. Moving
 
 Recall checks successive recognized lines for rhyming sounds, internal rhyme, repeated or revised lines and rhythmic phrasing. A local pronunciation dictionary helps with rhymes across spellings. Saying or spelling a new word and giving its definition helps the detector catch it. A fast or unfamiliar line can slip through. Use the keep command while the words you want are still in the buffer, and use the saved audio to correct the transcript.
 
+When you deliberately save a **Forge word**, **Poem line** or **Project decision**, the phone uses the most recent recognized phrase within 12 seconds of your marker as an example for future suggestions. The saved clip still includes the surrounding audio and available words. If there is no nearby phrase, the label still files the clip. Unreviewed automatic suggestions and older labeled saves with unknown marker wording supply no new examples. Choose **Worth keeping** or **Less like this** to give explicit feedback. The phone keeps this learning local.
+
 In **More → Capture sensitivity**, choose how readily Recall saves a candidate. **Worth keeping** and **Less like this** on a saved moment adjust future decisions. **Review today** opens recent clips. **More → Open phone vault** returns to the original capture and control screens.
 
 ## Earlier Mint clip connections
@@ -83,7 +93,7 @@ Automatic backup follows the paired destination, selected content, network, powe
 
 While the microphone is receiving audio, open **Live now → Remember voices → Teach my voice**. Speak a sentence on your own and pause. Check the speaker and edit **What I actually said** before you use the sample. Add two more samples from your usual microphone positions. The phone stores a speaker embedding and the short wording correction you confirmed. The wording applies to future finalized lines matched to **Me** while context correction is on. **My voice corrections** lets you forget individual entries.
 
-Under **Capture choices**, choose **Learn room noise · 2 seconds** while only the background is audible. The live English decoder uses the resulting filter. Capture keeps the original audio. Learn again after a pause or a microphone change, or turn off reduction at any time.
+Under **Microphone check**, choose **Learn room noise · 2 seconds** while only the background is audible. The live English decoder uses the resulting filter. Capture keeps the original audio. Learn again after a pause or a microphone change, or turn off reduction at any time.
 
 The expanded overlay shows **Now** and **Last**. These are interpretations of recent words and voice activity. After 45 seconds without a fresh cue the latest one moves to **Last**. Open **Live & saved** to inspect the source wording.
 

@@ -301,7 +301,7 @@ public final class RecallService extends Service {
                 remember();take.words(speech.rawWords());LiveCapture.attributed(words,speech.lastVoice());
                 Situation.updateLive(RecallService.this,words,speech.isMedia());
                 journal.append(session,epoch,words,false,speech.lastVoice(),speech.rawWords());
-                engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
+                engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()),words);
             }
             speech.newUtterance();LiveCapture.words("",false);
         }
@@ -320,17 +320,17 @@ public final class RecallService extends Service {
             if(start)take.begin();else saveTake();
             noticeSoon();
         }
-        boolean reduceRoom,liftQuiet,skipMedia,deferUntilSpeaker;
-        long epoch=-1,session=-1,nextPartial,nextFeedback,nextPrune,nextSensitivity;
+        boolean reduceRoom,liftQuiet,skipMedia,deferUntilSpeaker,learnFromSaves;
+        long epoch=-1,session=-1,nextPartial,feedbackRevision=-1,nextPrune,nextSensitivity;
         Window(Store s,JournalStore j,OfflineSpeech asr,SelectiveEngine.Listener l){
             store=s;journal=j;speech=asr;listener=l;
         }
         void begin(String route,String resumeNote){
-            engine=new SelectiveEngine(listener);applyFeedback(engine,store);
+            engine=new SelectiveEngine(listener);feedbackRevision=-1;
             epoch=JournalStore.epoch(RecallService.this);
             session=JournalStore.enabled(RecallService.this)?journal.begin(epoch):-1;
             if(session>=0&&!resumeNote.isEmpty())journal.markResumed(session,resumeNote);
-            nextPartial=0;nextSensitivity=0;nextFeedback=SystemClock.elapsedRealtime()+15000;
+            nextPartial=0;nextSensitivity=0;
             nextPrune=SystemClock.elapsedRealtime()+3600000;
             capturing=true;LiveCapture.resume("Listening · "+route);LiveCapture.voiceSession(session,speech.groupsReady());progress("Listening · "+route);
         }
@@ -347,17 +347,22 @@ public final class RecallService extends Service {
                 // A decoder can span an opt-in boundary. Finish and reset it before a fresh
                 // journal epoch, so previously overheard speech never enters the new journal.
                 String before=speech.finish();
-                if(before!=null){take.words(speech.rawWords());LiveCapture.attributed(before,speech.lastVoice());engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));}
+                if(before!=null){take.words(speech.rawWords());LiveCapture.attributed(before,speech.lastVoice());engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()),before);}
                 speech.resetStream();
                 journal.finish(session,"Journal setting changed");epoch=latest;
                 session=JournalStore.enabled(RecallService.this)?journal.begin(epoch):-1;
                 LiveCapture.resume(current);LiveCapture.voiceSession(session,speech.groupsReady());
                 if(stopping.get())return;
             }
-            if(clock>=nextFeedback){applyFeedback(engine,store);nextFeedback=clock+15000;}
             if(clock>=nextSensitivity){
+                long revision=Store.feedbackRevision();
+                boolean learn=getSharedPreferences("recall-detector",MODE_PRIVATE).getBoolean("learnFromSaves",true);
+                if(revision!=feedbackRevision || learn!=learnFromSaves){
+                    applyFeedback(engine,store,learn);feedbackRevision=revision;learnFromSaves=learn;
+                }
                 reduceRoom=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false);
                 liftQuiet=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("liftQuiet",true);
+                speech.extendedReach=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("extendedReach",false);
                 skipMedia=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("skipMedia",true);
                 deferUntilSpeaker=skipMedia && speech.groupsReady() && speech.hasMediaProfiles();
                 engine.setSensitivity(getSharedPreferences("recall-detector",MODE_PRIVATE).getInt("sensitivity",0));
@@ -376,11 +381,11 @@ public final class RecallService extends Service {
                 LiveCapture.words(partial,false);
                 if(command==null && partial!=null)engine.text(speech.rawPartial(),false,!deferUntilSpeaker);
             }
-            if(utterance!=null)engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
+            if(utterance!=null)engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()),utterance);
             if(command!=null && (utterance==null || !command.equals(speech.rawWords())) && !stopping.get())engine.text(command,true);
             if(take.add(data,count))takeAction(false);
             if(!stopping.get()){
-                engine.pcm(data,count);LiveCapture.buffered(engine.bufferedSeconds());
+                engine.pcm(data,count,liftQuiet && speech.faintActivity());LiveCapture.buffered(engine.bufferedSeconds());
             }
         }
         void end(boolean gap,String reason){
@@ -394,7 +399,7 @@ public final class RecallService extends Service {
                     String finalWords=speech.finish();
                     if(finalWords!=null){
                         remember();take.words(speech.rawWords());journal.append(session,epoch,finalWords,false,speech.lastVoice(),speech.rawWords());
-                        if(gap && !stopping.get())engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
+                        if(gap && !stopping.get())engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()),finalWords);
                     }else if(partial!=null){take.words(rawPartial);journal.append(session,epoch,partial,true,0,rawPartial);}
                     if(take.active())saveTake();
                     if((gap && !stopping.get()) || (userPaused && engine.passageOpen()) || (ending && engine.isSelecting()))engine.finish();
@@ -459,7 +464,7 @@ public final class RecallService extends Service {
                     Window window=new Window(store,journal,speech,listener);
                     short[] frame=new short[1600];MicrophoneContinuity continuity=new MicrophoneContinuity();
                     long priorPause=pausedAt(app);
-                    long retry=500,zeroSince=0;boolean selecting=false;String route="",resumeNote="";
+                    long retry=500,zeroSince=0;boolean selecting=false;String route="",resumeNote="";int routedId=-1;
                     try {
                         while(stillArmed()){
                             if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
@@ -536,9 +541,15 @@ public final class RecallService extends Service {
                             sessionAudio.accept(frame,count);
                             if(wasLong && LongRecording.active.isEmpty()){if(longOnly)command(this,USER_PAUSE);LiveCapture.feedback(LongRecording.message);noticeSoon();}
                             archive.accept(frame,count);
-                            String next=route(rec);inputRoute=next;
+                            AudioDeviceInfo device=rec.getRoutedDevice();
+                            String next=route(device);int nextId=device==null?-1:device.getId();inputRoute=next;
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
-                            else if(!next.equals(route)){speech.clearRoom();store.gap("Input changed from "+route+" to "+next);route=next;progress("Listening · "+route);}
+                            else if(nextId!=routedId || !next.equals(route)){
+                                speech.clearRoom();
+                                store.gap(next.equals(route)?"Input device changed · "+next:"Input changed from "+route+" to "+next);
+                                route=next;progress("Listening · "+route);
+                            }
+                            routedId=nextId;
                             window.tick(frame,count);
                             if(stopping.get())break;
                             String action;
@@ -600,28 +611,24 @@ public final class RecallService extends Service {
         if(text==null||text.trim().isEmpty())return e.getClass().getSimpleName();
         return text.length()>180?text.substring(0,180):text;
     }
-    private static void applyFeedback(SelectiveEngine engine,Store store){
-        Map<String,Integer> weights=store.weights();
+    private static void applyFeedback(SelectiveEngine engine,Store store,boolean learn){
+        Map<String,Integer> weights=learn?store.weights():java.util.Collections.emptyMap();
         for(String key:new String[]{SelectiveEngine.FORGE,SelectiveEngine.POETRY,SelectiveEngine.DECISION,SelectiveEngine.CONNECTION}){
             int net=0;
             for(Map.Entry<String,Integer> vote:weights.entrySet())if(vote.getKey().contains(key))net+=vote.getValue();
             engine.setFeedback(key,net);
         }
-        engine.setExamples(store.examples());
+        engine.setExamples(learn?store.examples():java.util.Collections.emptyList());
     }
-    private static String route(AudioRecord recorder){
-        if(Build.VERSION.SDK_INT>=24){
-            AudioDeviceInfo device=recorder.getRoutedDevice();
-            if(device!=null){
-                switch(device.getType()){
-                    case AudioDeviceInfo.TYPE_BUILTIN_MIC:return "phone microphone";
-                    case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:return "Bluetooth microphone";
-                    case AudioDeviceInfo.TYPE_USB_DEVICE:case AudioDeviceInfo.TYPE_USB_HEADSET:return "USB microphone";
-                    case AudioDeviceInfo.TYPE_WIRED_HEADSET:return "headset microphone";
-                    default:return "audio input "+device.getType();
-                }
-            }
-        }return "input route unreported";
+    private static String route(AudioDeviceInfo device){
+        if(device==null)return "input route unreported";
+        switch(device.getType()){
+            case AudioDeviceInfo.TYPE_BUILTIN_MIC:return "phone microphone";
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:case AudioDeviceInfo.TYPE_BLE_HEADSET:return "Bluetooth microphone";
+            case AudioDeviceInfo.TYPE_USB_DEVICE:case AudioDeviceInfo.TYPE_USB_ACCESSORY:case AudioDeviceInfo.TYPE_USB_HEADSET:return "USB microphone";
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:return "headset microphone";
+            default:return "audio input "+device.getType();
+        }
     }
     @Override public void onDestroy(){
         noticeHandler.removeCallbacksAndMessages(null);destroyed=true;if(cues!=null){cues.finishPending();cues=null;}stopping.set(true);LiveCapture.stop("Paused");RecallOverlay.afterService(this);

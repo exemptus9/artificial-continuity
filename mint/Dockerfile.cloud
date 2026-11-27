@@ -6,6 +6,6 @@ COPY requirements-cloud.txt .
 RUN pip install --no-cache-dir -r requirements-cloud.txt
 COPY recall_archive.py recall_desk.py recall_web.py situation.py speech_context.py cloud_host.py early_access.py cloud_media.py archive_backup.py recall_review.py ./
 COPY web ./web
-COPY laptop_capture.py live_words.py build_deb.sh total-recall-desk.desktop README.md CLOUD.md CLOUD_RECOVERY.md ./
+COPY laptop_capture.py mic_input.py live_words.py build_deb.sh total-recall-desk.desktop README.md CLOUD.md CLOUD_RECOVERY.md ./
 RUN sh build_deb.sh
 CMD ["python", "cloud_host.py"]

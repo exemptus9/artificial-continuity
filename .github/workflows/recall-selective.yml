@@ -56,7 +56,7 @@ jobs:
           mkdir -p device-tests/build/receipts
           "$ANDROID_HOME/platform-tools/adb" start-server
           nohup "$ANDROID_HOME/emulator/emulator" -avd recall-synthetic -port 5554 -accel on -gpu swiftshader -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -camera-front none > device-tests/build/receipts/emulator.log 2>&1 < /dev/null &
-      - name: Build retained 0.11.0, current app and acceptance tools with the same disposable CI key
+      - name: Build retained upgrade fixtures, current app and acceptance tools with the same disposable CI key
         run: |
           set -euo pipefail
           export ANDROID_SDK_ROOT="$ANDROID_HOME" RECALL_KEYSTORE="$RUNNER_TEMP/recall-ci.p12"
@@ -66,14 +66,22 @@ jobs:
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass:env RECALL_KEY_PASSWORD -keypass:env RECALL_KEY_PASSWORD -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Recall Device Test'
           bash android/build.sh
           bash device-tests/build.sh
-          prior="$RUNNER_TEMP/recall-0.11.0"
-          git fetch --no-tags --depth 1 origin 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
-          git worktree add --detach "$prior" 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
-          # The old build script independently revalidates the same speech dependencies.
-          mkdir -p "$prior/android/build" "$prior/android/assets/offline-speech"
-          cp -a android/build/speech "$prior/android/build/"
-          cp android/assets/offline-speech/vosk-model-small-en-us-0.15.zip "$prior/android/assets/offline-speech/"
-          bash "$prior/android/build.sh"
+          build_prior() {
+            local version=$1 revision=$2 prior="$RUNNER_TEMP/recall-$1"
+            git fetch --no-tags --depth 1 origin "$revision"
+            git worktree add --detach "$prior" "$revision"
+            # The old build scripts independently revalidate the cached speech dependencies.
+            mkdir -p "$prior/android/build" "$prior/android/assets/offline-speech"
+            cp -a android/build/speech "$prior/android/build/"
+            if [[ "$version" == 0.11.0 ]]; then
+              cp android/assets/offline-speech/vosk-model-small-en-us-0.15.zip "$prior/android/assets/offline-speech/"
+            else
+              cp -a android/assets/offline-speech/. "$prior/android/assets/offline-speech/"
+            fi
+            bash "$prior/android/build.sh"
+          }
+          build_prior 0.11.0 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
+          build_prior 0.28.1 d84cf4d24f8ae22d130ae7f891c842ca2f36d8ec
           rm -f "$RECALL_KEYSTORE"
       - name: Verify in-place upgrade and exercise current Android app
         run: |
@@ -84,6 +92,9 @@ jobs:
           "$adb" shell input keyevent 82
           current_apk="$(python3 -c 'import json; print("android/build/TotalRecall-"+json.load(open("android/build/build-receipt.json"))["version"]+".apk")')"
           timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.11.0/android/build/TotalRecall-0.11.0.apk" "$PWD/$current_apk"
+          # The first probe required a clean emulator and has verified and removed its synthetic fixture.
+          "$adb" uninstall org.continuity.recall.test
+          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.28.1/android/build/TotalRecall-0.28.1.apk" "$PWD/$current_apk" 30
           timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
       - name: Exercise codec, pinned transfer and browser against the packaged Mint app
         run: |

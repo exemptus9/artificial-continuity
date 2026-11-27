@@ -9,8 +9,10 @@ import org.json.*;
 
 /** Local spelling choices. Each generic edit needs a matching phrase around the replaced word. */
 final class SpeechContext {
-    private static final Pattern LITERAL = Pattern.compile("\\b(?:spell(?:ed|ing)?|homophone|pun intended|rhymes? with|play on words|wordplay|the word|put in quotes|quote unquote)\\b",Pattern.CASE_INSENSITIVE);
-    static boolean literal(String words){return LITERAL.matcher(words).find();}
+    private static final Pattern VERBATIM=Pattern.compile("\\b(?:spell(?:ed|ing)?|homophones?|pun intended|rhymes? with|play on words|wordplay|in quotes|quote(?: unquote)?|end quote)\\b|[“”\"]",Pattern.CASE_INSENSITIVE);
+    private static final Pattern MENTION=Pattern.compile("\\bthe word\\b",Pattern.CASE_INSENSITIVE);
+    private static final Pattern NAMED=Pattern.compile("\\bthe word(?: is)?\\s+$",Pattern.CASE_INSENSITIVE);
+    static boolean literal(String words){return VERBATIM.matcher(words).find()||MENTION.matcher(words).find();}
     static final class Rule {
         final Pattern when;
         final String replacement;
@@ -37,7 +39,7 @@ final class SpeechContext {
     }
     private static final Pattern QUESTION=Pattern.compile("^(?:(?:how|where|when|why|what) (?:do|does|did|is|are|can|could|will|would|should)|(?:can|could|would|will|did|do|should) (?:you|we|i))\\b",Pattern.CASE_INSENSITIVE);
     static String reading(String words){
-        if(words.length()<4||words.indexOf(' ')<0||LITERAL.matcher(words).find())return words;
+        if(words.length()<4||words.indexOf(' ')<0||literal(words))return words;
         String result=Character.toUpperCase(words.charAt(0))+words.substring(1);
         if(QUESTION.matcher(words).find() && Character.isLetterOrDigit(words.charAt(words.length()-1)))return result+"?";
         return result;
@@ -80,12 +82,16 @@ final class SpeechContext {
     static String correct(String previous,String words,List<Rule> rules,List<Rule> personal){
         String prefix=previous.isEmpty()?"":previous+" ";
         String input=prefix+words;
-        if(LITERAL.matcher(input).find())return words;
+        if(VERBATIM.matcher(input).find())return words;
         // Collect non-overlapping edits against untouched input. A personal spelling wins
         // over a stock rule; inserting a word can never start a chain of substitutions.
         TreeMap<Integer,Edit> edits=new TreeMap<>();
         collect(input,prefix.length(),personal,edits);
-        collect(input,prefix.length(),rules,edits);
+        if(MENTION.matcher(input).find()){
+            // In a naming sentence, only the explicitly taught phrase immediately after
+            // "the word" may change. Stock spelling rules remain disabled across the line.
+            edits.entrySet().removeIf(e->!NAMED.matcher(input).region(0,e.getKey()).find());
+        }else collect(input,prefix.length(),rules,edits);
         if(edits.isEmpty())return words;
         StringBuilder result=new StringBuilder(input);
         for(Map.Entry<Integer,Edit> item:edits.descendingMap().entrySet())result.replace(item.getKey(),item.getValue().end,item.getValue().value);

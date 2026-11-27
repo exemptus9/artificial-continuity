@@ -312,6 +312,7 @@ public final class RecallListenActivity extends Activity {
         PopupMenu menu=new PopupMenu(this,anchor);
         String[] options={"Missed one","How listening works","Coverage gaps","Export all clips","Restore ZIP","Connect to Mint","Open phone vault","Capture sensitivity"};
         for(int i=0;i<options.length;i++)menu.getMenu().add(0,i,i==7?1:(i==0?0:i+1),options[i]);
+        menu.getMenu().add(0,12,2,"Microphone check");
         android.view.SubMenu labeled=menu.getMenu().addSubMenu(0,8,1,"Save recent audio as…");
         String[] kinds={SelectiveEngine.FORGE,SelectiveEngine.POETRY,SelectiveEngine.DECISION};
         for(int i=0;i<kinds.length;i++)labeled.add(0,9+i,i,kinds[i]);
@@ -331,6 +332,7 @@ public final class RecallListenActivity extends Activity {
             case 6: startActivity(new Intent(this,org.continuity.recall.MainActivity.class)
                         .setAction("org.totalrecall.action.OPEN_VAULT").addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));break;
             case 7: sensitivity();break;
+            case 12: startActivity(new Intent(this,CaptureReviewActivity.class).putExtra("micCheck",true));break;
             case 9: command(RecallService.KEEP_WORD);break;
             case 10: command(RecallService.KEEP_LINE);break;
             case 11: command(RecallService.KEEP_DECISION);break;
@@ -344,7 +346,12 @@ public final class RecallListenActivity extends Activity {
             .setSingleChoiceItems(choices,selected,(d,which)->{
                 prefs.edit().putInt("sensitivity",which-1).apply();d.dismiss();
                 Toast.makeText(this,"Capture sensitivity · "+choices[which],Toast.LENGTH_SHORT).show();
-            }).setNegativeButton("Cancel",null).show();
+            }).setNeutralButton(prefs.getBoolean("learnFromSaves",true)?"Learning is on":"Learning is off",(d,w)->
+                new AlertDialog.Builder(this).setTitle("Learn from my saves")
+                    .setMessage("Use words from your labeled saves and Keep or Skip feedback to recognize similar moments on this phone. You can change this anytime.")
+                    .setPositiveButton("Use my feedback",(a,b)->prefs.edit().putBoolean("learnFromSaves",true).apply())
+                    .setNegativeButton("Turn learning off",(a,b)->prefs.edit().putBoolean("learnFromSaves",false).apply())
+                    .show()).setNegativeButton("Close",null).show();
     }
     private void updateText(TextView target,String value){if(!TextUtils.equals(target.getText(),value))target.setText(value);}
     private void paintLive(){

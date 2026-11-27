@@ -93,6 +93,10 @@ def fields(obj):
     for key in ("transcript","category","reason"):
         if not isinstance(obj.get(key),str):
             raise Issue("Clip is missing its "+key+".")
+    if "cueText" in obj:
+        cue=obj["cueText"]
+        if not isinstance(cue,str) or len(cue.encode("utf-16-le",errors="surrogatepass"))//2>240:
+            raise Issue("Invalid saved marker wording.")
     stamp = obj.get("startedAtMillis")
     # Covers through 9999-12-30 UTC, including supported local timezone offsets.
     if type(stamp) is not int or not 0 < stamp <= 253402128000000:
@@ -195,13 +199,19 @@ def _import_zip(path,require_one,arc,reserved):
                 old=db.execute("SELECT sha,started,metadata,rowid,length(audio) FROM clips WHERE id=?",(uid,)).fetchone()
                 if old and old[:2]!=(digest,clip["startedAtMillis"]):
                     raise Issue("Existing capture ID has different original audio or timestamp. Import rolled back.")
+                effective=metadata
                 if old:
                     prior_meta=json.loads(old[2])
                     if tuple(prior_meta.get(k) for k in ("parentId","startSample","endSample"))!=provenance:
                         raise Issue("The excerpt's original source or sample range has changed.")
+                    if "cueText" in prior_meta:
+                        if "cueText" in clip and clip["cueText"]!=prior_meta["cueText"]:
+                            raise Issue("The saved marker wording differs for the same original.")
+                        if "cueText" not in clip:
+                            effective=json.dumps(dict(clip,cueText=prior_meta["cueText"]),ensure_ascii=False,sort_keys=True,separators=(",",":"),allow_nan=False)
                 changed=db.execute("INSERT OR IGNORE INTO observations VALUES(?,?,?)",(uid,metadata,stamp)).rowcount
                 values=(str(clip.get("title") or clip["category"]),clip["transcript"],clip["category"],
-                        clip["reason"],metadata,str(clip.get("feedback","")))
+                        clip["reason"],effective,str(clip.get("feedback","")))
                 if not old:
                     cursor=db.execute("""INSERT INTO clips VALUES(?,?,?,?,?,zeroblob(?),?,?,?,?,?,?)""",
                                       (uid,clip["startedAtMillis"],clip["durationMs"],frames,digest,entry.file_size,*values))
@@ -580,7 +590,7 @@ def install_runtime():
     if MODULES!=ROOT:
         known=json.loads(modules_receipt.read_text()) if modules_receipt.exists() else {}
         pending={};accepted={}
-        for name in ("recall_archive.py","recall_web.py","situation.py","recall_review.py","laptop_capture.py","live_words.py","speech_context.py","archive_backup.py","web/situation-rules.tsv","web/speech-context.tsv","web/index.html","web/app.css","web/app.js"):
+        for name in ("recall_archive.py","recall_web.py","situation.py","recall_review.py","laptop_capture.py","mic_input.py","live_words.py","speech_context.py","archive_backup.py","web/situation-rules.tsv","web/speech-context.tsv","web/index.html","web/app.css","web/app.js"):
             origin=MODULES/name;dest=ROOT/name
             if not origin.is_file():continue
             if dest.is_symlink() or dest.parent.is_symlink():raise Issue("The connector module path is a symbolic link.")
@@ -976,6 +986,8 @@ def main():
     commands=parser.add_subparsers(dest="mode")
     commands.add_parser("desk").add_argument("--receive-at",metavar="PRIVATE_IPV4")
     for name in ("laptop-panel","laptop-worker","laptop-login"):commands.add_parser(name)
+    quick=commands.add_parser("keep",help="Bookmark recent audio from the running laptop recorder")
+    quick.add_argument("kind",nargs="?",choices=("moment","line","coinage","resume"),default="moment")
     commands.add_parser("serve")
     server=commands.add_parser("host",help="Run the private upload receiver and local archive website without a desktop")
     server.add_argument("--bind",required=True);server.add_argument("--advertise")
@@ -997,6 +1009,16 @@ def main():
     commands.add_parser("play").add_argument("id")
     args=parser.parse_args()
     if args.mode in (None,"desk"): return desktop(getattr(args,"receive_at",None))
+    if args.mode=="keep":
+        import laptop_capture
+        capture_root=ROOT/"laptop-recorder"
+        kind="mark" if args.kind=="moment" else args.kind
+        try:
+            laptop_capture.request_keep(capture_root,kind)
+        except (ValueError,OSError) as exc:
+            raise Issue(str(exc)) from None
+        print("Keep requested · "+laptop_capture.KEEP_TYPES[kind][0])
+        return
     if args.mode in ("laptop-panel","laptop-worker","laptop-login"):
         import laptop_capture
         arc=archive()

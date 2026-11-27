@@ -132,6 +132,7 @@ public final class LongSessionsActivity extends Activity {
         final SeekBar seek;
         final TextView position;
         final Button toggle;
+        final PlaybackLevel playbackLevel;
         MediaPlayer audio;
         Future<?> seeking;
         long from;
@@ -156,6 +157,7 @@ public final class LongSessionsActivity extends Activity {
             ahead.setContentDescription("Go forward ten seconds");
             for(int i=0;i<transport.getChildCount();i++)
                 transport.getChildAt(i).setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
+            Button level=new Button(LongSessionsActivity.this);body.addView(level);playbackLevel=new PlaybackLevel(level);
             seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
                 public void onStartTrackingTouch(SeekBar view){dragging=true;}
                 public void onProgressChanged(SeekBar view,int progress,boolean user){
@@ -179,6 +181,7 @@ public final class LongSessionsActivity extends Activity {
         void release(){
             ready=false;
             if(seeking!=null){seeking.cancel(true);seeking=null;}
+            playbackLevel.detach();
             if(audio!=null){audio.release();audio=null;}
         }
         long current(){
@@ -213,7 +216,7 @@ public final class LongSessionsActivity extends Activity {
                 p.setOnPreparedListener(v->{
                     if(!valid(request) || audio!=v)return;
                     if(RecallService.isListening()){failed("Playback stopped · microphone active");return;}
-                    ready=true;
+                    ready=true;playbackLevel.attach(v);
                     if(playing)startAudio();
                     refresh();
                 });

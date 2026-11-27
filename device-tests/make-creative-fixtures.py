@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the two anonymous test performances with FFmpeg/Flite, mono 16 kHz PCM."""
+"""Generate anonymous speech fixtures with FFmpeg/Flite, mono 16 kHz PCM."""
 import gzip
 from pathlib import Path
 import subprocess
@@ -9,6 +9,7 @@ ASSETS = Path(__file__).resolve().parent / 'assets'
 SCRIPTS = {
     'verse': ['I carry a spark into the night', 'I open my hands to catch the light',
               'I follow the birds into their flight', 'I paint the sky in black and white'],
+    'address': ['The editor said keep that word for the next page.', 'Hey Recall.', 'Save that line.'],
     'coin': ['I call it glimbershine.', 'That is a word I made up for the light that stays after dark.'],
 }
 

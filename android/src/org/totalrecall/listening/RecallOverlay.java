@@ -337,6 +337,7 @@ public final class RecallOverlay {
                 if(toolsOpen || prefs.getBoolean("fullDetail",true)){
                     String route=ready?RecallService.activeInputRoute():"";
                     if(!route.isEmpty())diagnostics+="\nMic · "+route;
+                    if(ready && !LiveCapture.micSignal.isEmpty())diagnostics+="\n"+LiveCapture.micSignal;
                     if(clipped)diagnostics+=" · Clipping";
                     long now=SystemClock.elapsedRealtime();
                     if(now>=nextBackupCheck){
@@ -557,6 +558,10 @@ public final class RecallOverlay {
                 control(nav,"Voices","Teach or manage remembered voices",v->openScreen(VoiceProfilesActivity.class,false));
                 control(nav,"Journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
                 control(nav,"Recorder","Open the main listening screen",v->openApp(false));
+                if(!preview)control(sizes,"Mic check","Inspect the microphone and adjust quiet speech",v->{
+                    try{app.startActivity(new Intent(app,CaptureReviewActivity.class).putExtra("micCheck",true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));}
+                    catch(RuntimeException e){Toast.makeText(app,"Could not open microphone check",Toast.LENGTH_SHORT).show();}
+                });
                 control(sizes,"Hide","Dismiss the overlay and keep the current microphone state",v->stop());
                 if(!preview){
                     LinearLayout extra=row(body);

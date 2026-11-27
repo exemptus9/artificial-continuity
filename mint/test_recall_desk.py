@@ -57,6 +57,25 @@ class TestCaptureDesk(unittest.TestCase):
         self.assertEqual(desk.query()[0]["feedback"],"1")
         with sqlite3.connect(desk.DB) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM observations").fetchone()[0],2)
+    def test_marker_wording_is_immutable_across_old_and_new_exports(self):
+        original=dict(self.clip,category="Poem line",cueText="copper flickers purple")
+        old=dict(original);del old["cueText"]
+        desk.import_zip(self.path((old,self.audio)))
+        desk.import_zip(self.path((original,self.audio)))
+        legacy_edit=dict(old,note="Later note")
+        desk.import_zip(self.path((legacy_edit,self.audio)))
+        with sqlite3.connect(desk.DB) as db:
+            stored,body=db.execute("SELECT metadata,audio FROM clips").fetchone()
+            self.assertEqual(json.loads(stored)["cueText"],original["cueText"])
+            self.assertEqual(json.loads(stored)["note"],"Later note")
+            self.assertEqual(body,self.audio)
+            self.assertTrue(any("cueText" not in json.loads(row[0]) for row in db.execute("SELECT metadata FROM observations")))
+        for cue in ["different passage",None,"x"*241]:
+            with self.assertRaises(desk.Issue):
+                desk.import_zip(self.path((dict(original,cueText=cue),self.audio)))
+        with sqlite3.connect(desk.DB) as db:
+            self.assertEqual(json.loads(db.execute("SELECT metadata FROM clips").fetchone()[0])["cueText"],original["cueText"])
+
     def test_atomic_import_and_conflicts(self):
         other=record("capture-2",self.audio)
         with self.assertRaises(desk.Issue):

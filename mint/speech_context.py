@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 import re
 
-LITERAL = re.compile(r"\b(?:spell(?:ed|ing)?|homophone|pun intended|rhymes? with|play on words|wordplay|the word|put in quotes|quote unquote)\b",re.I)
+LITERAL = re.compile(r'\b(?:spell(?:ed|ing)?|homophones?|pun intended|rhymes? with|play on words|wordplay|the word|in quotes|quote(?: unquote)?|end quote)\b|[“”"]',re.I)
 
 @lru_cache(maxsize=1)
 def rules():

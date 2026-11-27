@@ -18,6 +18,8 @@ class ContextualSpellingTest(unittest.TestCase):
             "she breaks the silence":"she breaks the silence",
             "because their trying to help":"because they're trying to help",
             "their going away worried me":"their going away worried me",
+            "the word peace of paper appears twice":"the word peace of paper appears twice",
+            "quote please read the poem allowed end quote":"quote please read the poem allowed end quote",
             "the word peace of paper is wordplay":"the word peace of paper is wordplay",
             "could you read my poem allowed and right it down":"could you read my poem aloud and write it down",
         }

@@ -201,6 +201,37 @@ public class CaptureControls28Test {
             assertEquals(LongRecording.time(s.sessionSeconds*1000)+" · ↶"+i+"s",value(part("status")));
         }
     }
+    @Test public void micCheckShowsLiveMeasurementsAndDoesNotChangeCaptureChoices() throws Exception {
+        android.content.SharedPreferences speech=app.getSharedPreferences("recall-speech",0);
+        boolean journal=JournalStore.enabled(app),archive=ArchiveStore.enabled(app),sync=ArchiveSync.auto(app);
+        ReflectionHelpers.setStaticField(RecallService.class,"running",true);
+        ReflectionHelpers.setStaticField(RecallService.class,"inputRoute","USB fixture");
+        ActivityController<CaptureReviewActivity> controller=Robolectric.buildActivity(CaptureReviewActivity.class,
+                new Intent(app,CaptureReviewActivity.class).putExtra("micCheck",true)).setup();
+        try{
+            CaptureReviewActivity a=controller.get();
+            View root=a.getWindow().getDecorView();
+            assertNotNull(find(root,"Microphone check"));
+            android.widget.Switch boost=(android.widget.Switch)find(root,"Boost quiet speech for transcription");
+            android.widget.Switch reach=(android.widget.Switch)find(root,"Extended reach for very quiet speech");
+            assertTrue(boost.isChecked());assertFalse(reach.isChecked());
+            assertFalse(speech.contains("extendedReach"));
+            LiveCapture.micSignal="Input −32 dBFS · Estimated room −60 dBFS · Decoder 1.0×";
+            ready();invoke(a,"paintLive");
+            String current=value(field(a,"micCheck",TextView.class));
+            assertTrue(current,current.contains("USB fixture") && current.contains("−32 dBFS"));
+            LiveCapture.waitFor("Mic occupied");invoke(a,"paintLive");
+            current=value(field(a,"micCheck",TextView.class));
+            assertTrue(current,current.contains("Waiting"));
+            assertFalse(current.contains("USB fixture") || current.contains("dBFS"));
+            reach.performClick();assertTrue(speech.getBoolean("extendedReach",false));
+            boost.performClick();assertFalse(reach.isEnabled());
+            assertEquals(journal,JournalStore.enabled(app));assertEquals(archive,ArchiveStore.enabled(app));assertEquals(sync,ArchiveSync.auto(app));
+        }finally{
+            ReflectionHelpers.setStaticField(RecallService.class,"inputRoute","");
+            controller.pause().stop().destroy();
+        }
+    }
     @Test public void miniHoldUsesPersistedChoiceAndActualRewindSeconds() throws Exception {
         RecallOverlay.options(app).edit().putInt("holdSave",2).commit();
         openOverlay(true,false);

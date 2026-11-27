@@ -225,10 +225,35 @@ function itemRow(item){
   const instant=state.view==='archive'?localInstants(state.date,state.clock)[state.fold]:null;
   const covers=item.kind!=='journal'&&instant>=item.startedAtMillis&&instant<item.startedAtMillis+item.durationMs;
   const target=timed?{at:item.startedAtMillis+item.match.seconds*1000,match:item.match}:covers?{at:instant,clock:true}:{};
+  if(item.kind==='journal'&&item.similar)target.reader={query:item.match.field==='Transcript'?item.similar.found:''};
   const row=button('',()=>openItem(item,target),'row');row.dataset.itemId=item.id;row.dataset.kind=item.kind;
   const when=item.startedAtMillis?dateTime(item.startedAtMillis):'Time unavailable';const tag=item.category||kindName(item.kind);
   add(row,add(e('span',`row-icon ${item.kind}`),icon(KINDS[item.kind]?item.kind:'archive')),add(e('span','row-main'),e('span','row-title',item.title||tag),e('span','row-sub',`${tag} · ${when}`)),
-    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));if(item.match)row.querySelector('.row-main').append(e('span','match-preview',[item.match.field,item.match.stamp,item.match.text].filter(Boolean).join(' · ')));return row;}
+    e('span','time',item.kind==='journal'? 'Text':duration(item.durationMs)),icon('right','chev'));if(item.match){
+    const main=row.querySelector('.row-main');
+    if(item.similar)main.append(e('span','match-preview','You typed “'+item.similar.typed+'” · saved as “'+item.similar.found+'”'));
+    main.append(e('span','match-preview',[item.match.field,item.match.stamp,item.match.text].filter(Boolean).join(' · ')));
+  }
+  if(item.kind!=='journal'||!Number.isFinite(item.match?.at))return row;
+  const at=item.match.at;
+  const container=e('div','journal-result'),actions=e('div','result-audio'),status=e('span','section-note');
+  status.setAttribute('role','status');
+  const cue=button('Find audio at '+dateFmt(at,{hour:'numeric',minute:'2-digit'}),async()=>{
+    cue.disabled=true;status.textContent='Checking recorded coverage…';
+    try{
+      const matches=await get('/api/recordings-at',{at});
+      if(!container.isConnected)return;
+      const reader={query:item.similar?.found||state.query,start:0};
+      const choose=recording=>openItem(recording,{at,journal:item,reader});
+      if(matches.items.length===1){status.textContent='';cue.disabled=false;choose(matches.items[0]);return;}
+      if(!matches.items.length){status.textContent='No archived audio covers this journal time.';return;}
+      const choices=matches.items.map(rec=>button(rec.title||kindName(rec.kind),()=>choose(rec),'btn'));
+      cue.remove();status.textContent=matches.more?'Choose a recording from the first 12 overlapping this line.':'Choose the recording to cue.';
+      actions.append(...choices);
+    }catch(err){if(container.isConnected){status.textContent=err.message;cue.disabled=false;}}
+  },'text-link');
+  return add(container,row,add(actions,cue,status));
+}
 function eventPanel(events){if(!events||!events.length)return panel(empty('No activity in this period.','New archive receipts will appear here.'));
   return panel(...events.map(v=>{const t=e('time','',dateTime(v.atMillis));t.dateTime=new Date(v.atMillis).toISOString();return add(e('div','event'),add(e('div'),e('b','',v.label||'Archive receipt'),v.detail?e('p','',v.detail):null,t));}));}
 async function dashboard(ver){const [overview,items,info]=await Promise.all([get('/api/overview',range()),get('/api/items',{kind:'clip',limit:5,offset:0}),get('/api/status')]);if(ver!==state.version)return;
@@ -358,11 +383,34 @@ function makeArchive(){
   add(form,add(e('label','searchbox'),icon('search'),q),filters,around,clear);
   const results=e('div');results.id='results';$('view').replaceChildren(form,results);
 }
-async function archive(ver){if(!$('results'))makeArchive();const response=await get('/api/items',{kind:state.kind,q:state.query,category:state.category,device:state.device,...dayBounds(state.date,state.clock,state.radius,state.fold),offset:state.offset,limit});if(ver!==state.version)return;
+function similarSearch(ver,params){
+  const section=e('section','panel review-card');
+  const status=e('p','section-note');status.setAttribute('role','status');
+  const list=e('div');
+  const tryIt=button('Find similar spellings',async()=>{
+    tryIt.disabled=true;status.textContent='Checking saved words…';
+    try{
+      const result=await get('/api/items',{...params,similar:1});
+      if(ver!==state.version||!section.isConnected)return;
+      if(result.total){refresh();return;}
+      const suggestions=result.similar;
+      if(!suggestions)throw Error('Similar spelling search is unavailable on this archive.');
+      const count=plural(suggestions.checked,'item');
+      status.textContent=(suggestions.items.length?'Possible spellings found. ':'No similar spelling found. ')+
+        'Checked titles and writing, including transcript excerpts, in '+(suggestions.limited?'the latest ':'')+count+' within your filters.';
+      list.replaceChildren(...suggestions.items.map(itemRow));
+    }catch(err){if(ver===state.version){status.textContent=err.message;tryIt.disabled=false;}}
+  });
+  return add(section,tryIt,status,list);
+}
+async function archive(ver){if(!$('results'))makeArchive();
+  const params={kind:state.kind,q:state.query,category:state.category,device:state.device,...dayBounds(state.date,state.clock,state.radius,state.fold),offset:state.offset,limit};
+  const response=await get('/api/items',params);if(ver!==state.version)return;
   if(state.offset>0&&!response.items.length&&response.total>0){state.offset=Math.floor((response.total-1)/limit)*limit;return refresh();}
   const nodes=[],group=new Map();for(const item of [...response.items].sort((a,b)=>b.startedAtMillis-a.startedAtMillis)){const d=item.startedAtMillis?dateFmt(item.startedAtMillis,{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'Undated';if(!group.has(d))group.set(d,[]);group.get(d).push(item);}
   for(const [d,list] of group)nodes.push(e('h2','group-label',d),panel(...list.map(itemRow)));
   if(!nodes.length)nodes.push(panel(empty(state.query?'No matches.':'No items in this view.',state.query?'Try another word or change the item type.':'Clear filters to look across the archive. New items appear after your phone transfers them.')));
+  if(!response.total&&state.query.split(/\s+/).some(word=>word.length>=4))nodes.push(similarSearch(ver,params));
   const prev=button('Previous',()=>{state.offset=Math.max(0,state.offset-limit);refresh();}),next=button('Next',()=>{state.offset+=limit;refresh();});prev.disabled=state.offset===0;next.disabled=state.offset+limit>=response.total;
   const count=response.total?`${state.offset+1}–${Math.min(state.offset+response.items.length,response.total)} of ${plural(response.total,'item')}`:'0 items';const pager=add(e('div','pager'),e('span','',count),response.total>limit?add(e('div'),prev,next):null);
   $('results').replaceChildren(...nodes,pager);}
@@ -372,7 +420,7 @@ function sessionPlayer(){
   // Only this tab holds the File and its working index. Changing views pauses playback.
   const desk=sessionPlayer.desk||={
     file:null,title:'',points:[],selected:null,position:0,lead:5,query:'',page:0,
-    revision:0,exported:0,fingerprint:null,
+    revision:0,exported:0,fingerprint:null,removed:[],
     warn(event){event.preventDefault();event.returnValue='';}
   };
   const types=['Moment','Poem line','Coined word','Follow-up','Project decision','Connection'];
@@ -381,6 +429,7 @@ function sessionPlayer(){
   const note=e('p','status'),receipt=e('p','section-note'),record=e('h2'),list=e('div'),summary=e('p','row-sub');
   const editor=e('div','find-filters'),name=e('input'),type=e('select'),pending=e('div','quick-find');
   const library=e('section','panel review-card'),toolbox=e('section','panel review-card');
+  const enhanced=playbackEnhancement(audio);
   let sourceURL='',generation=0,importVersion=0,exporting=false;
   const stamp=ms=>{
     const seconds=Math.floor(ms/1000),hh=Math.floor(seconds/3600),mm=Math.floor(seconds/60)%60,ss=seconds%60;
@@ -414,6 +463,8 @@ function sessionPlayer(){
     const i=filtered.indexOf(desk.selected);
     previous.disabled=!filtered.length||i===0;next.disabled=!filtered.length||i===filtered.length-1;
     navigation.hidden=!filtered.length;download.disabled=!desk.file||exporting||(!desk.points.length&&!dirty());
+    undo.hidden=!desk.removed.length;
+    if(!undo.hidden)undo.textContent='Undo removal at '+stamp(desk.removed[desk.removed.length-1].point.ms);
     for(const b of marking.querySelectorAll('button'))b.disabled=audio.readyState<1||!desk.file;
   }
   function select(p,play){
@@ -429,6 +480,22 @@ function sessionPlayer(){
       note.textContent='Playing from '+stamp(Math.round(at*1000))+' · '+p.label+' at '+stamp(p.ms)+'.';
     }catch{note.textContent='This browser could not seek to the marker.';}
   }
+  const remove=button('Remove selected marker',()=>{
+    const pos=desk.points.indexOf(desk.selected);
+    if(pos<0)return;
+    const [point]=desk.points.splice(pos,1);
+    desk.removed.push({point,pos});if(desk.removed.length>20)desk.removed.shift();
+    desk.selected=null;changed();showEditor();render();undo.focus();
+    note.textContent='Removed '+point.label+' at '+stamp(point.ms)+'.';
+  });
+  const undo=button('Undo removal',()=>{
+    if(!desk.removed.length)return;
+    if(desk.points.length>=maxPoints){note.textContent='Remove another marker before restoring this one.';return;}
+    const {point,pos}=desk.removed.pop();
+    desk.points.splice(pos,0,point);desk.points.sort((a,b)=>a.ms-b.ms);
+    desk.query='';search.value='';changed();select(point,false);name.focus();
+    note.textContent='Restored '+point.label+' at '+stamp(point.ms)+'.';
+  });
   function navigate(step){
     const matches=matching(),ix=matches.indexOf(desk.selected);
     const p=matches[ix<0?(step>0?0:matches.length-1):ix+step];if(p)select(p,true);
@@ -446,13 +513,13 @@ function sessionPlayer(){
   }
   const marking=add(e('div','quick-find'),...types.slice(0,4).map((t,i)=>button(i?t:'Mark current position',()=>mark(t),i?'btn':'btn primary')));
   // Bound resident memory while checking every audio byte, including in multi-hour sessions.
-  async function fingerprint(file){
+  async function fingerprint(file,active=()=>file===desk.file){
     if(!window.crypto?.subtle)return null;
     const size=4*1024*1024,parts=new Uint8Array(Math.ceil(file.size/size)*32);
     for(let off=0,i=0;off<file.size;off+=size,i++){
       const data=await file.slice(off,off+size).arrayBuffer();
       parts.set(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),i*32);
-      if(file!==desk.file)throw Error('Recording changed.');
+      if(!active())throw Error('Recording changed.');
     }
     const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',parts));
     return 'sha256-chunks-4m-v1:'+Array.from(digest,b=>b.toString(16).padStart(2,'0')).join('');
@@ -477,7 +544,7 @@ function sessionPlayer(){
   function merge(data){
     const key=p=>JSON.stringify([p.ms,p.label,p.type]),seen=new Set(desk.points.map(key)),fresh=[];
     for(const m of data.markers){const p={ms:m.ms,label:m.label,type:m.category||'Moment'},k=key(p);if(!seen.has(k)){fresh.push(p);seen.add(k);}}
-    if(seen.size>maxPoints){note.textContent='Merging would exceed 20,000 markers.';return;}
+    if(desk.points.length+fresh.length>maxPoints){note.textContent='Merging would exceed 20,000 markers.';return;}
     const hadEdits=dirty(),hadPoints=desk.points.length>0;
     if(!hadPoints&&!hadEdits&&typeof data.title==='string')desk.title=data.title.slice(0,200)||desk.title;
     desk.points.push(...fresh);desk.points.sort((a,b)=>a.ms-b.ms);
@@ -485,42 +552,74 @@ function sessionPlayer(){
     pending.replaceChildren();record.textContent=desk.title;render();
     note.textContent=plural(fresh.length,'marker')+' added · '+plural(data.markers.length-fresh.length,'duplicate')+' skipped.';
   }
-  index.onchange=async()=>{
-    const chosen=index.files[0],file=desk.file,job=++importVersion;pending.replaceChildren();index.value='';
-    if(!chosen||!file)return;
+  async function openIndex(chosen,file,replace){
+    // Validate both files before changing the playing recording or asking to discard any edits.
+    const job=++importVersion,active=()=>job===importVersion;
+    pending.replaceChildren();note.textContent='Reading '+chosen.name+'…';
     try{
       if(chosen.size>16*1024*1024)throw Error('Index exceeds 16 MiB.');
-      const data=JSON.parse(await chosen.text());if(job!==importVersion)return;
-      if(data?.format!=='total-recall-markers-1'||data.audioBytes!==file.size)throw Error('Index and audio do not match.');
+      const data=JSON.parse(await chosen.text());if(!active())return;
+      if(data?.format!=='total-recall-markers-1')throw Error('Choose a Total Recall marker index.');
+      if(!Number.isSafeInteger(data.audioBytes)||data.audioBytes<0)throw Error('The index has no valid audio size.');
+      if(data.audioBytes!==file.size)throw Error('Index and audio do not match. '+chosen.name+' expects '+number(data.audioBytes)+' bytes. '+file.name+' has '+number(file.size)+'.');
       if(!Array.isArray(data.markers)||data.markers.length>maxPoints||!data.markers.every(p=>p&&Number.isSafeInteger(p.ms)&&p.ms>=0&&
         typeof p.label==='string'&&p.label.length<=160&&(p.category==null||(typeof p.category==='string'&&p.category.length<=42))))throw Error('Invalid marker index.');
-      if(data.audioFingerprint!==undefined){
-        note.textContent='Checking that this index belongs to the audio…';const fingerprint=await digestFor(file);if(job!==importVersion)return;
-        if(!fingerprint||data.audioFingerprint!==fingerprint)throw Error('Audio fingerprint could not be matched. Existing markers are intact.');
+      // A newly selected, identical audio file can safely reuse edits and playback position.
+      let digest=null,same=desk.file===file;
+      if(data.audioFingerprint!==undefined||(replace&&desk.file?.size===file.size)){
+        note.textContent='Checking audio contents…';
+        digest=await (same?digestFor(file):fingerprint(file,active));if(!active())return;
+        if(data.audioFingerprint!==undefined&&!digest)throw Error('Open this archive on HTTPS or localhost to verify the audio fingerprint.');
+        if(data.audioFingerprint!==undefined&&data.audioFingerprint!==digest)throw Error('Audio fingerprint could not be matched. Existing markers are intact. '+chosen.name+' belongs to different audio than '+file.name+'.');
+        if(!same&&digest&&desk.file?.size===file.size){same=digest===await digestFor(desk.file);if(!active())return;}
+      }
+      const apply=()=>{
+        if(!active())return;
+        if(replace&&!same&&!replaceFile(file,digest)){pending.replaceChildren();note.textContent='Kept your current recording and markers.';return;}
         merge(data);
-      }else{
-        note.textContent='This older index matches the file size only. Check the title before merging.';
-        pending.replaceChildren(e('span','',String(data.title||chosen.name).slice(0,200)+' · '+plural(data.markers.length,'marker')),
-          button('Merge these markers',()=>{if(job===importVersion)merge(data);}),
+      };
+      if(data.audioFingerprint!==undefined){apply();}
+      else{
+        note.textContent='This older index matches the file size only. Check both names before merging.';
+        pending.replaceChildren(e('span','',file.name+' · '+String(data.title||chosen.name).slice(0,200)+' · '+plural(data.markers.length,'marker')),
+          button('Merge these markers',apply),
           button('Cancel',()=>{pending.replaceChildren();note.textContent='Index left unopened.';}));
       }
-    }catch(err){if(job===importVersion)note.textContent=err instanceof SyntaxError?'Invalid JSON index.':err.message;}
+    }catch(err){if(active())note.textContent=err instanceof SyntaxError?'Invalid JSON index.':err.message;}
+  }
+  index.onchange=()=>{
+    const chosen=index.files[0];index.value='';
+    if(chosen&&desk.file)openIndex(chosen,desk.file,false);
   };
   function loadFile(){
     if(sourceURL)URL.revokeObjectURL(sourceURL);sourceURL='';
     audio.pause();audio.removeAttribute('src');
     if(desk.file){sourceURL=URL.createObjectURL(desk.file);audio.src=sourceURL;}else audio.load();
+    enhanced.restore();
     record.textContent=desk.file?desk.title:'Open a long recording';
     library.hidden=toolbox.hidden=!desk.file;updateReceipt();showEditor();render();
   }
-  function replaceFile(file){
-    if(dirty()&&!confirm('Discard the marker changes for this recording? Cancel to download its index first.'))return;
+  function replaceFile(file,digest=null){
+    if(dirty()&&!confirm('Discard the marker changes for this recording? Cancel to download its index first.'))return false;
     generation++;importVersion++;exporting=false;
-    Object.assign(desk,{file,title:file?.name||'',points:[],selected:null,position:0,query:'',page:0,revision:0,exported:0,fingerprint:null});
-    search.value='';pending.replaceChildren();note.textContent='';loadFile();
+    Object.assign(desk,{file,title:file?.name||'',points:[],selected:null,position:0,query:'',page:0,revision:0,exported:0,fingerprint:digest?Promise.resolve(digest):null,removed:[]});
+    search.value='';pending.replaceChildren();note.textContent='';loadFile();return true;
   }
-  files.type=index.type='file';files.accept='audio/*,.aac,.m4a';index.accept='.json,application/json';
-  files.onchange=()=>{const chosen=files.files[0];files.value='';if(chosen)replaceFile(chosen);};
+  files.type=index.type='file';files.multiple=true;files.accept='audio/*,.aac,.m4a,.json,application/json';index.accept='.json,application/json';
+  files.onchange=()=>{
+    const chosen=Array.from(files.files);files.value='';if(!chosen.length)return;
+    importVersion++;pending.replaceChildren();
+    const isIndex=f=>f.type==='application/json'||/\.json$/i.test(f.name);
+    const indexes=chosen.filter(isIndex),recordings=chosen.filter(f=>!isIndex(f));
+    if(recordings.length>1||indexes.length>1){note.textContent='Choose one recording and up to one marker index at a time.';return;}
+    const file=recordings[0],idx=indexes[0];
+    if(file&&!file.type.startsWith('audio/')&&!/\.(aac|m4a|wav|mp3|flac|ogg|oga|opus|webm|mp4|aif|aiff|amr|3gp)$/i.test(file.name)){
+      note.textContent='Choose an audio recording. '+file.name+' was left unopened.';return;
+    }
+    if(!file&&!desk.file){note.textContent='Select the audio together with its marker index, or open the audio first.';return;}
+    if(idx)openIndex(idx,file||desk.file,Boolean(file));
+    else replaceFile(file);
+  };
   audio.id='session-audio';audio.controls=true;audio.preload='metadata';audio.setAttribute('aria-label','Session recording');
   audio.onloadedmetadata=()=>{if(!sourceURL||audio.currentSrc!==sourceURL)return;if(desk.position>0){try{audio.currentTime=desk.position;}catch{}}render();};
   audio.onerror=()=>{if(sourceURL)note.textContent='This browser could not play the audio. You can still open and edit the marker index.';render();};
@@ -529,21 +628,21 @@ function sessionPlayer(){
   };
   name.onblur=()=>{if(desk.selected)name.value=desk.selected.label;};
   type.onchange=()=>{if(desk.selected){desk.selected.type=type.value;changed();render();}};
-  add(editor,add(e('label'),'Selected marker name',name),add(e('label'),'Marker type',type));
+  add(editor,add(e('label'),'Selected marker name',name),add(e('label'),'Marker type',type),remove);
   search.type='search';search.value=desk.query;search.placeholder='Name, type or timestamp';search.oninput=()=>{desk.query=search.value;desk.page=0;render();};
   for(const n of [0,2,5,10,15]){const o=e('option','',n?n+' seconds':'At the marker');o.value=n;lead.append(o);}
   lead.value=desk.lead;lead.onchange=()=>{desk.lead=Number(lead.value);};
   note.setAttribute('role','status');list.className='quick-find';
-  add(toolbox,audio,marking,editor,add(e('div','quick-find'),download,button('Close recording',()=>replaceFile(null))),receipt);
+  add(toolbox,audio,enhanced.controls,enhanced.message,marking,editor,add(e('div','quick-find'),download,button('Close recording',()=>replaceFile(null))),receipt);
   add(library,heading('Markers'),add(e('div','find-filters'),add(e('label'),'Find a marker',search),add(e('label'),'Replay lead-in',lead)),
-    navigation,summary,list,pager,add(e('label'),'Open matching marker index',index),pending);
+    navigation,summary,list,pager,add(e('label'),'Open matching marker index',index));
   const guide=e('details','detail-block');add(guide,e('summary','','Recording on Android'),
     e('p','','Start under Long sessions, or say “Lexi, start a long session” while listening. Say “Lexi, mark this point” as you go and “Lexi, finish the session” to finish. Export the audio and optional marker index from the saved recording.'));
-  $('view').replaceChildren(add(e('section','panel review-card'),record,add(e('label'),'Open audio from device',files),
-    e('p','section-note','Playback and marker editing use local files in this tab.')),toolbox,note,library,guide);
+  $('view').replaceChildren(add(e('section','panel review-card'),record,add(e('label'),'Open audio from device and optional marker index',files),
+    e('p','section-note','Select the recording and its .markers.json file together. Both stay in this tab.'),note,pending),toolbox,undo,library,guide);
   loadFile();
   sessionCleanup=()=>{generation++;importVersion++;if(desk.file&&audio.readyState>=1)desk.position=audio.currentTime;
-    sourceURL&&URL.revokeObjectURL(sourceURL);sourceURL='';audio.pause();audio.removeAttribute('src');audio.load();};
+    sourceURL&&URL.revokeObjectURL(sourceURL);sourceURL='';audio.pause();enhanced.close();audio.removeAttribute('src');audio.load();};
 }
 
 function route(){let r=location.hash.slice(1);if(r==='content')return;
@@ -584,6 +683,108 @@ function excerptControls(item,audio,signal){const details=e('details'),summary=e
   const preview=button('Preview range',async()=>{try{const [from,to]=values();message.textContent='';audio.currentTime=from;await audio.play();boundary=to;check();}catch(err){message.textContent=err.message;}});
   const save=button('Download excerpt',async()=>{try{const [from,to]=values();save.disabled=true;message.textContent='Preparing WAV…';const blob=await excerptBlob(item,from,to,signal);if(signal.aborted)return;const url=URL.createObjectURL(blob),l=e('a');l.href=url;l.download=`${item.id}-${from.toFixed(2)}s-${to.toFixed(2)}s.wav`;l.click();setTimeout(()=>URL.revokeObjectURL(url),60000);message.textContent='Excerpt ready for download.';}catch(err){if(!signal.aborted)message.textContent=err.message;}finally{save.disabled=false;}},'btn primary');
   return add(e('div','detail-block'),add(details,fields,add(e('div','actions'),preview,save),message));}
+// A remembered level lasts only for this page's open tab.
+let tabPlaybackBoost = null;
+function playbackEnhancement(audio, allowVoiceFocus = false) {
+  const boost = e('select'), remember = e('input'), message = e('small', 'section-note');
+  for (const db of [0, 6, 12]) {
+    const opt = e('option', '', db ? '+' + db + ' dB' : 'Original');
+    opt.value = String(db); boost.append(opt);
+  }
+  boost.setAttribute('aria-label', 'Playback boost');
+  remember.type = 'checkbox';
+  const boostLabel = add(e('label'), 'Playback boost ', boost);
+  const rememberLabel = add(e('label'), remember, ' Remember in this tab');
+  const focus = button('Voice focus', () => { focused = !focused; apply(); });
+  focus.setAttribute('aria-pressed', 'false');
+  const controls = add(e('div', 'player-opts'), boostLabel, rememberLabel);
+  if (allowVoiceFocus) controls.append(focus);
+  message.setAttribute('role', 'status'); message.hidden = true;
+  let ctx, source, highpass, voiceGain, voiceCompressor, gain, ceiling;
+  let focused = false, disposed = false, revision = 0;
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  function tell(text) { message.textContent = text; message.hidden = !text; }
+  function labels() {
+    focus.textContent = focused ? 'Voice focus on' : 'Voice focus';
+    focus.setAttribute('aria-pressed', String(focused));
+  }
+  function route() {
+    if (!source) return;
+    source.disconnect(); voiceCompressor.disconnect();
+    const dest = Number(boost.value) ? gain : ctx.destination;
+    gain.gain.value = 10 ** (Number(boost.value) / 20);
+    if (focused) { source.connect(highpass); voiceCompressor.connect(dest); }
+    else source.connect(dest);
+  }
+  function nodes() {
+    if (source) return;
+    highpass = ctx.createBiquadFilter(); highpass.type = 'highpass'; highpass.frequency.value = 90;
+    voiceGain = ctx.createGain(); voiceGain.gain.value = 3;
+    voiceCompressor = ctx.createDynamicsCompressor(); voiceCompressor.threshold.value = -12; voiceCompressor.ratio.value = 8;
+    highpass.connect(voiceGain).connect(voiceCompressor);
+    gain = ctx.createGain();
+    ceiling = ctx.createWaveShaper();
+    // Linear for quiet audio. Curve the top quarter smoothly to a fixed peak below full scale.
+    ceiling.curve = Float32Array.from({length:2049}, (_,i) => {
+      const x = i/1024-1, level = Math.abs(x);
+      if (level <= .75) return x;
+      const t = (level-.75)/.25;
+      return Math.sign(x)*(.75+.25*(t-t**3/3));
+    });
+    gain.connect(ceiling).connect(ctx.destination);
+    // Attach last, after resume and node creation succeed. Until then native playback works.
+    source = ctx.createMediaElementSource(audio);
+  }
+  async function apply() {
+    const serial = ++revision;
+    if (disposed) return;
+    labels();
+    if (!focused && boost.value === '0' && (!source || ctx.state === 'running')) { route(); tell(''); return; }
+    try {
+      ctx ||= new Audio();
+      if (ctx.state !== 'running') await ctx.resume();
+      if (serial !== revision || disposed) return;
+      if (ctx.state !== 'running') throw Error('Audio unavailable');
+      nodes(); route(); tell('');
+    } catch {
+      if (serial !== revision || disposed) return;
+      focused = false; boost.value = '0'; labels();
+      if (source) { source.disconnect(); source.connect(ctx.destination); }
+      else if (ctx) { ctx.close().catch(()=>{}); ctx = null; }
+      if (remember.checked) tabPlaybackBoost = 0;
+      tell('Playback processing is unavailable. Use the original audio level.');
+    }
+  }
+  function restore() {
+    ++revision; focused = false; labels(); tell('');
+    remember.checked = tabPlaybackBoost !== null;
+    boost.value = String(tabPlaybackBoost || 0);
+    if (source) route();
+    setAvailable();
+  }
+  function setAvailable() {
+    boost.disabled = remember.disabled = focus.disabled = !Audio || Boolean(audio.error);
+    if (!Audio) tell('This browser supports original-level playback only.');
+  }
+  function onError() {
+    ++revision; focused = false; boost.value = '0'; labels(); route(); setAvailable();
+  }
+  function onPlay() { if (focused || boost.value !== '0' || ctx?.state === 'suspended' && source) apply(); }
+  boost.onchange = () => { if (remember.checked) tabPlaybackBoost = Number(boost.value); apply(); };
+  remember.onchange = () => { tabPlaybackBoost = remember.checked ? Number(boost.value) : null; };
+  audio.addEventListener('play', onPlay);
+  audio.addEventListener('error', onError);
+  audio.addEventListener('loadedmetadata', setAvailable);
+  restore();
+  return {controls, message, restore, close() {
+    disposed = true; ++revision;
+    audio.removeEventListener('play', onPlay); audio.removeEventListener('error', onError);
+    audio.removeEventListener('loadedmetadata', setAvailable);
+    for (const node of [source, highpass, voiceGain, voiceCompressor, gain, ceiling]) { if (node) node.disconnect(); }
+    if (ctx) ctx.close().catch(()=>{});
+  }};
+}
+
 function player(item,at){const audio=e('audio');audio.controls=true;audio.preload='metadata';audio.src=mediaPath(item);if(Number.isFinite(at))audio.addEventListener('loadedmetadata',()=>{
     const moment=(at-item.startedAtMillis)/1000;
     if(!Number.isFinite(audio.duration)||moment<0||moment>audio.duration){
@@ -592,25 +793,9 @@ function player(item,at){const audio=e('audio');audio.controls=true;audio.preloa
     try{audio.currentTime=Math.max(0,moment-3);}catch{help.textContent='This browser could not seek to that time. Use the player to listen.';help.hidden=false;}
   },{once:true});audio.setAttribute('aria-label','Original recording');const rates=e('select');rates.setAttribute('aria-label','Playback speed');for(const n of [.5,.75,1,1.25,1.5,2]){const o=e('option','',`${n}×`);o.value=n;o.selected=n===1;rates.append(o);}rates.onchange=()=>audio.playbackRate=Number(rates.value);
   const download=e('a','text-link','Download original');download.prepend(icon('download'));download.href=mediaPath(item)+'?download=1';download.download='';const help=e('p','status');help.hidden=true;audio.onerror=()=>{if(audio.getAttribute('src')){help.textContent='This browser could not play the file. Download the original to open it in another player.';help.hidden=false;}};
-  let ctx,source,filter,gain,compressor,focused=false;
-  const focus=button('Voice focus',async()=>{
-    try{
-      if(!ctx){
-        ctx=new AudioContext();
-        filter=ctx.createBiquadFilter();filter.type='highpass';filter.frequency.value=90;
-        gain=ctx.createGain();gain.gain.value=3;
-        compressor=ctx.createDynamicsCompressor();compressor.threshold.value=-12;compressor.ratio.value=8;
-        filter.connect(gain).connect(compressor).connect(ctx.destination);
-        source=ctx.createMediaElementSource(audio);source.connect(ctx.destination);
-      }
-      await ctx.resume();source.disconnect();focused=!focused;
-      source.connect(focused?filter:ctx.destination);
-      focus.textContent=focused?'Voice focus on':'Voice focus';focus.setAttribute('aria-pressed',String(focused));
-    }catch(err){help.textContent='Voice focus is unavailable in this browser.';help.hidden=false;}
-  });
-  focus.setAttribute('aria-pressed','false');
-  const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();if(ctx)ctx.close().catch(()=>{});audio.removeAttribute('src');audio.load();};
-  return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),focus,download),help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
+  const enhanced=playbackEnhancement(audio,true);
+  const abort=new AbortController();modalCleanup=()=>{abort.abort();audio.pause();enhanced.close();audio.removeAttribute('src');audio.load();};
+  return [add(e('div','player'),audio,add(e('div','player-opts'),add(e('label'),'Speed ',rates),download),enhanced.controls,enhanced.message,help),item.durationMs>0?excerptControls(item,audio,abort.signal):null];}
 // The journal export uses the phone's local date plus its UTC offset at recognition.
 // Compare matching waveforms in two separated windows. Repetitive or weak matches keep
 // their independent channels and clock alignment rather than being summed as speech.

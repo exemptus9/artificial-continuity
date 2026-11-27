@@ -27,6 +27,7 @@ final class ClipStudio {
     private final Handler main=new Handler(Looper.getMainLooper());
     private AlertDialog dialog;
     private MediaPlayer player;
+    private PlaybackLevel playbackLevel;
     private final AudioManager audio;
     private final AudioFocusRequest focus;
     private boolean focused;
@@ -78,6 +79,7 @@ final class ClipStudio {
             }).setNegativeButton("Cancel",null).show();
         });
         LinearLayout transportRow=owner.row();owner.split(transportRow,transport,speeds);sheet.addView(transportRow);
+        Button level=owner.link("");playbackLevel=new PlaybackLevel(level);sheet.addView(level);
         LinearLayout jumps=owner.row();
         for(int seconds:new int[]{-15,-5,5,15}){
             Button button=owner.link((seconds<0?"−":"+")+Math.abs(seconds)+" s");
@@ -172,7 +174,7 @@ final class ClipStudio {
             MediaPlayer next=new MediaPlayer();player=next;
             next.setAudioAttributes(attributes());
             next.setDataSource(moment.audio.getAbsolutePath());transport.setEnabled(false);note("Opening audio…");
-            next.setOnPreparedListener(p->{if(p!=player||closed)return;transport.setEnabled(true);
+            next.setOnPreparedListener(p->{if(p!=player||closed)return;transport.setEnabled(true);playbackLevel.attach(p);
                 if(RecallService.isListening()){note("Listening is active. Playback is paused.");return;}startAudio();});
             next.setOnSeekCompleteListener(p->{if(p==player)seekPending=false;});
             next.setOnCompletionListener(p->{if(closed||p!=player)return;
@@ -240,6 +242,7 @@ final class ClipStudio {
     }
     private void releaseAudio(){
         main.removeCallbacks(progress);playing=false;seekPending=false;dropFocus();
+        if(playbackLevel!=null)playbackLevel.detach();
         if(player!=null){player.release();player=null;}
     }
     private void paint(){

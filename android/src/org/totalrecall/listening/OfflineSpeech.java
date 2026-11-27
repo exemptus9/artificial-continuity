@@ -34,8 +34,12 @@ public final class OfflineSpeech implements AutoCloseable {
         rawPartial="";return displayed;
     }
     private final RoomNoise room=new RoomNoise();
-    void learnRoom(){room.learn();LiveCapture.roomStatus="Sampling room noise";LiveCapture.feedback("Learning room noise · stay quiet for two seconds");}
-    void clearRoom(){room.reset();LiveCapture.roomStatus="Room filter off";}
+    private final MicSignal micSignal=new MicSignal();
+    private long nextReading;
+    boolean extendedReach;
+    boolean faintActivity(){return micSignal.audible();}
+    void learnRoom(){room.learn();micSignal.learn();LiveCapture.roomStatus="Sampling room noise";LiveCapture.feedback("Learning room noise · stay quiet for two seconds");}
+    void clearRoom(){room.reset();micSignal.reset();quietSpeech.reset();nextReading=0;LiveCapture.roomStatus="Room filter off";LiveCapture.micSignal="";}
     private final QuietSpeech quietSpeech=new QuietSpeech();
     private Model model;
     private org.vosk.SpeakerModel speakerModel;
@@ -157,6 +161,7 @@ public final class OfflineSpeech implements AutoCloseable {
     private Recognizer recognizer;
     private Recognizer commandRecognizer;
     private String pendingCommand;
+    private final SelectiveEngine.CommandEndpoints commandEndpoints=new SelectiveEngine.CommandEndpoints();
     public OfflineSpeech(Context context) throws IOException {
         this(context,true);
     }
@@ -200,22 +205,37 @@ public final class OfflineSpeech implements AutoCloseable {
     String accept(short[] pcm,int count,boolean liftQuiet,boolean reduceRoom) {
         if(!liftQuiet)quietSpeech.reset();
         boolean learned=room.ready();
-        if(!reduceRoom && room.running())clearRoom();
+        if(!reduceRoom && (room.running() || micSignal.rejectedRoom()))clearRoom();
+        if(!archiveReview)micSignal.observe(pcm,count);
         short[] filtered=reduceRoom?room.apply(pcm,count):pcm;
-        if(!learned && room.ready()){LiveCapture.roomStatus="Room filter on";LiveCapture.feedback("Room noise learned · filtering live speech");}
-        short[] input=liftQuiet?quietSpeech.apply(filtered,count):filtered;
-        if (commandRecognizer!=null && commandRecognizer.acceptWaveForm(input, count)) {
-            String heard = text(commandRecognizer.getResult(), "text");
-            if (heard!=null && SelectiveEngine.grammarMatch(heard)) {
-                pendingCommand = heard;
+        if(!learned && room.ready()){
+            if(micSignal.rejectedRoom()){
+                room.reset();LiveCapture.roomStatus="Room sample varied · try again";
+                LiveCapture.feedback("Room changed during sampling · retry with two quiet seconds");
+            }else{
+                LiveCapture.roomStatus="Room filter on";LiveCapture.feedback("Room noise learned · filtering live speech");
             }
+        }
+        short[] input=liftQuiet?quietSpeech.apply(filtered,count,archiveReview?12:micSignal.gainLimit(extendedReach)):filtered;
+        if(!archiveReview && streamSamples>=nextReading){
+            LiveCapture.micSignal=micSignal.reading(quietSpeech.gain(),liftQuiet);
+            nextReading=streamSamples+4000;
+        }
+        String constrained=null;
+        if(commandRecognizer!=null && commandRecognizer.acceptWaveForm(input,count)){
+            constrained=text(commandRecognizer.getResult(),"text");
         }
         streamSamples+=count;
         if(archiveReview)rememberPcm(input,count);
-        return recognizer.acceptWaveForm(input, count) ? displayFinal(recognizer.getResult()) : null;
+        String display=recognizer.acceptWaveForm(input,count)?displayFinal(recognizer.getResult()):null;
+        if(commandRecognizer!=null){
+            String matched=commandEndpoints.observe(constrained,display==null?null:rawWords,rawPartial,streamSamples);
+            if(matched!=null)pendingCommand=matched;
+        }
+        return display;
     }
 
-    /** An exact full-utterance command from a restricted decoder that also models unknown words. */
+    /** A whole command or a trailing named save confirmed by both local decoders. */
     public String pollCommand() {
         String heard = pendingCommand;
         pendingCommand = null;
@@ -226,7 +246,7 @@ public final class OfflineSpeech implements AutoCloseable {
     public void resetStream() {
         clearRoom();priorContext="";rawPartial="";rawWords="";priorSpeaker=0;priorAt=0;streamSamples=0;used=0;energy=0;overflow=false;quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
         if(commandRecognizer!=null)commandRecognizer.reset();
-        pendingCommand = null;
+        pendingCommand = null;commandEndpoints.clear();
     }
 
     public String partial() {
@@ -237,7 +257,7 @@ public final class OfflineSpeech implements AutoCloseable {
 
     void newUtterance(){
         recognizer.reset();if(commandRecognizer!=null)commandRecognizer.reset();
-        pendingCommand=null;rawPartial="";priorContext="";priorSpeaker=0;
+        pendingCommand=null;commandEndpoints.clear();rawPartial="";priorContext="";priorSpeaker=0;
     }
     public String finish() {
         return displayFinal(recognizer.getFinalResult());

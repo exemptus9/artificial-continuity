@@ -48,7 +48,7 @@ public final class SelectiveEngine {
 
     static final String[] WAKES={"hey recall","total recall","lexi","hey lexi"};
     static final String[][] COMMANDS={
-        {"Save recent audio","save that","save this","keep that","remember that","save the last minute","keep the last minute","save this idea","save that line","save that poem"},
+        {"Save recent audio","save that","save this","keep that","remember that","save the last minute","keep the last minute","save this idea"},
         {"Recover a missed moment","you missed one","you missed that"},
         {"Start a passage","start a passage","start a poem","start a story","start a draft"},
         {"Finish and save the passage","finish passage","finish the poem","finish the story","finish the draft"},
@@ -57,12 +57,60 @@ public final class SelectiveEngine {
         {"Finish a long session","finish the session","finish this session"},
         {"Mark a point in a long session","mark this point","mark this line"},
         {"Save a Forge word","keep that word","save that word"},
-        {"Save a poem line","keep that line","keep that rhyme"},
+        {"Save a poem line","keep that line","keep that rhyme","save that line","save that poem"},
         {"Save a project decision","keep that decision","save that decision"}
     };
     private static final int KEEP_WORD=8, KEEP_LINE=9, KEEP_DECISION=10;
     static final Pattern WAKE=Pattern.compile("^(?:(?:hey )?(?:recall|lexi|lexie|lexy|alexi|lexy daimon)|total recall)(?: |$)");
     private static final Pattern TRAILING_REQUEST=Pattern.compile(" (hey recall|total recall|hey lexi|lexi) (.+)$");
+    private static final Pattern SPOKEN_SAVE_TAIL=Pattern.compile("^(.*?)(?:^| )(?:hey |total )?(recall|lexi|lexie|lexy) (.+)$");
+    private static final Pattern MENTIONED=Pattern.compile("(?:^| )(?:say|says|said|saying|quote|quoted|called|command is|command was|example is|dont|don't|do not|never)(?: (?:a|hey|total|they|were|he)){0,2}$");
+    private static boolean mentionsCommand(String preceding){return MENTIONED.matcher(preceding.trim()).find();}
+
+    private static boolean reportedAddress(String words){
+        if(words==null || words.isEmpty())return false;
+        String raw=normalize(words);
+        java.util.regex.Matcher wake=SPOKEN_SAVE_TAIL.matcher(raw);
+        if(wake.matches() && mentionsCommand(wake.group(1)))return true;
+        // A standalone title in a sentence about a movie is a common collision with this wake.
+        return raw.matches(".*\\b(?:film|movie|movies) (?:called |named )?(?:total )?recall(?: .*)?");
+    }
+
+    // A restricted decoder can hear an addressed ending after unknown prose. Only keep in this
+    // case when an independent dictation endpoint hears the same wake and named save category.
+    static String corroboratedSave(String restricted,String dictation){
+        if(restricted==null || dictation==null)return null;
+        java.util.regex.Matcher narrow=SPOKEN_SAVE_TAIL.matcher(restricted);
+        java.util.regex.Matcher open=SPOKEN_SAVE_TAIL.matcher(normalize(dictation));
+        if(!narrow.matches() || narrow.group(1).isEmpty() || !open.matches())return null;
+        if(mentionsCommand(narrow.group(1)) || mentionsCommand(open.group(1)))return null;
+        String wake=narrow.group(2),other=open.group(2);
+        if(wake.equals("recall")!=other.equals("recall"))return null;
+        int action=actionFor(narrow.group(3));
+        if(action<KEEP_WORD || action>KEEP_DECISION || action!=actionFor(open.group(3)))return null;
+        return wake+" "+narrow.group(3);
+    }
+
+    /** Reconcile only nearby final endpoints. Prefer ordinary exact commands immediately. */
+    static final class CommandEndpoints {
+        private String tail,dictation;
+        private long tailAt,dictationAt;
+        String observe(String constrained,String original,String partial,long samples){
+            if(constrained==null && original==null)return null;
+            if(constrained!=null && grammarMatch(constrained)){
+                boolean quoted=reportedAddress(original!=null?original:partial);
+                clear();return quoted?null:constrained;
+            }
+            if(constrained!=null){tail=constrained;tailAt=samples;}
+            if(original!=null){dictation=original;dictationAt=samples;}
+            if(samples-tailAt>RATE*3/2)tail=null;
+            if(samples-dictationAt>RATE*3/2)dictation=null;
+            String command=corroboratedSave(tail,dictation);
+            if(command!=null)clear();
+            return command;
+        }
+        void clear(){tail=null;dictation=null;}
+    }
     static int actionFor(String words){
         String command=words.replaceFirst("^(?:(?:could|can|would) you |i want (?:you )?to )?(?:please )?","").replaceFirst(" (?:please|for me)$","");
         for(int i=0;i<COMMANDS.length;i++)
@@ -88,12 +136,15 @@ public final class SelectiveEngine {
         public final String transcript, category, reason;
         public final long startedAtMillis;
         final boolean finishedByVoice, labeledRewind;
+        // Null for ordinary clips, empty when a deliberate marker has no nearby recognized words.
+        final String cueText;
 
         Clip(short[] audio, String transcript, String category, String reason, long startedAtMillis) {
-            this(audio,transcript,category,reason,startedAtMillis,false,false);
+            this(audio,transcript,category,reason,startedAtMillis,false,null);
         }
-        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice,boolean labeledRewind){
-            this.labeledRewind=labeledRewind;
+        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice,String cueText){
+            this.cueText=cueText;
+            this.labeledRewind=cueText!=null;
             finishedByVoice=byVoice;
             this.audio = audio;
             this.transcript = transcript;
@@ -104,10 +155,12 @@ public final class SelectiveEngine {
     }
 
     private static final class Segment {
-        final String text, normalized;
+        final String text, normalized, learningText;
         final long at;
-        Segment(String text, long at) {
+        Segment(String text, long at) { this(text,at,text); }
+        Segment(String text,long at,String learningText) {
             this.text = text;
+            this.learningText = learningText;
             this.normalized = normalize(text);
             this.at = at;
         }
@@ -327,11 +380,17 @@ public final class SelectiveEngine {
         final Set<String> terms;
         final String category;
         final boolean positive;
+        final String markedWord;
         public Example(String transcript, String category, boolean positive) {
+            this(transcript,category,positive,false);
+        }
+        Example(String transcript,String category,boolean positive,boolean deliberatelyLabeled) {
             String source = transcript == null ? "" : transcript;
             // The end of a retrospective clip is closest to the user's manual marker.
             if (source.length() > 1500) source = source.substring(source.length() - 1500);
             this.terms = learningTerms(source);
+            String exact=normalize(source);
+            markedWord=deliberatelyLabeled && FORGE.equals(category) && unknownCandidate(exact) ? exact : null;
             this.category = category == null ? "" : category;
             this.positive = positive;
         }
@@ -414,7 +473,8 @@ public final class SelectiveEngine {
         feedback.put(category, Math.max(-4, Math.min(4, score)));
     }
 
-    public synchronized void pcm(short[] samples, int count) {
+    public synchronized void pcm(short[] samples, int count) {pcm(samples,count,false);}
+    synchronized void pcm(short[] samples,int count,boolean faintActivity) {
         if (count < 0 || count > samples.length) throw new IllegalArgumentException("Invalid PCM length");
         if (stopped || count == 0) return;
         // Check silence in short blocks regardless of the audio adapter's batch size.
@@ -437,7 +497,7 @@ public final class SelectiveEngine {
             }
             at += n;
             offset += n;
-            if (energy > (long) n * 270 * 270) lastLoud = at;
+            if (faintActivity || energy > (long)n*270*270) lastLoud=at;
             if (active && (length == MAX_CLIP || (passage && length>=RATE*30) || (!passage &&
                 (at - triggerAt >= MIN_TAIL && at - lastLoud >= END_SILENCE)))) {
                 boolean continueVerse = length == MAX_CLIP && tags.contains(POETRY)
@@ -450,12 +510,20 @@ public final class SelectiveEngine {
                 }
             }
         }
+        if(awakeUntil>=0 && at>awakeUntil){
+            awakeUntil=-1;wakeAnnounced=false;
+            listener.onVoice("Wake window ended · say Hey Recall again",false);
+        }
         discardExpired();
     }
 
     /** Feed one recognizer hypothesis. Partials replace each other; finals append exactly once. */
     public synchronized void text(String words, boolean isFinal) {text(words,isFinal,true);}
     synchronized void text(String words, boolean isFinal,boolean allowAutomatic) {
+        text(words,isFinal,allowAutomatic,words);
+    }
+    // Commands always parse the first reading. Confirmed spellings can inform only the saved cue and relevance.
+    synchronized void text(String words,boolean isFinal,boolean allowAutomatic,String reading) {
         if (stopped || words == null) return;
         String body = words.trim();
         if (body.length() > MAX_TEXT) body = body.substring(body.length() - MAX_TEXT);
@@ -468,9 +536,15 @@ public final class SelectiveEngine {
         }
         if(isFinal){
             java.util.regex.Matcher tail=TRAILING_REQUEST.matcher(n);
-            if(tail.find() && actionFor(tail.group(2))>=0){
+            if(tail.find() && actionFor(tail.group(2))>=0 && !mentionsCommand(n.substring(0,tail.start()))){
                 String leading=n.substring(0,tail.start());
-                text(leading,true,allowAutomatic);
+                String spokenPrefix=leading;
+                if(reading!=null){
+                    String display=normalize(reading);
+                    java.util.regex.Matcher marked=TRAILING_REQUEST.matcher(display);
+                    if(marked.find() && actionFor(marked.group(2))==actionFor(tail.group(2)))spokenPrefix=display.substring(0,marked.start());
+                }
+                text(leading,true,allowAutomatic,spokenPrefix);
                 n=n.substring(tail.start()+1);
             }
         }
@@ -478,6 +552,9 @@ public final class SelectiveEngine {
         boolean addressed=prefix.find();
         String request=addressed?n.substring(prefix.end()):n;
         int action=actionFor(request);
+        // Keep the existing generic shortcut when these two phrases are spoken without a wake.
+        if(action==KEEP_LINE && !addressed && at>awakeUntil &&
+            (request.contains("save that line") || request.contains("save that poem")))action=0;
         if(addressed && !wakeAnnounced && !(action>=0 && action==lastAction && at-lastVoiceCommand<RATE*2)){
             listener.onVoice("Wake heard · ready for a command",true);
             awakeUntil=at+RATE*8;wakeAnnounced=true;
@@ -513,7 +590,7 @@ public final class SelectiveEngine {
             if(isFinal){wakeAnnounced=false;awakeUntil=-1;}
             heldVoiceCommand=!isFinal;return;
         }
-        if(isFinal && (addressed || at<=awakeUntil)){
+        if(isFinal && addressed){
             listener.onVoice("Command unclear · try save that or start a passage",false);
             awakeUntil=-1;
         }
@@ -541,7 +618,9 @@ public final class SelectiveEngine {
         heldVoiceCommand = false;
         clearInterim();
         discardExpired();
-        Segment current = new Segment(body, at);
+        String wording=reading==null || reading.isEmpty()?body:reading;
+        if(wording.length()>MAX_TEXT)wording=wording.substring(wording.length()-MAX_TEXT);
+        Segment current = new Segment(body, at, wording);
         if (active) keptWords.add(body);
         Hit hit = allowAutomatic?detect(current):null;
         recent.addLast(current);
@@ -571,12 +650,31 @@ public final class SelectiveEngine {
         short[] audio = new short[count];
         copyRing(first, audio, 0, count);
         ArrayList<String> lines = new ArrayList<>();
-        for (Segment segment : recent) if (segment.at >= first) lines.add(segment.text);
+        String cue = "";
+        long cueStart = Math.max(first, at - 12L * RATE);
+        for (Segment segment : recent) {
+            if (segment.at >= first) lines.add(segment.text);
+            if (segment.at >= cueStart) cue = segment.learningText;
+        }
         String words = String.join(" ", lines);
-        if (!interim.isEmpty() && interimAt >= first && !heldVoiceCommand && !words.endsWith(interim))
-            words = (words + " " + interim).trim();
+        if (!interim.isEmpty() && interimAt >= first && !heldVoiceCommand) {
+            if (!words.endsWith(interim)) words = (words + " " + interim).trim();
+            if (interimAt >= cueStart) cue = interim;
+        }
         listener.onClip(new Clip(audio, words, category, "You chose to keep this as " + category + ".",
-            origin + first * 1000 / RATE, false, true));
+            origin + first * 1000 / RATE, false, cueTail(cue)));
+    }
+
+    // A single uninterrupted hypothesis can be long. Keep the words nearest the mark.
+    static String cueTail(String text) {
+        String phrase = text.trim();
+        if (phrase.length() <= 240) return phrase;
+        int boundary = phrase.indexOf(' ', phrase.length() - 240);
+        return boundary >= 0 ? phrase.substring(boundary + 1) : phrase.substring(phrase.length() - 240);
+    }
+
+    static boolean labeledCategory(String category) {
+        return FORGE.equals(category) || POETRY.equals(category) || DECISION.equals(category);
     }
 
     public synchronized void missed() {
@@ -667,7 +765,7 @@ public final class SelectiveEngine {
         if (!interim.isEmpty() && interimAt >= start && !heldVoiceCommand && !text.endsWith(interim))
             text = (text + " " + interim).trim();
         Clip clip = new Clip(Arrays.copyOf(selected, length), text, String.join(" + ", tags),
-            String.join(" ", reasons), origin + start * 1000 / RATE,byVoice,false);
+            String.join(" ", reasons), origin + start * 1000 / RATE,byVoice,null);
         previousEnd = start + length;
         active = false;
         selected = null;
@@ -732,27 +830,43 @@ public final class SelectiveEngine {
             (choice ? 4 : 0) + (task && edit ? 4 : 0) + (task ? 1 : 0)));
         if (analogy) options.add(new Hit(CONNECTION, "A comparison followed by an explanation.",
             2 + (explains ? 2 : 0)));
-        Set<String> words = learningTerms(current.text);
+        Set<String> words = learningTerms(current.learningText);
         double bestKeep = 0, bestSkip = 0;
+        Map<String,Double> categories = new HashMap<>();
+        Example closest = null;
         for (Example example : examples) {
-            double similarity = similarity(words, example.terms);
+            double similarity = example.markedWord != null && words.contains(example.markedWord) ? 1.0 : similarity(words, example.terms);
             if(!earlier.isEmpty()){
                 Set<String> present=new HashSet<>(words);present.retainAll(example.terms);
-                if(present.size()>=2)similarity=Math.max(similarity,.88*similarity(learningTerms(earlier+" "+current.text),example.terms));
+                if(present.size()>=2)similarity=Math.max(similarity,.88*similarity(learningTerms(previous.learningText+" "+current.learningText),example.terms));
             }
-            if (example.positive) bestKeep = Math.max(bestKeep, similarity);
-            else bestSkip = Math.max(bestSkip, similarity);
+            if (example.positive) {
+                if (similarity > bestKeep) { bestKeep = similarity; closest = example; }
+                if (labeledCategory(example.category))
+                    categories.put(example.category, Math.max(categories.getOrDefault(example.category, 0.0), similarity));
+            } else bestSkip = Math.max(bestSkip, similarity);
         }
         // A tie leaves stock rules alone. Feedback changes sensitivity without suppressing manual saves.
         int reviewAdjustment = 0;
         if (bestKeep >= 0.45 && bestKeep > bestSkip + 0.08) {
-            options.add(new Hit("Learned interest", "Shared several content words with a moment you kept or marked missed.", 3));
+            String category = "Learned interest";
+            if (closest != null && labeledCategory(closest.category)) {
+                double rival = 0;
+                for (Map.Entry<String,Double> entry : categories.entrySet())
+                    if (!entry.getKey().equals(closest.category)) rival = Math.max(rival, entry.getValue());
+                if (bestKeep > rival + .08) category = closest.category;
+            }
+            List<String> matched = new ArrayList<>();
+            for (String word : normalize(current.learningText).split(" "))
+                if (words.contains(word) && closest.terms.contains(word) && !matched.contains(word) && matched.size() < 3)
+                    matched.add(word);
+            options.add(new Hit(category, "Matched words from an earlier save: " + String.join(", ", matched) + ".", 3));
             reviewAdjustment = 1;
         } else if (bestSkip >= 0.45 && bestSkip > bestKeep + 0.08) {
             reviewAdjustment = -2;
         }
         boolean broadcast=has(s,"thanks for watching","like and subscribe","after this commercial break","this episode is sponsored by");
-        if(broadcast && bestKeep<.60)return null;
+        if(broadcast && (bestKeep<.60 || closest!=null && closest.markedWord!=null))return null;
         Hit best = null;
         for (Hit h : options) {
             int net = feedback.containsKey(h.category) ? feedback.get(h.category) : 0;

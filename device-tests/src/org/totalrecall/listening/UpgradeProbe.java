@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
-/** A fixture created by the installed 0.11.0 app and read after package replacement. */
+/** A fixture created by the installed prior release and read after package replacement. */
 public final class UpgradeProbe extends Instrumentation {
     private static final String PREFS = "upgrade_test_fixture";
     private static final String FEEDBACK = "keep";

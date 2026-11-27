@@ -17,7 +17,7 @@ public final class CaptureReviewActivity extends Activity {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private LinearLayout page,body,nav,results;
-    private TextView status,words,draft,context,scope,voiceState;
+    private TextView status,words,draft,context,scope,voiceState,micCheck;
     private CaptureCues preview;
     private Button liveTab,savedTab;
     private Switch journal;
@@ -48,6 +48,14 @@ public final class CaptureReviewActivity extends Activity {
         body=column();page.addView(body);tab(saved);
         if(getIntent().getBooleanExtra("commands",false)&&state==null)guide();
         if(getIntent().getBooleanExtra("noticeSettings",false)&&state==null)feedbackSettings();
+        if(getIntent().getBooleanExtra("micCheck",false) && state==null && micCheck!=null){
+            micCheck.post(()->{
+                android.graphics.Rect target=new android.graphics.Rect();
+                View card=(View)micCheck.getParent();card.getDrawingRect(target);
+                scroll.offsetDescendantRectToMyCoords(card,target);
+                scroll.scrollTo(0,Math.max(0,target.top-dp(8)));
+            });
+        }
     }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("saved",saved);}
     @Override protected void onStart(){super.onStart();RecallOverlay.reviewVisible(this,true);}
@@ -92,21 +100,30 @@ public final class CaptureReviewActivity extends Activity {
             journal.setOnCheckedChangeListener((v,on)->{
                 try{JournalStore.setEnabled(this,on);}catch(RuntimeException e){Toast.makeText(this,"Could not change journal saving.",Toast.LENGTH_SHORT).show();journal.post(()->journal.setChecked(JournalStore.enabled(this)));}
             });
+            LinearLayout microphone=card("Microphone check");
+            micCheck=text(microphone,"",15,true);
+            text(microphone,"Speak a short line after two quiet seconds. Compare the speech-band input with the room floor. If the levels stay close, move the microphone nearer or try a quieter spot. Decoder gain applies to captions and wake commands.",14,false);
             Switch quiet=new Switch(this);quiet.setText("Boost quiet speech for transcription");quiet.setMinHeight(dp(48));
-            quiet.setChecked(getSharedPreferences("recall-speech",0).getBoolean("liftQuiet",true));settings.addView(quiet);
-            quiet.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("liftQuiet",on).apply());
-            action(settings,"Learn room noise · 2 seconds",()->{
+            quiet.setChecked(getSharedPreferences("recall-speech",0).getBoolean("liftQuiet",true));microphone.addView(quiet);
+            Switch reach=new Switch(this);reach.setText("Extended reach for very quiet speech");reach.setMinHeight(dp(48));
+            reach.setChecked(getSharedPreferences("recall-speech",0).getBoolean("extendedReach",false));reach.setEnabled(quiet.isChecked());microphone.addView(reach);
+            quiet.setOnCheckedChangeListener((v,on)->{
+                getSharedPreferences("recall-speech",0).edit().putBoolean("liftQuiet",on).apply();reach.setEnabled(on);
+            });
+            reach.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("extendedReach",on).apply());
+            text(microphone,"Standard boost allows up to 12×. Extended reach allows up to 32× when the input rises above the room. The saved audio stays at its original level.",14,false);
+            action(microphone,"Learn room noise · 2 seconds",()->{
                 if(!LiveCapture.snapshot().receiving){Toast.makeText(this,"Start listening and wait for an active microphone first.",Toast.LENGTH_LONG).show();return;}
                 getSharedPreferences("recall-speech",0).edit().putBoolean("reduceRoom",true).apply();
                 startService(new Intent(this,RecallService.class).setAction(RecallService.LEARN_ROOM));
                 Toast.makeText(this,"Stay quiet for two seconds while the room is sampled.",Toast.LENGTH_LONG).show();
             });
-            action(settings,"Turn off room noise reduction",()->{
+            action(microphone,"Turn off room noise reduction",()->{
                 getSharedPreferences("recall-speech",0).edit().putBoolean("reduceRoom",false).apply();
                 Toast.makeText(this,"Live room filter off.",Toast.LENGTH_SHORT).show();
             });
-            text(settings,"Sample a fan or steady hum again after a pause or microphone change. The saved audio keeps the original sound.",14,false);
-            text(settings,"Recent words stay here for up to 90 seconds. Turn on the journal to keep future words. Quiet boost affects live English transcription only.",14,false);
+            text(microphone,"Sample a fan or steady hum again after a pause or microphone change. The saved audio keeps the original sound.",14,false);
+            text(settings,"Recent words stay here for up to 90 seconds. Turn on the journal to keep future words.",14,false);
             action(body,"Open recorder controls",()->recorder(null));paintLive();
         }
     }
@@ -193,6 +210,9 @@ public final class CaptureReviewActivity extends Activity {
     private void paintLive(){
         LiveCapture.Snapshot s=LiveCapture.snapshot();
         put(status,(s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"% · "+LiveCapture.roomStatus:s.state)+" · "+s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved"+(s.event.isEmpty()?"":"\n"+s.event));
+        String route=RecallService.activeInputRoute();
+        put(micCheck,s.receiving?(route.isEmpty()?"Active microphone":route)+"\n"+(LiveCapture.micSignal.isEmpty()?"Measuring input…":LiveCapture.micSignal):
+            s.waiting?"Waiting for the microphone. Measurements resume with new audio.":"Start listening to check your active microphone.");
         put(voiceState,!s.active?"Saved voice profiles are available next time you listen.":s.waiting?"Waiting for microphone access.":!s.groupsReady?"Voice grouping is off or preparing.":s.names.isEmpty()?"Listening for a clear voice. Short or mixed phrases may stay uncertain.":String.join("  •  ",s.names.values()));
         StringBuilder lines=new StringBuilder();
         long wall=System.currentTimeMillis(),clock=TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
