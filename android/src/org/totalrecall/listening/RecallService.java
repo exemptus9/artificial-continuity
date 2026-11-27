@@ -260,7 +260,7 @@ public final class RecallService extends Service {
             SelectiveEngine.Clip clip=take.finish();
             if(clip==null){SpokenTake.failed("No audio arrived. Try recording again.");return;}
             try{
-                long id=store.save(clip);SpokenTake.saved(id);LiveCapture.saved(id,"Voice take",clip.reason);sound(CaptureCues.Cue.TAKE);noticeSoon();
+                long id=store.save(clip);SpokenTake.saved(id);LiveCapture.saved(id,"Voice take",clip.reason,stopping.get() && userPaused);sound(CaptureCues.Cue.TAKE);noticeSoon();
             }catch(java.io.IOException|RuntimeException e){SpokenTake.failed("Could not save the take · "+message(e));return;}
             try{MintSync.schedule(RecallService.this);ArchiveSync.schedule(RecallService.this);}
             catch(RuntimeException e){LiveCapture.feedback("Voice take saved · transfer pending");}
@@ -374,9 +374,9 @@ public final class RecallService extends Service {
                     @Override public void onClip(SelectiveEngine.Clip clip){
                         if(!ListenPolicy.allowed(RecallService.this) || (stopping.get() && !userPaused))return;
                         LiveCapture.feedback("Writing clip to phone…");
-                        try{lastSaved[0]=store.save(clip);LiveCapture.saved(lastSaved[0],clip.category,clip.reason);progress("Saved · "+clip.category);}
+                        try{lastSaved[0]=store.save(clip);LiveCapture.saved(lastSaved[0],clip.category,clip.reason,stopping.get() && userPaused);progress("Saved · "+clip.category);}
                         catch(IOException|RuntimeException e){throw new SessionIssue("Clip could not be saved: "+message(e),e);}
-                        if(clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
+                        if(clip.finishedByVoice || clip.category.contains(SelectiveEngine.MANUAL)||clip.category.contains(SelectiveEngine.MISSED)){
                             sound(CaptureCues.Cue.CLIP);
                             try {Vibrator h=(Vibrator)getSystemService(VIBRATOR_SERVICE);if(h!=null&&h.hasVibrator())h.vibrate(45);}
                             catch(SecurityException ignored){}

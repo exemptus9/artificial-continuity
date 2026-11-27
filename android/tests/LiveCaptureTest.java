@@ -39,6 +39,9 @@ public final class LiveCaptureTest{
         check(!LiveCapture.snapshot().situationLines(LiveCapture.snapshot().finalSequence).contains("Question"));
         LiveCapture.waitFor("busy");check(!LiveCapture.snapshot().situationLines(0).contains("Question"));check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
         LiveCapture.stop("Paused");check(!LiveCapture.snapshot().active && LiveCapture.snapshot().finals.isEmpty());
+        int before=LiveCapture.snapshot().savedCount;
+        LiveCapture.saved(42,"Voice take","User request",true);
+        check(LiveCapture.snapshot().savedCount==before+1 && LiveCapture.snapshot().lastSave.isEmpty());
         MicrophoneContinuity gaps=new MicrophoneContinuity();check(gaps.lose(100));check(!gaps.lose(300));
         check(gaps.resume(600)==500);check(!gaps.waiting());check(gaps.resume(800)==-1);
         check(gaps.lose(1000));check(gaps.stop(1080)==80);check(gaps.resume(1300)==-1);check(!gaps.lose(2000));

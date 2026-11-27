@@ -133,7 +133,10 @@ public final class LiveCapture {
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
     private static void clear(){roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){saved(-1,what,why);}
-    static synchronized void saved(long id,String what,String why){if(active){latestClip=id;latestSaveTime=System.currentTimeMillis();savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
+    static synchronized void saved(long id,String what,String why){saved(id,what,why,false);}
+    static synchronized void saved(long id,String what,String why,boolean finishingPause){
+        if(!active && finishingPause){savedCount++;return;}
+        if(active){latestClip=id;latestSaveTime=System.currentTimeMillis();savedCount++;feedback("Clip saved · "+what);lastSave=bounded(what,120);reason=bounded(why,250);}}
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
         wordsAt(text,complete,t,0);

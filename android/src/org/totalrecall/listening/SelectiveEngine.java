@@ -79,8 +79,13 @@ public final class SelectiveEngine {
         public final short[] audio;
         public final String transcript, category, reason;
         public final long startedAtMillis;
+        final boolean finishedByVoice;
 
         Clip(short[] audio, String transcript, String category, String reason, long startedAtMillis) {
+            this(audio,transcript,category,reason,startedAtMillis,false);
+        }
+        private Clip(short[] audio,String transcript,String category,String reason,long startedAtMillis,boolean byVoice){
+            finishedByVoice=byVoice;
             this.audio = audio;
             this.transcript = transcript;
             this.category = category;
@@ -486,7 +491,7 @@ public final class SelectiveEngine {
                     if(!passage){passage=true;select(POETRY,"You started a passage by voice.",RATE*4);}
                     listener.onVoice("Capturing passage · say finish passage to save",false);
                 }else if(action==3){
-                    if(passage){passage=false;commit();listener.onVoice("Passage ended",false);}
+                    if(passage){passage=false;commit(true);listener.onVoice("Passage ended",false);}
                     else listener.onVoice("No passage is open",false);
                 }else{
                     if(passage){passage=false;commit();}
@@ -620,14 +625,15 @@ public final class SelectiveEngine {
         if (first < count) System.arraycopy(ring, 0, to, atTo + first, count - first);
     }
 
-    private void commit() {
+    private void commit(){commit(false);}
+    private void commit(boolean byVoice) {
         if (!active) return;
         // A partial can be useful if a button captured the phrase before the ASR endpoint.
         String text = String.join(" ", keptWords);
         if (!interim.isEmpty() && interimAt >= start && !heldVoiceCommand && !text.endsWith(interim))
             text = (text + " " + interim).trim();
         Clip clip = new Clip(Arrays.copyOf(selected, length), text, String.join(" + ", tags),
-            String.join(" ", reasons), origin + start * 1000 / RATE);
+            String.join(" ", reasons), origin + start * 1000 / RATE,byVoice);
         previousEnd = start + length;
         active = false;
         selected = null;
