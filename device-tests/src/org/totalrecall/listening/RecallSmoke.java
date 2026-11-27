@@ -371,6 +371,20 @@ public final class RecallSmoke extends Instrumentation {
                 SpeechChecks off=feedWindow(window,tick,fixture,true);
                 require(off.partial && off.finalized && off.level,"Production PCM pipeline did not display a partial, a final and audio level");
                 require(journals.sessions().size()==initialSessions,"Disabled journal retained everyday speech");
+                Method take=method(windowType,"takeAction",boolean.class);
+                take.invoke(window,true);feedWindow(window,tick,fixture,false);take.invoke(window,false);
+                List<Store.Moment> takes=clips.search("Voice take");require(!takes.isEmpty(),"Manual voice take was not saved");
+                Store.Moment captured=takes.get(0);
+                try{
+                    require(captured.transcript.contains("table"),"Take did not include the original recognition");
+                    byte[] audioBytes=java.nio.file.Files.readAllBytes(captured.audio.toPath());
+                    require(audioBytes.length==fixture.length+4*32000+44,"Take included samples outside its boundaries");
+                    for(int i=0;i<fixture.length;i++)require(audioBytes[i+44]==fixture[i],"Captured wave differs from input");
+                    method(Store.class,"correctWords",long.class,String.class).invoke(clips,captured.id,"I revised this line.");
+                    Store.Moment revised=clips.get(captured.id);
+                    require(revised.transcript.equals(captured.transcript) && revised.correction.equals("I revised this line.") && revised.sha256.equals(captured.sha256),"Correcting words changed the source");
+                }finally{clips.delete(captured.id);}
+
                 click(waitText(a,"Full journal · off",10000));
                 tapNode("Save all recognized speech on this phone");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
                 require(JournalStore.enabled(target),"Journal switch failed to opt in");
@@ -405,6 +419,15 @@ public final class RecallSmoke extends Instrumentation {
                         require(!new String(bytes(zip),StandardCharsets.UTF_8).toLowerCase(Locale.ROOT).contains("table"),
                                 "Journal utterance leaked into clip archive index");
                     }
+                }
+                try(android.database.Cursor row=reopened.getReadableDatabase().rawQuery("SELECT id,text FROM lines WHERE session=? AND is_partial=0",new String[]{String.valueOf(session)})){
+                    require(row.moveToFirst(),"No editable line");long line=row.getLong(0);String raw=row.getString(1);
+                    Method correctLine=method(JournalStore.class,"correctLine",long.class,String.class,String.class);
+                    correctLine.invoke(reopened,line,raw,"My corrected journal line.");
+                    ByteArrayOutputStream revised=new ByteArrayOutputStream();reopened.export(session,revised);
+                    String both=revised.toString("UTF-8");require(both.contains("Originally heard · "+raw) && both.contains("My corrected journal line."),"Journal export lost original or correction");
+                    boolean stale=false;try{correctLine.invoke(reopened,line,raw,"A stale edit");}catch(java.lang.reflect.InvocationTargetException e){stale=e.getCause() instanceof IllegalStateException;}
+                    require(stale,"An old editor overwrote a newer correction");
                 }
                 reopened.delete(session);
                 final long deleted=session;
@@ -529,6 +552,11 @@ public final class RecallSmoke extends Instrumentation {
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
             assertOverlayInScreenshot(handle);tapNode(handle);assertOverlayInScreenshot("Shrink panel");waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
+            tapNode("Record a new voice take and edit what you actually said");waitNode("Finish & edit");
+            SystemClock.sleep(500);tapNode("Finish & edit");waitNode("Listen to original");waitNode("Save corrected words");
+            waitNode("Share original audio");waitNode("Copy these words");
+            getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
+            waitNode("Shrink panel");
             tapNode("More overlay actions");tapNode("Use the smallest panel with live status and words");
             assertOverlayInScreenshot("Open medium panel");tapNode("Open medium panel");waitNode(handle);tapNode(handle);
             tapNode("More overlay actions");tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");

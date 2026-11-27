@@ -76,6 +76,17 @@ public final class LiveCapture {
             sessionSeconds=on?Math.max(0,t-sessionStart)/1000:0;
             receiving=on&&!wait&&t-lastLevel<750;
         }
+        String registration(long after){
+            if(waiting)return "Mic unavailable · no words arriving";
+            if(!receiving)return "Waiting for input";
+            String input="Input "+Math.round(level*100)+"%";
+            if(finalSequence>=after && !partial.isEmpty())return input+" · Decoding speech…";
+            if(finalSequence>after && !recognizedAt.isEmpty()){
+                long age=Math.max(0,(now()-recognizedAt.get(recognizedAt.size()-1))/1000);
+                return input+" · Last line "+(age<1?"just registered":age+" s ago");
+            }
+            return input+" · Waiting for words";
+        }
         String scene(long after){
             int first=(int)Math.max(0,finals.size()-Math.max(0,finalSequence-after));
             int prior=0,switches=0;boolean me=false,media=false;

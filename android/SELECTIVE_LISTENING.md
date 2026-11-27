@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.22.0
+# Live listening on Galaxy · 0.23.0
 
-Install `TotalRecall-0.22.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.23.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -67,3 +67,9 @@ While the microphone is receiving audio, open **Live now → Remember voices →
 Under **Capture choices**, choose **Learn room noise · 2 seconds** while only the background is audible. The live English decoder uses the resulting filter. Capture keeps the original audio. Learn again after a pause or a microphone change, or turn off reduction at any time.
 
 The expanded overlay shows **Now** and **Last**. These are interpretations of recent words and voice activity. After 45 seconds without a fresh cue the latest one moves to **Last**. Open **Live & saved** to inspect the source wording.
+
+## Record and review your own words
+
+Choose **Record my words** on the large panel or **Record my words & edit** on the recorder. Speak after the timer starts. **Finish & edit** opens the saved take. A take also closes at one minute or when usable microphone input ends. **Listen to original** offers to pause the live microphone for playback. Edit **What I actually said**, then **Save corrected words**. You can copy or share the wording or share the original WAV separately. Takes appear in **Saved on phone → Recent saved clips** even with the journal switched off.
+
+Tap a passage in **Full journal** to correct, copy or share its wording. **Compare with original recognition** and session text exports retain the earlier reading.

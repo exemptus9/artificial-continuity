@@ -65,12 +65,13 @@ public final class CaptureReviewActivity extends Activity {
             LinearLayout captions=card("Live transcript");
             words=text(captions,"",17,false);words.setTextIsSelectable(true);
             draft=text(captions,"",16,false);draft.setTypeface(Typeface.DEFAULT,Typeface.ITALIC);
+            action(captions,"Record my words & edit",()->startActivity(new Intent(this,VoiceTakeActivity.class).putExtra("begin",true)));
             LinearLayout situation=card("What the words suggest");
             context=text(situation,"",16,false);context.setTextIsSelectable(true);
             LinearLayout people=card("Voices & sources");
             action(people,"Remember voices",()->startActivity(new Intent(this,VoiceProfilesActivity.class)));
             voiceState=text(people,"",15,false);
-            action(people,"Name voices or correct a line",()->{LiveCapture.Snapshot live=LiveCapture.snapshot();new VoiceEditor(this,io,live.journalId,this::paintLive).open();});
+            action(people,"Name voices or change a speaker",()->{LiveCapture.Snapshot live=LiveCapture.snapshot();new VoiceEditor(this,io,live.journalId,this::paintLive).open();});
             Switch media=new Switch(this);media.setText("Skip automatic clip suggestions from remembered media voices");
             media.setChecked(getSharedPreferences("recall-speech",0).getBoolean("skipMedia",true));people.addView(media);
             media.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("skipMedia",on).apply());

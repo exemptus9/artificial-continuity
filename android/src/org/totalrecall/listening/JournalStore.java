@@ -72,6 +72,18 @@ public final class JournalStore extends SQLiteOpenHelper {
             new String[]{String.valueOf(session),String.valueOf(before)})){while(c.moveToNext())turns.add(new Turn(c));}
         return turns;
     }
+    void correctLine(long id,String before,String after){
+        String words=after.trim();
+        if(words.isEmpty() || words.length()>6000 || words.contains("\n") || words.contains("\r"))throw new IllegalArgumentException("Enter one line of up to 6,000 characters.");
+        synchronized(GUARD){
+            try(android.database.sqlite.SQLiteStatement update=getWritableDatabase().compileStatement(
+                "UPDATE lines SET original=COALESCE(original,text),text=? WHERE id=? AND text=? AND is_partial<>2")){
+                update.bindString(1,words);update.bindLong(2,id);update.bindString(3,before);
+                if(update.executeUpdateDelete()!=1)throw new IllegalStateException("This line changed or expired. Open it again.");
+            }
+        }
+        ArchiveSync.schedule(app);
+    }
     void assign(long session,long row,int voice){
         ContentValues v=new ContentValues();v.put("voice",voice);
         if(getWritableDatabase().update("lines",v,"id=? AND session=? AND is_partial<>2",new String[]{String.valueOf(row),String.valueOf(session)})!=1)

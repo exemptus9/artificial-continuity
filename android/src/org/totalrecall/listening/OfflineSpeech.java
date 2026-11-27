@@ -206,6 +206,10 @@ public final class OfflineSpeech implements AutoCloseable {
         return spellings.apply("",next);
     }
 
+    void newUtterance(){
+        recognizer.reset();if(commandRecognizer!=null)commandRecognizer.reset();
+        pendingCommand=null;rawPartial="";priorContext="";priorSpeaker=0;
+    }
     public String finish() {
         return displayFinal(recognizer.getFinalResult());
     }

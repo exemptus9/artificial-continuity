@@ -35,7 +35,7 @@ final class VoiceEditor {
     private void menu(){
         ArrayList<Integer> ids=new ArrayList<>(voices.keySet());ArrayList<String> options=new ArrayList<>();
         for(int id:ids)options.add(label(id));
-        if(session>=0)options.add("Correct a journal line…");
+        if(session>=0)options.add("Change the speaker on a line…");
         AlertDialog.Builder dialog=new AlertDialog.Builder(activity).setTitle("Name voices & sources").setNegativeButton("Close",null);
         if(options.isEmpty())dialog.setMessage("A voice appears after a sufficiently long spoken phrase. Enable the text journal to keep labels and correct individual lines.");
         else dialog.setItems(options.toArray(new String[0]),(d,i)->{if(i<ids.size())edit(ids.get(i),-1);else turns(Long.MAX_VALUE);});

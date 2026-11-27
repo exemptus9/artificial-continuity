@@ -128,6 +128,7 @@ public final class RecallListenActivity extends Activity {
         manualActions=row();split(manualActions,toggle,keep);controls.addView(manualActions);
         latestCatch=text("",14,0xffd3e8d7,false);latestCatch.setPadding(0,dp(8),0,0);latestCatch.setMaxLines(3);
         latestCatch.setEllipsize(TextUtils.TruncateAt.END);controls.addView(latestCatch);header.addView(controls);
+        Button recordWords=button("Record my words & edit",true);recordWords.setOnClickListener(v->startActivity(new Intent(this,VoiceTakeActivity.class).putExtra("begin",true)));header.addView(recordWords);
         Button reviewCapture=button("Live words & capture archive",true);
         reviewCapture.setOnClickListener(v->startActivity(new Intent(this,CaptureReviewActivity.class)));header.addView(reviewCapture);
         LinearLayout sessionTools=row();journalButton=link("Text journal");
@@ -518,19 +519,27 @@ public final class RecallListenActivity extends Activity {
         stopPlayer();ScrollView scroll=new ScrollView(this);LinearLayout body=column();pad(body,18,14);scroll.addView(body);
         body.addView(text(momentDate(m.startMs)+"   ·   "+duration(m),15,SECOND,false));
         String evidence=nonempty(m.correction)?m.correction:m.transcript;
+        if(nonempty(evidence)){
+            labeled(body,nonempty(m.correction)?"Your wording":"Recognized words",evidence);
+            LinearLayout sharing=row();Button copy=link("Copy words"),share=link("Share words");split(sharing,copy,share);body.addView(sharing);
+            copy.setOnClickListener(v->PassageActions.copy(this,evidence));share.setOnClickListener(v->PassageActions.share(this,evidence));
+        }
+        Button fix=button("Correct what I said",true);body.addView(fix);
+        LinearLayout soundActions=row();Button listen=link("Playback & trim"),audio=link("Share audio");split(soundActions,listen,audio);body.addView(soundActions);
+        listen.setOnClickListener(v->{stopPlayer();studio=new ClipStudio(this,m,worker,this::refresh);studio.show();});
+        audio.setOnClickListener(v->PassageActions.audio(this,m,worker));
         body.addView(StoryNotes.button(this,StoryNotes.Kind.CLIP,String.valueOf(m.id),nonempty(evidence)?Situation.read(this,evidence,false,true):""));
         if(nonempty(evidence))labeled(body,nonempty(m.correction)?"Situation from your correction":"Situation from recognized words",Situation.read(this,evidence,false));
         if(nonempty(m.note))labeled(body,"Situation from your note",Situation.read(this,m.note,false));
         if(m.audio!=null&&m.audio.isFile()){Button analyze=link("Analyze original recording");analyze.setOnClickListener(v->AudioSituation.show(this,StoryNotes.Kind.CLIP,String.valueOf(m.id),ex->ex.setDataSource(m.audio.getAbsolutePath())));body.addView(analyze);}
         labeled(body,"Why it was kept",m.reason);
-        if(nonempty(m.correction))labeled(body,"Edited transcript",m.correction);
-        labeled(body,"Original transcript",nonempty(m.transcript)?m.transcript:"No transcript is available for this clip.");
+        if(nonempty(m.correction))labeled(body,"Originally heard",m.transcript);
         if(nonempty(m.note))labeled(body,"Note",m.note);
         if(nonempty(m.feedback)&&!"none".equals(m.feedback))labeled(body,"Your feedback","keep".equals(m.feedback)?"Worth keeping":"Less like this");
         if(nonempty(m.parentId))labeled(body,"Excerpt source","Parent clip "+m.parentId+"\nSamples "+m.startSample+" through "+(m.endSample-1)+" at 16 kHz");
-        Button play=button("Playback & trim",true);play.setEnabled(m.audio!=null&&m.audio.isFile());
-        play.setOnClickListener(v->{stopPlayer();studio=new ClipStudio(this,m,worker,this::refresh);studio.show();});body.addView(play);
+        boolean available=m.audio!=null&&m.audio.isFile();listen.setEnabled(available);audio.setEnabled(available);
         AlertDialog dlg=new AlertDialog.Builder(this).setTitle(m.title).setView(scroll).setPositiveButton("Close",null).create();
+        fix.setOnClickListener(v->{dlg.dismiss();editMoment(m);});
         LinearLayout feedback=row();Button keep=button("Worth keeping",false),skip=button("Less like this",false);split(feedback,keep,skip);body.addView(feedback);
         keep.setOnClickListener(v->{dlg.dismiss();write("Feedback saved",s->s.feedback(m.id,"keep"));});
         skip.setOnClickListener(v->{dlg.dismiss();write("Feedback saved",s->s.feedback(m.id,"skip"));});
@@ -544,7 +553,8 @@ public final class RecallListenActivity extends Activity {
     }
     private void editMoment(Store.Moment m){
         ScrollView scroll=new ScrollView(this);LinearLayout body=column();pad(body,16,8);scroll.addView(body);
-        EditText title=field(body,"Title",m.title,true), correction=field(body,"Corrected transcript",nonempty(m.correction)?m.correction:m.transcript,false),
+        labeled(body,"Originally heard",nonempty(m.transcript)?m.transcript:"No words recognized");
+        EditText correction=field(body,"What I actually said",nonempty(m.correction)?m.correction:m.transcript,false),title=field(body,"Title",m.title,true),
             note=field(body,"Note",m.note,false);
         AlertDialog dlg=new AlertDialog.Builder(this).setTitle("Edit details").setView(scroll)
             .setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();dlg.show();

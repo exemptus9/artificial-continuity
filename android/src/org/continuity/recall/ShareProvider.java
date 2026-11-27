@@ -13,7 +13,7 @@ public class ShareProvider extends ContentProvider {
 
   File resolve(Uri u) throws FileNotFoundException {
     String n = u.getLastPathSegment();
-    if (n == null || !n.matches("(context\\.(json|txt)|diagnostic\\.json|audio-[a-f0-9-]+\\.m4a)"))
+    if (n == null || !n.matches("(context\\.(json|txt)|diagnostic\\.json|clip-[a-f0-9-]+\\.wav|audio-[a-f0-9-]+\\.m4a)"))
       throw new FileNotFoundException();
     File f = new File(getContext().getCacheDir(), n);
     if (!f.isFile() || System.currentTimeMillis() - f.lastModified() > 600000)
@@ -22,6 +22,7 @@ public class ShareProvider extends ContentProvider {
   }
 
   public String getType(Uri u) {
+    if(u.getPath().endsWith(".wav"))return "audio/wav";
     return u.getPath().endsWith(".m4a")
         ? "audio/mp4"
         : u.getPath().endsWith(".txt") ? "text/plain" : "application/json";

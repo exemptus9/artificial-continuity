@@ -226,6 +226,11 @@ public final class Store extends SQLiteOpenHelper {
         if(getWritableDatabase().update("clips",cv,"id=?",new String[]{String.valueOf(id)})!=1)throw new IllegalArgumentException("Clip no longer exists");
         scheduleTransfer();
     }
+    void correctWords(long id,String text){
+        ContentValues update=new ContentValues();update.put("correction",text);
+        if(getWritableDatabase().update("clips",update,"id=?",new String[]{String.valueOf(id)})!=1)throw new IllegalArgumentException("Clip no longer exists");
+        scheduleTransfer();
+    }
     public void feedback(long id,String choice){
         if(!Arrays.asList("keep","skip","none").contains(choice))throw new IllegalArgumentException("Unknown feedback");
         ContentValues cv=new ContentValues();cv.put("feedback",choice);
