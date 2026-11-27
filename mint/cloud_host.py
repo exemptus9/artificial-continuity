@@ -44,7 +44,7 @@ CREATIVE_PATCH_APK = ("TotalRecall-0.28.1.apk",70221163,"aa63f4852adc9bda7861a3f
 VOICE_PRACTICE_APK = ("TotalRecall-0.29.0.apk",70233451,"401ee4c48b5e02d917e8ae0808ac3e03fd7d93d3d2c326259f2c3977b117587e")
 APK_NAME = "TotalRecall-0.30.0.apk"
 APK_SIZE = 70887513
-APK_SHA = "e530302ca1f9271820c6a5b3657287dc4da73f7b64e48a58f811bc00086f7820"
+APK_SHA = "769827adb28a71f1aaa868b0cd8de755c918263a7184608f6abab08efd7c7bb0"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
