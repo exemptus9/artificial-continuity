@@ -1,6 +1,7 @@
 """Local captions from the recorder's PCM stream. Speech remains in panel memory."""
 from difflib import SequenceMatcher
 import os
+import speech_context
 from pathlib import Path
 import select
 import stat
@@ -153,7 +154,7 @@ class LiveWords:
                 if end or now - last_result >= .24:
                     hyp = decoder.hyp()
                     if hyp and hyp.hypstr.strip():
-                        self.line = " ".join(hyp.hypstr.split()[-22:])
+                        self.line = " ".join(speech_context.correct(hyp.hypstr).split()[-22:])
                         last_text = now
                         if end and self.on_final and not self.done.is_set():self.on_final(checked_wake(decoder,original,phrase,hyp.hypstr.strip()))
                     elif now - last_text > 5:

@@ -260,14 +260,14 @@ public final class RecallService extends Service {
             if(utterance!=null){
                 remember();speech.offerExample(utterance);
                 LiveCapture.attributed(utterance,speech.lastVoice());
-                journal.append(session,epoch,utterance,false,speech.lastVoice());
+                journal.append(session,epoch,utterance,false,speech.lastVoice(),speech.rawWords());
             }else if(clock>=nextPartial){
                 nextPartial=clock+140;String partial=speech.partial();
                 LiveCapture.words(partial,false);
-                if(command==null && partial!=null)engine.text(partial,false,!deferUntilSpeaker);
+                if(command==null && partial!=null)engine.text(speech.rawPartial(),false,!deferUntilSpeaker);
             }
-            if(utterance!=null)engine.text(utterance,true,!(skipMedia && speech.isMedia()));
-            if(command!=null && !command.equals(utterance) && !stopping.get())engine.text(command,true);
+            if(utterance!=null)engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
+            if(command!=null && (utterance==null || !command.equals(speech.rawWords())) && !stopping.get())engine.text(command,true);
             if(!stopping.get())engine.pcm(data,count);
         }
         void end(boolean gap,String reason){
@@ -277,12 +277,12 @@ public final class RecallService extends Service {
                 // Consume the recognizer tail once. Never persist an utterance from before opt-in,
                 // after opt-out, or while app-wide capture policy is disabled.
                 if(ListenPolicy.allowed(RecallService.this)){
-                    String partial=speech.partial();
+                    String partial=speech.partial(),rawPartial=speech.rawPartial();
                     String finalWords=speech.finish();
                     if(finalWords!=null){
-                        remember();journal.append(session,epoch,finalWords,false,speech.lastVoice());
-                        if(gap && !stopping.get())engine.text(finalWords,true,!(skipMedia && speech.isMedia()));
-                    }else if(partial!=null){journal.append(session,epoch,partial,true);}
+                        remember();journal.append(session,epoch,finalWords,false,speech.lastVoice(),speech.rawWords());
+                        if(gap && !stopping.get())engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
+                    }else if(partial!=null){journal.append(session,epoch,partial,true,0,rawPartial);}
                     if((gap && !stopping.get()) || (userPaused && engine.passageOpen()) || (ending && engine.isSelecting()))engine.finish();
                 }
             }finally{

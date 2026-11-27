@@ -1,0 +1,33 @@
+aloud	\b(?:read|reading|say|saying|speak|speaking|think|thinking) (?:it |this |that |the line |the poem |the words |my poem )?(allowed)\b
+write	\b(right|rite)(?= (?:it|that|this|the idea|the words|my thoughts) down\b)
+write	\b(?:to|will|can|could|should|please|let me) (right|rite)(?= (?:a|the|my|this|another) (?:poem|letter|novel|stanza|paragraph)\b)
+peace	\b(piece)(?= of mind\b)
+piece	\b(peace)(?= of (?:paper|cake|wood|fabric|glass|music)\b)
+brakes	\b(?:apply|applied|hit|slam|slammed|check|replace) (?:my |your |the |both )?(breaks)\b
+brake	\b(break)(?= (?:pedal|pads|fluid)\b)
+break	\b(?:take|taking|took) (?:a |another )?(brake)\b
+whether	\b(?:decide|deciding|wonder|wondering|determine|asked|unsure) (weather)(?= (?:to|we|i|it|the|they|you|he|she)\b)
+weather	\b(whether)(?= (?:forecast|report|radar|station)\b)
+site	\b(?:web|construction|building|archaeological) (sight|cite)\b
+cite	\b(?:please|must|should|to) (site|sight)(?= (?:your|the|a|my|our) (?:sources?|paper|article|study)\b)
+sight	\b(?:line|sense|field) of (site|cite)\b
+hear	\b(?:could|can|cannot|couldn't|can't) (?:barely |clearly )?(here)(?= (?:me|you|them|the music|the words|my voice)\b)
+here	\b(?:right|over) (hear)(?= (?:beside|next to|on the table|in front of)\b)
+their	\b(?:in|with|from|about) (there|they're)(?= own\b)
+they're	\b(?:because|although|unless) (their|there)(?= (?:going to|trying to|about to)\b)
+too	\b(to|two)(?= (?:loud|quiet|noisy|faint|fast|slow) (?:for|to)\b)
+stationary	\b(?:remained|remain|stayed|stay) (stationery)\b
+principal	\b(?:school|assistant) (principle)\b
+principle	\b(?:as a matter of|the underlying) (principal)\b
+flour	\b(?:a cup of|cups of|sift the|sifting the) (flower)\b
+aisle	\b(?:walk|walked|walking) down the (isle)\b
+you're	\b(?:if|because) (your)(?= (?:going to|trying to|looking for|about to)\b)
+a lot	\b(alot)\b
+could have	\b(could of)(?= (?:been|done|seen|gone|heard|written|taken|made)\b)
+would have	\b(would of)(?= (?:been|done|seen|gone|heard|written|taken|made)\b)
+should have	\b(should of)(?= (?:been|done|seen|gone|heard|written|taken|made)\b)
+I	\b(i)(?= (?:am|was|have|had|will|would|can|could|should|think|thought|want|need|remember|wrote|said|heard|feel|felt|meant|mean)\b)
+I'm	\b(i'm)\b
+I'll	\b(i'll)\b
+I've	\b(i've)\b
+I'd	\b(i'd)\b

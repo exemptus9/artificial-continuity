@@ -27,6 +27,7 @@ import zipfile
 
 import situation
 import live_words
+import speech_context
 import recall_archive as storage
 
 HOST="total-recall-archive-production.up.railway.app"
@@ -192,7 +193,9 @@ def finish(arc,path,cfg):
             lines=[]
             def phrase(seconds,text):
                 stamp=time.strftime("%Y-%m-%d %H:%M:%S Z",time.gmtime(start/1000+seconds))
-                lines.append(stamp+"  "+text)
+                polished=speech_context.correct(text)
+                lines.append(stamp+"  "+polished)
+                if polished!=text:lines.append("  Originally heard · "+text)
             with path.open("rb") as pcm:situation.scan(pcm,situation.new_decoder(),0,True,phrase)
             if lines:
                 text=Path(tmp)/"journal.txt";text.write_text("Total Recall · Mint microphone\n"+"\n".join(lines)+"\n",encoding="utf-8")
@@ -253,7 +256,7 @@ def capture(arc,root,cfg,input_args):
             else:event="Command unclear · try save that"
             awake=0;event_at=time.monotonic()
         if cmd:
-            found=situation.interpret([(words,"",None)])
+            found=situation.interpret([(speech_context.correct(words),"",None)])
             if found and found[0]["label"]!="Source excerpt":cue=found[0]["label"];cue_at=time.monotonic()
     voice=live_words.LiveWords(root,"voice-control.fifo",heard) if cfg.get("commands",True) else None
     stream_pos=secrets.randbits(61)

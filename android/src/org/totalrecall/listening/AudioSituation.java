@@ -132,7 +132,7 @@ public final class AudioSituation {
             String who=speech.attributedVoice();
             String at=time(start/16000)+"–"+time(samples/16000)+(who.isEmpty()?"":" · "+who);
             context.add(text,at);start=samples;
-            if(turns.size()<40)turns.add(at+"  "+text.substring(0,Math.min(250,text.length())));
+            if(turns.size()<40)turns.add(at+"  "+text.substring(0,Math.min(250,text.length()))+(speech.rawWords().equals(text)?"":"\n  Originally heard · "+speech.rawWords().substring(0,Math.min(250,speech.rawWords().length()))));
         }
         void flush(){
             if(used==0)return;

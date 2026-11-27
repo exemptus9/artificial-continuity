@@ -11,7 +11,7 @@ version=$(python3 -c 'from xml.etree import ElementTree as E; print(E.parse("And
 commit=$(git rev-parse HEAD 2>/dev/null || echo source-export)
 output="build/TotalRecall-$version.apk"
 mkdir -p assets/listening
-cp ../mint/web/situation-rules.tsv assets/listening/situation-rules.tsv
+cp ../mint/web/situation-rules.tsv ../mint/web/speech-context.tsv assets/listening/
 python3 prepare-speech.py
 python3 tests/prepare-prosody.py
 rm -rf build/classes build/dex build/generated

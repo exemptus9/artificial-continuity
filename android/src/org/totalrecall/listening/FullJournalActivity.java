@@ -18,7 +18,7 @@ public final class FullJournalActivity extends Activity {
     private Button older,newer;
     private long next,nextRefresh;
     private int generation;
-    private boolean visible,busy;
+    private boolean visible,busy,showOriginal;
     private final Runnable poll=new Runnable(){public void run(){
         if(!visible)return;
         LiveCapture.Snapshot live=LiveCapture.snapshot();
@@ -41,8 +41,12 @@ public final class FullJournalActivity extends Activity {
         save.setChecked(JournalStore.enabled(this));page.addView(save);
         save.setOnClickListener(v->{try{JournalStore.setEnabled(this,save.isChecked());read();}
             catch(RuntimeException e){save.setChecked(JournalStore.enabled(this));Toast.makeText(this,"Could not update journal saving",Toast.LENGTH_LONG).show();}});
+        Switch original=new Switch(this);original.setText("Compare with original recognition");page.addView(original);
+        original.setOnCheckedChangeListener((v,on)->{showOriginal=on;read();});
+        LinearLayout tools=new LinearLayout(this);page.addView(tools);
+        button(tools,"My words & phrases",()->SpellingPreferences.open(this));
         Button sessions=new Button(this);sessions.setText("Sessions, export & retention");
-        sessions.setOnClickListener(v->startActivity(new Intent(this,RecallListenActivity.class).putExtra("captureDestination","journalOptions")));page.addView(sessions);
+        sessions.setOnClickListener(v->startActivity(new Intent(this,RecallListenActivity.class).putExtra("captureDestination","journalOptions")));tools.addView(sessions,new LinearLayout.LayoutParams(0,-2,1));
         LinearLayout nav=new LinearLayout(this);page.addView(nav);
         newer=button(nav,"Newer lines",()->{if(pages.size()>1){pages.remove(pages.size()-1);read();}});
         older=button(nav,"Older lines",()->{if(next>0){pages.add(next);read();}});
@@ -57,18 +61,20 @@ public final class FullJournalActivity extends Activity {
     @Override public void onPause(){visible=false;generation++;busy=false;main.removeCallbacks(poll);RecallOverlay.reviewVisible(this,false);super.onPause();}
     @Override public void onDestroy(){io.shutdownNow();super.onDestroy();}
     private void read(){
-        int request=++generation;long before=pages.get(pages.size()-1);busy=true;older.setEnabled(false);newer.setEnabled(pages.size()>1);
+        int request=++generation;long before=pages.get(pages.size()-1);boolean compare=showOriginal;busy=true;older.setEnabled(false);newer.setEnabled(pages.size()>1);
         io.execute(()->{
             long boundary=0;StringBuilder result=new StringBuilder();String error=null;
             try(JournalStore db=new JournalStore(this)){
                 db.prune();
-                try(Cursor c=db.getReadableDatabase().rawQuery("SELECT l.id,l.at,l.text,l.is_partial,l.voice,v.name,v.source FROM lines l LEFT JOIN journal_voices v ON v.session=l.session AND v.voice=l.voice WHERE l.id<? ORDER BY l.id DESC LIMIT 41",new String[]{String.valueOf(before)})){
+                try(Cursor c=db.getReadableDatabase().rawQuery("SELECT l.id,l.at,l.text,l.is_partial,l.voice,v.name,v.source,l.original FROM lines l LEFT JOIN journal_voices v ON v.session=l.session AND v.voice=l.voice WHERE l.id<? ORDER BY l.id DESC LIMIT 41",new String[]{String.valueOf(before)})){
                     int count=0;long last=0;DateFormat format=DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.MEDIUM);
                     while(c.moveToNext()){
                         if(count++==40){boundary=last;break;}last=c.getLong(0);
                         String who=JournalStore.voiceLabel(c.getInt(4),c.getString(5),c.getString(6));
                         result.append(format.format(new Date(c.getLong(1)))).append(who.isEmpty()?"":" · "+who)
-                            .append(c.getInt(3)==1?" · unfinished":c.getInt(3)==2?" · capture status":"").append('\n').append(c.getString(2)).append("\n\n");
+                            .append(c.getInt(3)==1?" · unfinished":c.getInt(3)==2?" · capture status":"").append('\n').append(!compare&&c.getInt(3)==0?SpeechContext.reading(c.getString(2)):c.getString(2));
+                        if(compare&&!c.isNull(7))result.append("\nOriginally heard · ").append(c.getString(7));
+                        result.append("\n\n");
                     }
                 }
             }catch(RuntimeException failure){error="Could not read the journal.";}

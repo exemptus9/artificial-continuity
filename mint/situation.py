@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import speech_context
 import tempfile
 import threading
 
@@ -194,7 +195,7 @@ def scan(stream,decoder,offset,focused=False,on_phrase=None):
         if hyp and hyp.hypstr.strip():
             t=offset+phrase_start/16000
             if on_phrase:on_phrase(t,hyp.hypstr.strip())
-            passages.append((hyp.hypstr.strip(),stamp(t)+"–"+stamp(offset+samples/16000),t))
+            passages.append((speech_context.correct(hyp.hypstr.strip()),stamp(t)+"–"+stamp(offset+samples/16000),t))
     while block:=stream.read(3200):
         if samples>=600*16000:
             more=True;continue

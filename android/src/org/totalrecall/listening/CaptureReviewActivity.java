@@ -78,6 +78,10 @@ public final class CaptureReviewActivity extends Activity {
             grouping.setChecked(getSharedPreferences("recall-speech",0).getBoolean("voices",true));people.addView(grouping);
             grouping.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("voices",on).apply());
             LinearLayout settings=card("Capture choices");
+            Switch spelling=new Switch(this);spelling.setText("Use context to correct similar-sounding words");
+            spelling.setChecked(getSharedPreferences("recall-speech",0).getBoolean("contextSpelling",true));settings.addView(spelling);
+            spelling.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("contextSpelling",on).apply());
+            action(settings,"My words & phrases",()->SpellingPreferences.open(this));
             journal=new Switch(this);journal.setText("Save a text journal on this phone");journal.setMinHeight(dp(48));
             journal.setChecked(JournalStore.enabled(this));settings.addView(journal);
             journal.setOnCheckedChangeListener((v,on)->{

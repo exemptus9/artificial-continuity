@@ -22,17 +22,20 @@ public final class JournalStore extends SQLiteOpenHelper {
     private static final DateTimeFormatter FORMAT=DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX");
     private final Context app;
     public JournalStore(Context context){
-        super(context.getApplicationContext(),DB,null,2);app=context.getApplicationContext();
+        super(context.getApplicationContext(),DB,null,3);app=context.getApplicationContext();
     }
     @Override public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,start INTEGER NOT NULL,end INTEGER NOT NULL DEFAULT 0,reason TEXT NOT NULL DEFAULT '')");
-        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL,voice INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE lines(id INTEGER PRIMARY KEY AUTOINCREMENT,session INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,at INTEGER NOT NULL,text TEXT NOT NULL,is_partial INTEGER NOT NULL,voice INTEGER NOT NULL DEFAULT 0,original TEXT)");
         createVoices(db);
         db.execSQL("CREATE INDEX lines_session ON lines(session,id)");
     }
-    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){if(from==1 && to==2){db.execSQL("ALTER TABLE lines ADD COLUMN voice INTEGER NOT NULL DEFAULT 0");createVoices(db);return;}
-        throw new IllegalStateException("Unsupported journal schema");}
+    @Override public void onUpgrade(SQLiteDatabase db,int from,int to){
+        if(from<1||to>3)throw new IllegalStateException("Unsupported journal schema");
+        if(from<2){db.execSQL("ALTER TABLE lines ADD COLUMN voice INTEGER NOT NULL DEFAULT 0");createVoices(db);}
+        if(from<3)db.execSQL("ALTER TABLE lines ADD COLUMN original TEXT");
+    }
     private static void createVoices(SQLiteDatabase db){
         db.execSQL("CREATE TABLE journal_voices(session INTEGER REFERENCES sessions(id) ON DELETE CASCADE,voice INTEGER,name TEXT NOT NULL,source TEXT NOT NULL,PRIMARY KEY(session,voice))");
     }
@@ -143,6 +146,9 @@ public final class JournalStore extends SQLiteOpenHelper {
         return append(session,expectedEpoch,value,partial,0);
     }
     boolean append(long session,long expectedEpoch,String value,boolean partial,int voice){
+        return append(session,expectedEpoch,value,partial,voice,null);
+    }
+    boolean append(long session,long expectedEpoch,String value,boolean partial,int voice,String original){
         if(value==null||value.trim().isEmpty()||session<0)return false;
         synchronized(GUARD){
             if(!enabled(app)||epoch(app)!=expectedEpoch)return false;
@@ -151,6 +157,7 @@ public final class JournalStore extends SQLiteOpenHelper {
                 if(!c.moveToFirst())return false;
             }
             ContentValues v=new ContentValues();v.put("session",session);v.put("at",System.currentTimeMillis());
+            if(original!=null && !original.equals(value))v.put("original",original);
             v.put("voice",voice);v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);return true;
         }
     }
@@ -180,12 +187,13 @@ public final class JournalStore extends SQLiteOpenHelper {
             out.write(c.getLong(1)==0?"Session open\n":("Ended "+stamp(c.getLong(1))+" · "+c.getString(2)+"\n"));
             out.write("On-device speech recognition. Timestamps mark recognition time; words may be inaccurate.\n\n");
         }
-        try(Cursor c=db.rawQuery("SELECT l.at,l.text,l.is_partial,l.voice,v.name,v.source FROM lines l LEFT JOIN journal_voices v ON l.session=v.session AND l.voice=v.voice WHERE l.session=? ORDER BY l.id",new String[]{String.valueOf(id)})){
+        try(Cursor c=db.rawQuery("SELECT l.at,l.text,l.is_partial,l.voice,v.name,v.source,l.original FROM lines l LEFT JOIN journal_voices v ON l.session=v.session AND l.voice=v.voice WHERE l.session=? ORDER BY l.id",new String[]{String.valueOf(id)})){
             int bytes=0;while(c.moveToNext()){
                 String speaker=voiceLabel(c.getInt(3),c.getString(4),c.getString(5));
                 String text=(speaker.isEmpty()?"":"["+speaker+"] ")+c.getString(1);
                 if(max>0 && bytes+text.length()>max){out.write("… Export to read the complete transcript.\n");break;}
                 out.write(stamp(c.getLong(0))+"  "+(c.getInt(2)==1?"[unfinished utterance] ":c.getInt(2)==2?"[capture status] ":"")+text+"\n");
+                if(max==0 && !c.isNull(6))out.write("  Originally heard · "+c.getString(6)+"\n");
                 bytes+=text.length()+32;
             }
         }

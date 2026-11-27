@@ -19,6 +19,20 @@ import java.util.zip.ZipInputStream;
 /** Decodes the same 16 kHz mono PCM that enters the volatile audio window. Single worker thread. */
 public final class OfflineSpeech implements AutoCloseable {
     private static final String MODEL = "vosk-model-small-en-us-0.15";
+    private final SpeechContext spellings;
+    private String rawWords="",rawPartial="",priorContext="";
+    private long priorAt,streamSamples;
+    private int priorSpeaker;
+    String rawWords(){return rawWords;}
+    String rawPartial(){return rawPartial;}
+    private String displayFinal(String json){
+        String reading=verified(json);
+        if(reading==null)return null;
+        boolean same=voice>0 && voice==priorSpeaker && streamSamples-priorAt<5L*16000;
+        String displayed=spellings.apply(same?priorContext:"",reading);
+        priorContext=SpeechContext.tail(reading);priorAt=streamSamples;priorSpeaker=voice;
+        rawPartial="";return displayed;
+    }
     private final QuietSpeech quietSpeech=new QuietSpeech();
     private Model model;
     private org.vosk.SpeakerModel speakerModel;
@@ -62,7 +76,7 @@ public final class OfflineSpeech implements AutoCloseable {
         for(int i=0;i<n;i++)energy+=(long)pcm[i]*pcm[i];
     }
     private String verified(String json){
-        String original=finalized(json);
+        String original=finalized(json);rawWords=original==null?"":original;
         if(!archiveReview)return original;
         try{
             long meanSquare=energy/Math.max(1,used);
@@ -93,7 +107,7 @@ public final class OfflineSpeech implements AutoCloseable {
                 alternatives[pass]=text.toString().trim();
                 scores[pass]=(total+count*confidence(part))/Math.max(1,words+count);
             }
-            if(!alternatives[0].isEmpty() && alternatives[0].equals(alternatives[1]) &&
+            if(!alternatives[0].isEmpty() && spellings.apply("",alternatives[0]).equals(spellings.apply("",alternatives[1])) &&
                 Math.min(scores[0],scores[1])>=Math.max(.78,(weakWord||faint)?Math.min(.90,confidence):confidence)){
                 agreed++;return alternatives[0];
             }
@@ -118,7 +132,7 @@ public final class OfflineSpeech implements AutoCloseable {
         this(context,commands,commands && context.getSharedPreferences("recall-speech",0).getBoolean("voices",true));
     }
     OfflineSpeech(Context context,boolean commands,boolean groupVoices) throws IOException {
-        profiles=new VoiceProfiles(context);
+        spellings=new SpeechContext(context);profiles=new VoiceProfiles(context);
         File dir = unpack(context.getApplicationContext(),MODEL);
         try {
             model = new Model(dir.getAbsolutePath());
@@ -159,8 +173,9 @@ public final class OfflineSpeech implements AutoCloseable {
                 pendingCommand = heard;
             }
         }
+        streamSamples+=count;
         if(archiveReview)rememberPcm(input,count);
-        return recognizer.acceptWaveForm(input, count) ? verified(recognizer.getResult()) : null;
+        return recognizer.acceptWaveForm(input, count) ? displayFinal(recognizer.getResult()) : null;
     }
 
     /** An exact full-utterance command from a restricted decoder that also models unknown words. */
@@ -172,17 +187,19 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
     public void resetStream() {
-        quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
+        priorContext="";rawPartial="";rawWords="";priorSpeaker=0;priorAt=0;streamSamples=0;used=0;energy=0;overflow=false;quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
         if(commandRecognizer!=null)commandRecognizer.reset();
         pendingCommand = null;
     }
 
     public String partial() {
-        return text(recognizer.getPartialResult(), "partial");
+        String next=text(recognizer.getPartialResult(),"partial");
+        rawPartial=next==null?"":next;
+        return spellings.apply("",next);
     }
 
     public String finish() {
-        return verified(recognizer.getFinalResult());
+        return displayFinal(recognizer.getFinalResult());
     }
 
     private String finalized(String json){

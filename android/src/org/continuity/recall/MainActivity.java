@@ -1316,6 +1316,7 @@ public class MainActivity extends Activity {
                               org.totalrecall.listening.Store.reset(this);
                               org.totalrecall.listening.JournalStore.reset(this);
                               org.totalrecall.listening.VoiceProfiles.reset(this);
+                              getSharedPreferences("recall-speech",0).edit().remove("spellings").remove("contextSpelling").commit();
                               org.totalrecall.listening.RecallOverlay.reset(this);
                               getSharedPreferences("recall-detector",MODE_PRIVATE).edit().clear().apply();
                               org.totalrecall.listening.MintSync.reset(this);

@@ -3,6 +3,7 @@ package org.totalrecall.listening;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.graphics.Rect;
@@ -184,6 +185,7 @@ public final class RecallSmoke extends Instrumentation {
                 InputStream input=getContext().getAssets().open("decision.pcm")){
             byte[] fixture=bytes(input);
             require(fixture.length%2==0 && fixture.length>0,"Invalid PCM fixture");
+            verifyPredictiveSpelling();
             verifyQuietReview(fixture);
             java.util.List<Long> saves=new java.util.ArrayList<>();
             Method save=Store.class.getDeclaredMethod("save",SelectiveEngine.Clip.class);
@@ -256,6 +258,25 @@ public final class RecallSmoke extends Instrumentation {
                 for(Long id:saves)store.delete(id);
             }
         }
+    }
+    private void verifyPredictiveSpelling()throws Exception{
+        SharedPreferences prefs=target.getSharedPreferences("recall-speech",0);
+        String oldEntries=prefs.getString("spellings","[]");
+        boolean enabled=prefs.getBoolean("contextSpelling",true);
+        Class<?> type=Class.forName("org.totalrecall.listening.SpeechContext");
+        java.lang.reflect.Constructor<?> ctor=type.getDeclaredConstructor(Context.class);ctor.setAccessible(true);
+        Object corrector=ctor.newInstance(target);
+        Method apply=method(type,"apply",String.class,String.class);
+        try{
+            prefs.edit().putBoolean("contextSpelling",true).putString("spellings","[[\"rhyme mosaic\",\"RhymeMosaic\"]]").commit();
+            require("read it aloud and write it down".equals(apply.invoke(corrector,"","read it allowed and right it down")),"Two contextual edits failed");
+            require("aloud".equals(apply.invoke(corrector,"please read it","allowed")),"Nearby speech failed to disambiguate a homophone");
+            require("she was allowed to read".equals(apply.invoke(corrector,"","she was allowed to read")),"Literal spelling was damaged");
+            require("pun intended peace of paper".equals(apply.invoke(corrector,"","pun intended peace of paper")),"Explicit wordplay was rewritten");
+            require("for RhymeMosaic".equals(apply.invoke(corrector,"","for rhyme mosaic")),"Personal spelling was lost");
+            prefs.edit().putBoolean("contextSpelling",false).commit();
+            require("read it allowed".equals(apply.invoke(corrector,"","read it allowed")),"Original wording unavailable with corrections off");
+        }finally{prefs.edit().putBoolean("contextSpelling",enabled).putString("spellings",oldEntries).commit();}
     }
     private void verifyQuietReview(byte[] fixture)throws Exception{
         java.lang.reflect.Constructor<OfflineSpeech> constructor=OfflineSpeech.class.getDeclaredConstructor(Context.class,boolean.class,boolean.class);
