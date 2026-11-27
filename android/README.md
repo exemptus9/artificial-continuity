@@ -104,8 +104,7 @@ The build has no unstoppable foreground service. Battery impact is unmeasured.
 Live store: atomic, encrypted AES-256-GCM snapshot in the app's no-backup directory,
 with a non-exportable Android Keystore key. Hardware backing is not asserted.
 Android sandboxing/device encryption are separate protections. There is no extra app
-lock; anyone able to use the unlocked app can read the timeline. The app suppresses
-recents/screenshots with `FLAG_SECURE`. The OS keyboard is outside its control.
+lock; anyone able to use the unlocked app can read the timeline. Screenshots are available across the app, including pairing and vault screens. The OS keyboard is outside its control.
 
 Audio is briefly plaintext in the no-backup sandbox during recording/finalization.
 Playback and explicit sharing create bounded temporary plaintext cache files.

@@ -59,7 +59,7 @@ final class VoiceEditor {
         ArrayList<Integer> ids=new ArrayList<>(voices.keySet());ids.add(-1);
         ArrayList<String> options=new ArrayList<>();for(int id:ids)options.add(label(id));options.add("Add a named voice…");
         new AlertDialog.Builder(activity).setTitle("Who said this line?").setItems(options.toArray(new String[0]),(d,i)->{
-            if(i==ids.size()){int next=voices.isEmpty()?13:Math.max(13,voices.lastKey()+1);edit(next,row);}
+            if(i==ids.size()){int next=voices.isEmpty()?100000:Math.max(100000,voices.lastKey()+1);edit(next,row);}
             else save(ids.get(i),null,null,row);
         }).setNegativeButton("Cancel",null).show();
     }
@@ -70,8 +70,11 @@ final class VoiceEditor {
         String[] current=voices.getOrDefault(id,new String[]{"",""});name.setText(current[0]);fields.addView(name);
         Spinner source=new Spinner(activity);source.setContentDescription("Voice source");source.setAdapter(new ArrayAdapter<>(activity,android.R.layout.simple_spinner_dropdown_item,SOURCES));
         source.setSelection(Math.max(0,Arrays.asList(SOURCES).indexOf(current[1])));fields.addView(source);
-        new AlertDialog.Builder(activity).setTitle("Label Voice "+id).setMessage("This label applies within this session. Choose Media for a TV, podcast or other playback.")
-            .setView(fields).setNegativeButton("Cancel",null).setPositiveButton("Save label",(d,w)->save(id,name.getText().toString().trim(),source.getSelectedItemPosition()==0?"":(String)source.getSelectedItem(),row)).show();
+        new AlertDialog.Builder(activity).setTitle("Label Voice "+id).setMessage("This label applies to this session. Use Remember voices in Live now to teach the phone a recurring voice.")
+            .setView(fields).setNegativeButton("Cancel",null).setNeutralButton("Remember voice…",(d,w)->{
+                String chosen=source.getSelectedItemPosition()==0?"Another person":(String)source.getSelectedItem();
+                activity.startActivity(new android.content.Intent(activity,VoiceProfilesActivity.class).putExtra("suggestName",name.getText().toString().trim()).putExtra("suggestSource",chosen));
+            }).setPositiveButton("Save label",(d,w)->save(id,name.getText().toString().trim(),source.getSelectedItemPosition()==0?"":(String)source.getSelectedItem(),row)).show();
     }
     private void save(int id,String name,String source,long row){
         worker.execute(()->{try{

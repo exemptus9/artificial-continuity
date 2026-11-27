@@ -225,6 +225,12 @@ public final class RecallService extends Service {
             nextPrune=SystemClock.elapsedRealtime()+3600000;
             capturing=true;LiveCapture.resume("Listening · "+route);LiveCapture.voiceSession(session,speech.groupsReady());progress("Listening · "+route);
         }
+        void remember(){
+            VoiceProfiles.Profile p=speech.known();if(p==null)return;
+            int id=speech.lastVoice();LiveCapture.remembered(id,JournalStore.voiceLabel(id,p.name,p.source));
+            if(session>=0 && JournalStore.enabled(RecallService.this) && epoch==JournalStore.epoch(RecallService.this))
+                journal.remember(session,id,p.name,p.source);
+        }
         void tick(short[] data,int count){
             long clock=SystemClock.elapsedRealtime();
             long latest=JournalStore.epoch(RecallService.this);
@@ -249,6 +255,7 @@ public final class RecallService extends Service {
             LiveCapture.samples(data,count);
             String utterance=speech.accept(data,count,liftQuiet),command=speech.pollCommand();
             if(utterance!=null){
+                remember();speech.offerExample(utterance);
                 LiveCapture.attributed(utterance,speech.lastVoice());
                 journal.append(session,epoch,utterance,false,speech.lastVoice());
             }else if(clock>=nextPartial){
@@ -270,7 +277,7 @@ public final class RecallService extends Service {
                     String partial=speech.partial();
                     String finalWords=speech.finish();
                     if(finalWords!=null){
-                        journal.append(session,epoch,finalWords,false,speech.lastVoice());
+                        remember();journal.append(session,epoch,finalWords,false,speech.lastVoice());
                         if(gap && !stopping.get())engine.text(finalWords,true);
                     }else if(partial!=null){journal.append(session,epoch,partial,true);}
                     if((gap && !stopping.get()) || (userPaused && engine.passageOpen()))engine.finish();

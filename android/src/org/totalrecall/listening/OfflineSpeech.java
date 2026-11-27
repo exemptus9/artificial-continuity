@@ -5,6 +5,7 @@ import android.util.Log;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import org.vosk.Model;
 import org.vosk.Recognizer;
 
@@ -22,6 +23,14 @@ public final class OfflineSpeech implements AutoCloseable {
     private Model model;
     private org.vosk.SpeakerModel speakerModel;
     private final SpeakerGroups groups=new SpeakerGroups();
+    private final VoiceProfiles profiles;
+    private final java.util.Map<String,Integer> ids=new java.util.HashMap<>();
+    private VoiceProfiles.Profile known;
+    private double[] latestVector;
+    private int frames;
+    String attributedVoice(){return known==null?LiveCapture.defaultVoice(voice):known.description();}
+    VoiceProfiles.Profile known(){return known;}
+    void offerExample(String words){VoiceProfiles.offer(words,latestVector,frames);}
     private int voice;
     int lastVoice(){return voice;}
     boolean groupsReady(){return speakerModel!=null;}
@@ -35,6 +44,7 @@ public final class OfflineSpeech implements AutoCloseable {
         this(context,commands,commands && context.getSharedPreferences("recall-speech",0).getBoolean("voices",true));
     }
     OfflineSpeech(Context context,boolean commands,boolean groupVoices) throws IOException {
+        profiles=new VoiceProfiles(context);
         File dir = unpack(context.getApplicationContext(),MODEL);
         try {
             model = new Model(dir.getAbsolutePath());
@@ -85,7 +95,7 @@ public final class OfflineSpeech implements AutoCloseable {
 
     /** Clear all speech hypotheses at an explicit recording boundary on the decoder thread. */
     public void resetStream() {
-        quietSpeech.reset();groups.clear();voice=0;recognizer.reset();
+        quietSpeech.reset();groups.clear();ids.clear();known=null;latestVector=null;voice=0;recognizer.reset();
         if(commandRecognizer!=null)commandRecognizer.reset();
         pendingCommand = null;
     }
@@ -99,10 +109,21 @@ public final class OfflineSpeech implements AutoCloseable {
     }
 
     private String finalized(String json){
-        voice=speakerModel==null?0:-1;
+        voice=speakerModel==null?0:-1;known=null;latestVector=null;frames=0;
         try{
             JSONObject words=new JSONObject(json);
-            if(speakerModel!=null)voice=groups.match(words.optJSONArray("spk"),words.optInt("spk_frames",0));
+            if(speakerModel!=null){
+                JSONArray raw=words.optJSONArray("spk");frames=words.optInt("spk_frames",0);
+                latestVector=VoiceProfiles.vector(raw);
+                if(frames>=100 && latestVector!=null){
+                    VoiceProfiles.Match m=VoiceProfiles.identify(profiles.list(),latestVector);
+                    known=m.profile;
+                    String key=null;
+                    if(known!=null)key=known.id;
+                    else if(!m.uncertain){int group=groups.match(raw,frames);if(group>0)key="anonymous-"+group;}
+                    if(key!=null){Integer id=ids.get(key);if(id==null){id=ids.size()+1;ids.put(key,id);}voice=id;}
+                }
+            }
             String result=words.optString("text","").trim();return result.isEmpty()?null:result;
         }catch(JSONException invalid){return null;}
     }

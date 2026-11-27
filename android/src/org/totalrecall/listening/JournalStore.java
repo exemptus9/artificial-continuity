@@ -51,6 +51,9 @@ public final class JournalStore extends SQLiteOpenHelper {
             while(c.moveToNext())result.put(c.getInt(0),new String[]{c.getString(1),c.getString(2)});
         }return result;
     }
+    void remember(long session,int voice,String name,String source){
+        getWritableDatabase().execSQL("INSERT OR IGNORE INTO journal_voices(session,voice,name,source) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM sessions WHERE id=? AND end=0)",new Object[]{session,voice,name,source,session});
+    }
     void nameVoice(long session,int voice,String name,String source){
         if(voice<1 || name.length()>64 || name.matches("(?s).*[\\[\\]\\p{Cntrl}].*"))throw new IllegalArgumentException("Choose a short name without brackets or line breaks.");
         if(!java.util.Arrays.asList("","Me","Another person","Media").contains(source))throw new IllegalArgumentException("Choose a listed source.");

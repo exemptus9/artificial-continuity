@@ -68,6 +68,7 @@ public final class CaptureReviewActivity extends Activity {
             LinearLayout situation=card("What the words suggest");
             context=text(situation,"",16,false);context.setTextIsSelectable(true);
             LinearLayout people=card("Voices & sources");
+            action(people,"Remember voices",()->startActivity(new Intent(this,VoiceProfilesActivity.class)));
             voiceState=text(people,"",15,false);
             action(people,"Name voices or correct a line",()->{LiveCapture.Snapshot live=LiveCapture.snapshot();new VoiceEditor(this,io,live.journalId,this::paintLive).open();});
             Switch grouping=new Switch(this);grouping.setText("Group similar voices in new sessions");grouping.setMinHeight(dp(48));
@@ -105,7 +106,7 @@ public final class CaptureReviewActivity extends Activity {
     private void paintLive(){
         LiveCapture.Snapshot s=LiveCapture.snapshot();
         put(status,(s.waiting?s.state:!s.active?"Microphone off":s.receiving?"Receiving audio · level "+Math.round(s.level*100)+"%":s.state)+" · "+s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved"+(s.event.isEmpty()?"":"\n"+s.event));
-        put(voiceState,!s.active?"Labels start fresh each session.":s.waiting?"Waiting for microphone access.":!s.groupsReady?"Voice grouping is off or preparing.":s.names.isEmpty()?"Listening for a clear voice. Short or mixed phrases may stay uncertain.":String.join("  •  ",s.names.values()));
+        put(voiceState,!s.active?"Saved voice profiles are available next time you listen.":s.waiting?"Waiting for microphone access.":!s.groupsReady?"Voice grouping is off or preparing.":s.names.isEmpty()?"Listening for a clear voice. Short or mixed phrases may stay uncertain.":String.join("  •  ",s.names.values()));
         StringBuilder lines=new StringBuilder();
         long wall=System.currentTimeMillis(),clock=TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
         for(int i=0;i<s.finals.size();i++){

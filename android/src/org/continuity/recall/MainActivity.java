@@ -53,7 +53,6 @@ public class MainActivity extends Activity {
   @Override
   public void onCreate(Bundle b) {
     super.onCreate(b);
-    getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
     try {
       File[] cacheFiles = getCacheDir().listFiles();
       if (cacheFiles != null)
@@ -1316,6 +1315,7 @@ public class MainActivity extends Activity {
                               org.totalrecall.listening.ArchiveStore.reset(this);
                               org.totalrecall.listening.Store.reset(this);
                               org.totalrecall.listening.JournalStore.reset(this);
+                              org.totalrecall.listening.VoiceProfiles.reset(this);
                               org.totalrecall.listening.RecallOverlay.reset(this);
                               getSharedPreferences("recall-detector",MODE_PRIVATE).edit().clear().apply();
                               org.totalrecall.listening.MintSync.reset(this);

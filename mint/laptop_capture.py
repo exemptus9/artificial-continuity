@@ -365,21 +365,21 @@ def panel(arc):
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:(root/"raise-panel").touch();window.destroy();lock.close();return
     prefs=read(root/"panel.json",{})
-    top=tk.BooleanVar(value=prefs.get("top",True));compact=tk.BooleanVar(value=prefs.get("compact",False))
+    top=tk.BooleanVar(value=prefs.get("top",True));compact=tk.BooleanVar(value=prefs.get("compact",True))
     window.attributes("-topmost",top.get())
     location=read(root/"position.json",{})
     if all(type(location.get(k))==int for k in ("x","y")):
         x=max(0,min(location["x"],window.winfo_screenwidth()-300));y=max(0,min(location["y"],window.winfo_screenheight()-150))
         window.geometry(f"+{x}+{y}")
     window.configure(background="#153d34")
-    box=ttk.Frame(window,padding=10);box.pack(fill="both",expand=True)
+    box=ttk.Frame(window,padding=(4,2));box.pack(fill="both",expand=True)
     header=ttk.Frame(box);header.pack(fill="x");title=ttk.Label(header,text="Laptop microphone",font=("Sans",12,"bold"));title.pack(side="left")
-    state=tk.StringVar(value="Stopped");ttk.Label(box,textvariable=state,wraplength=335).pack(anchor="w")
-    meter=ttk.Progressbar(box,maximum=100,length=310);meter.pack(fill="x",pady=4)
-    info=tk.StringVar();summary=ttk.Label(box,textvariable=info,wraplength=340);summary.pack(anchor="w")
+    state=tk.StringVar(value="Stopped");state_label=ttk.Label(box,textvariable=state,wraplength=300);state_label.pack(anchor="w")
+    meter=ttk.Progressbar(box,maximum=100,length=240);meter.pack(fill="x",pady=4)
+    info=tk.StringVar();summary=ttk.Label(box,textvariable=info,wraplength=300);summary.pack(anchor="w")
     controls=ttk.Frame(box);controls.pack(fill="x",pady=3)
     words_view=tk.StringVar()
-    captions=ttk.Label(box,textvariable=words_view,wraplength=310)
+    captions=ttk.Label(box,textvariable=words_view,wraplength=240)
     reader=None
     show_words=tk.BooleanVar(value=prefs.get("words",False))
     def toggle():
@@ -392,7 +392,7 @@ def panel(arc):
     keep=ttk.Button(controls,text="Keep moment",command=mark);keep.pack(side="left",padx=4)
     def open_app():
         subprocess.Popen([sys.executable,"-I",str(Path(arc.desk.__file__).resolve()),"desk"],start_new_session=True)
-    ttk.Button(controls,text="Open app",command=open_app).pack(side="left",padx=2)
+
     server=None
     def archive(view="archive"):
         nonlocal server
@@ -402,7 +402,7 @@ def panel(arc):
         webbrowser.open(recall_web.grant(arc.root,server.server_port)+"#"+view)
     more=ttk.Frame(box);more.pack(fill="x")
     ttk.Button(controls,text="Full journal",command=lambda:archive("journal")).pack(side="left")
-    ttk.Button(more,text="Browse & play",command=archive).pack(side="left")
+
     login=Path(os.environ.get("XDG_CONFIG_HOME",Path.home()/".config"))/"autostart/total-recall-microphone.desktop"
     def settings():
         dlg=tk.Toplevel(window);dlg.title("Laptop capture settings");dlg.transient(window);p=ttk.Frame(dlg,padding=12);p.pack()
@@ -447,24 +447,35 @@ def panel(arc):
                 dlg.destroy()
             except (ValueError,OSError) as ex:messagebox.showerror("Capture settings",str(ex),parent=dlg)
         ttk.Button(p,text="Save settings",command=save).pack(pady=5)
-    ttk.Button(more,text="Review",command=lambda:archive("review")).pack(side="left",padx=4)
-    ttk.Button(more,text="Settings",command=settings).pack(side="left",padx=4)
-    ttk.Button(more,text="Hide panel",command=window.iconify).pack(side="left")
+    menu=tk.Menu(window,tearoff=False)
+    menu.add_command(label="Open recorder",command=open_app)
+    menu.add_command(label="Browse & play",command=archive)
+    menu.add_command(label="Review saved moments",command=lambda:archive("review"))
+    menu.add_checkbutton(label="Show live words",variable=show_words,command=lambda:(layout(),tick(False)))
+    menu.add_command(label="Settings",command=settings)
+    menu.add_command(label="Hide panel",command=window.iconify)
+    def show_menu():
+        try:menu.tk_popup(menu_btn.winfo_rootx(),menu_btn.winfo_rooty()+menu_btn.winfo_height())
+        finally:menu.grab_release()
+    menu_btn=ttk.Button(header,text="More",width=5,command=show_menu)
+    mode=ttk.Button(header,text="↙",command=lambda:resize(),width=3)
+    mini=ttk.Frame(box);mini_state=tk.StringVar(value="Journal")
+    mini_read=ttk.Button(mini,textvariable=mini_state,command=lambda:archive("journal"),width=10,takefocus=True)
+    mini_read.pack(side="left")
+    mini_toggle=ttk.Button(mini,text="Start",width=5,command=toggle);mini_toggle.pack(side="left")
+    mini_keep=ttk.Button(mini,text="Save",width=5,command=mark);mini_keep.pack(side="left")
+    ttk.Button(mini,text="↗",width=3,command=lambda:resize()).pack(side="left")
     def layout():
-        mode.configure(text="Expand" if compact.get() else "Shrink")
-        word_btn.configure(text="Hide words" if show_words.get() else "Live words")
-        summary.pack_forget();more.pack_forget();captions.pack_forget()
-        if not compact.get():
-            summary.pack(before=controls,anchor="w")
-            more.pack(fill="x")
-        if show_words.get():captions.pack(before=controls,fill="x",pady=3)
+        for w in (header,state_label,meter,summary,captions,controls,more,mini):w.pack_forget()
+        if compact.get():mini.pack(fill="x")
+        else:
+            header.pack(fill="x");mode.pack(side="right");menu_btn.pack(side="right")
+            state_label.pack(anchor="w");meter.pack(fill="x",pady=1)
+            if show_words.get():captions.pack(fill="x")
+            summary.pack(anchor="w");controls.pack(fill="x",pady=1)
         write(root/"panel.json",dict(top=top.get(),compact=compact.get(),words=show_words.get()))
     def resize():
-        compact.set(not compact.get());layout()
-    def toggle_words():
-        show_words.set(not show_words.get());layout();tick(False)
-    mode=ttk.Button(header,command=resize,width=7);mode.pack(side="right")
-    word_btn=ttk.Button(more,command=toggle_words);word_btn.pack(side="left",padx=2)
+        compact.set(not compact.get());layout();tick(False)
     timer=None
     def tick(repeat=True):
         nonlocal timer,reader
@@ -502,6 +513,12 @@ def panel(arc):
         info.set("\n".join(filter(None,(s.get("voice","") if ready else "",facts,segment+saved,read(root/"save-error.json",sync)))))
         alerts=[read(root/(kind+"-limit.json"),{}).get("text","") for kind in ("capture","upload")]
         if any(alerts):info.set("\n".join(filter(None,alerts)))
+        mini_toggle.configure(text="Pause" if active else "Start")
+        mini_keep.configure(state="normal" if ready else "disabled")
+        short=s.get("voice") if ready else None
+        if ready and not short and show_words.get() and reader and reader.line not in ("Listening for words…","Waiting for microphone audio…"):
+            short=reader.line[-16:]
+        mini_state.set((short or (("Live "+str(s.get("elapsed",0)//60)+":"+str(s.get("elapsed",0)%60).zfill(2)) if ready else "Mic busy" if active else "Journal"))[:18])
         if repeat:timer=window.after(550,tick)
     layout()
     # First bindtag sees pointer events before Tk button bindings. Once dragging

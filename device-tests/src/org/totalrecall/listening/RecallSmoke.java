@@ -436,6 +436,20 @@ public final class RecallSmoke extends Instrumentation {
         AccessibilityNodeInfo n=waitNode(label);
         require(n.performAction(AccessibilityNodeInfo.ACTION_CLICK),"Control rejected click: "+label);
     }
+    private void assertOverlayInScreenshot(String label){
+        Rect r=new Rect();waitNode(label).getBoundsInScreen(r);
+        until(()->{
+            Bitmap screenshot=getUiAutomation().takeScreenshot();if(screenshot==null)return false;
+            try{
+                for(int y=Math.max(0,r.top);y<Math.min(screenshot.getHeight(),r.bottom);y+=3)
+                    for(int x=Math.max(0,r.left);x<Math.min(screenshot.getWidth(),r.right);x+=3){
+                        int color=screenshot.getPixel(x,y);
+                        if(Math.abs(android.graphics.Color.red(color)-18)<5 && Math.abs(android.graphics.Color.green(color)-54)<5 && Math.abs(android.graphics.Color.blue(color)-50)<5)return true;
+                    }
+                return false;
+            }finally{screenshot.recycle();}
+        },8000,"Screenshot did not include the floating panel");
+    }
     private void overlay()throws Exception{
         String app=target.getPackageName(), handle="Expand panel";
         Activity a=launch();
@@ -448,18 +462,18 @@ public final class RecallSmoke extends Instrumentation {
             click(waitText(a,"Floating controls",10000));
             tapNode("Show controls during listening");tapNode("Back to Total Recall");
             startListening(a);
-            Rect before=new Rect();waitNode("Read live words, situation analysis, journals and recordings on this phone").getBoundsInScreen(before);
+            Rect before=new Rect();waitNode("Open the complete transcript across saved sessions").getBoundsInScreen(before);
             int dx=Math.round(45*target.getResources().getDisplayMetrics().density);
             int dy=Math.round(65*target.getResources().getDisplayMetrics().density);
             deviceShell("input swipe "+before.centerX()+" "+before.centerY()+" "+(before.centerX()+dx)+" "
                     +(before.centerY()+dy)+" 600");
             until(()->{
-                AccessibilityNodeInfo n=node("Read live words, situation analysis, journals and recordings on this phone");if(n==null)return false;
+                AccessibilityNodeInfo n=node("Open the complete transcript across saved sessions");if(n==null)return false;
                 Rect after=new Rect();n.getBoundsInScreen(after);
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
-            tapNode(handle);waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
-            tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");
+            assertOverlayInScreenshot(handle);tapNode(handle);assertOverlayInScreenshot("Shrink panel");waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
+            tapNode("More overlay actions");tapNode("Hide live captions; transcription continues");waitNode("Show live captions as speech is recognized");
             tapNode("Show live captions as speech is recognized");waitNode("Hide live captions; transcription continues");
             deviceShell("input keyevent KEYCODE_HOME");tapNode("Open the main listening screen");
             waitNode("More listening and archive options");require(RecallService.isListening(),"Opening app stopped capture");
@@ -473,7 +487,7 @@ public final class RecallSmoke extends Instrumentation {
                 return !attached[0];
             },10000,"Overlay window remained attached after the display locked");
             deviceShell("input keyevent KEYCODE_WAKEUP");deviceShell("wm dismiss-keyguard");
-            waitNode("Shrink panel");tapNode("Shrink panel");waitNode(handle);tapNode(handle);tapNode("Dismiss the overlay and keep the current microphone state");
+            waitNode("Shrink panel");tapNode("Shrink panel");waitNode(handle);tapNode(handle);tapNode("More overlay actions");tapNode("Dismiss the overlay and keep the current microphone state");
             until(()->node(handle)==null,7000,"Dismissed overlay still displayed");
             require(RecallService.isListening(),"Hiding the overlay stopped listening");
             passed("Explicit app opt-in plus Android special access displayed real overlay controls. A pointer swipe moved the window, expansion exposed Pause, locking hid the window, and Hide left the microphone running.");

@@ -118,7 +118,7 @@ public final class AudioSituation {
         final java.util.ArrayList<String> turns=new java.util.ArrayList<>();
         void addTurn(String text){
             if(text==null||text.trim().isEmpty())return;
-            String who=LiveCapture.defaultVoice(speech.lastVoice());
+            String who=speech.attributedVoice();
             String at=time(start/16000)+"–"+time(samples/16000)+(who.isEmpty()?"":" · "+who);
             context.add(text,at);start=samples;
             if(turns.size()<40)turns.add(at+"  "+text.substring(0,Math.min(250,text.length())));

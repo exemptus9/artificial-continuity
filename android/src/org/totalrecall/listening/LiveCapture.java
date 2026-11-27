@@ -43,7 +43,7 @@ public final class LiveCapture {
         final long voiceSession,journalId,aliasVersion;
         final boolean groupsReady;
         String who(int i){int id=voices.get(i);return names.getOrDefault(id,defaultVoice(id));}
-        String attributed(int i){String source=who(i);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
+        String attributed(int i){String source=who(i);int split=source.indexOf(" · ");if(split>=0)source=source.substring(split+3);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
         public final float level;
         public final long finalSequence, sessionSeconds;
         public final int savedCount,flags; public final long words; public final String event;
@@ -104,6 +104,9 @@ public final class LiveCapture {
     static synchronized void words(String s,boolean complete){wordsAt(s,complete,now());}
     static synchronized void wordsAt(String text,boolean complete,long t){
         wordsAt(text,complete,t,0);
+    }
+    static synchronized void remembered(int voice,String label){
+        if(active && !waiting && voice>0 && !names.containsKey(voice)){names.put(voice,label);aliasVersion++;}
     }
     static synchronized void attributed(String words,int voice){wordsAt(words,true,now(),voice);}
     private static void wordsAt(String text,boolean complete,long t,int voice){

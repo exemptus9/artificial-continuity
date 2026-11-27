@@ -95,6 +95,7 @@ public final class RecallOverlay {
         LinearLayout root;
         TextView caption, status, detail, keep, missed, words;
         ProgressBar meter;
+        boolean toolsOpen;
         boolean expanded,registered,visible,wasWaiting;
         long firstVisibleFinal,requestUntil;
         int requestedAtCount;
@@ -182,12 +183,13 @@ public final class RecallOverlay {
             if(keep!=null)keep.setEnabled(ready);
             if(missed!=null)missed.setEnabled(ready);
             int level=Math.round(s.level*100);
-            meter.setProgress(s.waiting?0:level);
+            if(meter!=null)meter.setProgress(s.waiting?0:level);
             String headline=s.waiting?"Waiting for microphone":!s.event.isEmpty()?s.event:s.state.startsWith("Keeping")?"Capturing clip":ready?"Listening":s.state;
             if(s.savedCount>requestedAtCount)requestUntil=0;
             if(SystemClock.elapsedRealtime()<requestUntil)headline=requestLabel;
             String elapsed=String.format(Locale.ROOT,"%d:%02d",s.sessionSeconds/60,s.sessionSeconds%60);
-            showText(status,headline+"  ·  "+elapsed);
+            String compact=s.waiting?"Mic busy":!s.event.isEmpty()?s.event:ready?"Live "+elapsed:headline;
+            showText(status,expanded?headline+" · "+elapsed:compact);
             String visibleWords=s.waiting?"":s.overlayWords(firstVisibleFinal);
             String contextKey=s.aliasVersion+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.partial+"|"+firstVisibleFinal;
             if(detail!=null && !contextKey.equals(lastContextLine)){
@@ -208,13 +210,14 @@ public final class RecallOverlay {
             if(detail!=null){
                 String state=s.waiting?s.state:s.words+" words · "+s.flags+" flagged · "+s.savedCount+" saved";
                 if(expanded)state+=" · Journal "+(JournalStore.enabled(app)?"on":"off");
-                if(expanded&&!s.lastSave.isEmpty()&&!s.waiting)state+="\nLast saved: "+s.lastSave;
+
                 state+="\nSituation · "+(liveCue.isEmpty()?"Waiting for context":liveCue);
                 showText(detail,state);
             }
             if(caption!=null){
                 String line=visibleWords;
-                showText(caption,s.waiting?"Words paused while the mic is busy":line.isEmpty()?"Waiting for words…":line);
+                if(!expanded && line.contains("\n"))line=line.substring(line.lastIndexOf('\n')+1);
+                showText(caption,s.waiting?"Mic busy":line.isEmpty()?(expanded?"Waiting for words…":"Journal"):line);
             }
         }
         boolean resumePanel(){return preview && RecallService.pausedAt(app)>0;}
@@ -238,58 +241,76 @@ public final class RecallOverlay {
         }
         void build(){
             root=new DragSurface();root.setOrientation(LinearLayout.VERTICAL);
-            GradientDrawable bg=new GradientDrawable();bg.setColor(Color.rgb(21,43,45));bg.setCornerRadius(dp(14));
-            root.setBackground(bg);root.setPadding(dp(6),dp(4),dp(6),dp(4));root.setElevation(dp(6));root.setFilterTouchesWhenObscured(true);
-            status=label(resumePanel()?"Paused · microphone off":preview?"Preview · microphone off":"Opening microphone",13);
-            status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-            root.removeView(status);
-            LinearLayout header=row(root);header.addView(status,new LinearLayout.LayoutParams(0,-2,1));
-            TextView size=control(header,expanded?"↙":"↗",expanded?"Shrink panel":"Expand panel",v->resize());
-            size.setLayoutParams(new LinearLayout.LayoutParams(dp(48),dp(48)));size.setTextSize(23);
-            if(!preview){
-                meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);
-                meter.setMax(100);meter.setContentDescription("Live microphone level");
-                meter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xff78e0c4));
-                root.addView(meter,new LinearLayout.LayoutParams(-1,dp(5)));
-            }
+            GradientDrawable bg=new GradientDrawable();bg.setColor(0xff123632);bg.setCornerRadius(dp(expanded?12:24));
+            bg.setStroke(dp(1),0xff49746b);root.setBackground(bg);root.setPadding(dp(4),dp(1),dp(4),dp(1));
+            root.setElevation(dp(4));root.setFilterTouchesWhenObscured(true);
+            LinearLayout header=row(root);header.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout readout=new LinearLayout(windowContext);readout.setOrientation(LinearLayout.VERTICAL);readout.setGravity(Gravity.CENTER_VERTICAL);
+            readout.setPadding(dp(5),0,dp(2),0);readout.setMinimumHeight(dp(48));header.addView(readout,new LinearLayout.LayoutParams(0,-2,1));
+            readout.setContentDescription("Open the complete transcript across saved sessions");readout.setTooltipText("Open full journal");
+            readout.setOnClickListener(v->openScreen(FullJournalActivity.class,false));
+            status=label(readout,resumePanel()?"Paused":preview?"Mic off":"Starting",expanded?14:12);
+            status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);status.setTextColor(0xffa6f5d5);status.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
             boolean showWords=prefs.getBoolean("captions",true);
-            if(!preview && showWords){
-                caption=label("Listening for words…",15);
-                caption.setMaxLines(expanded?3:2);caption.setGravity(Gravity.BOTTOM);
-            }
-            LinearLayout capture=row(root);
-            if(preview)control(capture,resumePanel()?"Resume listening":"Start listening","Open Total Recall and start microphone capture",v->openApp(true));
-            else{
-                keep=control(capture,"Save last minute","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Saving recent audio…"));
-                control(capture,"Pause mic","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
-            }
-            LinearLayout nav=row(root);
-            control(nav,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
-            control(nav,"Full journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
-            if(!preview)detail=label("",12);
-            if(expanded){
-                if(!preview){
-                    control(row(root),"Voice commands","Show wake words and available commands",v->newGuide());
-                    LinearLayout tools=row(root);
-                    missed=control(tools,"Mark missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Marking missed moment…"));
-                    words=control(tools,showWords?"Hide captions":"Show captions",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));
+            if(!preview && !toolsOpen){
+                meter=new ProgressBar(windowContext,null,android.R.attr.progressBarStyleHorizontal);meter.setMax(100);
+                meter.setContentDescription("Live microphone level");meter.setProgressTintList(android.content.res.ColorStateList.valueOf(0xff78e0c4));
+                readout.addView(meter,new LinearLayout.LayoutParams(-1,dp(2)));
+                if(showWords){
+                    caption=label(expanded?root:readout,"",expanded?14:11);
+                    caption.setMaxLines(expanded?2:1);caption.setEllipsize(expanded?TextUtils.TruncateAt.END:TextUtils.TruncateAt.START);
+                    if(!expanded)caption.setSingleLine(true);
                 }
-                LinearLayout panel=row(root);
-                control(panel,"Open recorder","Open the main listening screen",v->openApp(false));
-                control(panel,"Hide panel","Dismiss the overlay and keep the current microphone state",v->stop());
+            }
+            if(!expanded && !preview){
+                keep=key(header,"Save","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Saving…"));
+                key(header,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
+            }
+            if(preview && !expanded)key(header,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
+            if(expanded)key(header,toolsOpen?"Back":"More",toolsOpen?"Back to live controls":"More overlay actions",v->{toolsOpen=!toolsOpen;rebuild();});
+            TextView size=key(header,expanded?"↙":"↗",expanded?"Shrink panel":"Expand panel",v->resize());size.setTextSize(22);
+            if(expanded && !toolsOpen){
+                if(!preview){
+                    detail=label(root,"",12);detail.setMaxLines(3);detail.setEllipsize(TextUtils.TruncateAt.END);detail.setTextColor(0xffc0d5cd);
+                }
+                LinearLayout actions=row(root);
+                if(preview)control(actions,resumePanel()?"Resume":"Start","Open Total Recall and start microphone capture",v->openApp(true));
+                else{
+                    keep=control(actions,"Save 1 min","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Saving…"));
+                    control(actions,"Pause","Pause recording and release the microphone",v->command(RecallService.USER_PAUSE));
+                }
+                control(actions,"Live & saved","Read live words, situation analysis, journals and recordings on this phone",v->openScreen(CaptureReviewActivity.class,false));
+            }else if(expanded){
+                LinearLayout nav=row(root);
+                control(nav,"Voices","Teach or manage remembered voices",v->openScreen(VoiceProfilesActivity.class,false));
+                control(nav,"Journal","Open the complete transcript across saved sessions",v->openScreen(FullJournalActivity.class,false));
+                control(nav,"Recorder","Open the main listening screen",v->openApp(false));
+                control(nav,"Hide","Dismiss the overlay and keep the current microphone state",v->stop());
+                if(!preview){
+                    LinearLayout extra=row(root);
+                    missed=control(extra,"Missed clip","Save available recent audio as a missed moment for review",v->request(RecallService.MISSED,"Saving…"));
+                    words=control(extra,showWords?"Words off":"Words on",showWords?"Hide live captions; transcription continues":"Show live captions as speech is recognized",v->changeCaptions(app,!showWords));
+                    control(extra,"Commands","Show wake words and available commands",v->newGuide());
+                }
             }
             screenWidth=windowContext.getResources().getDisplayMetrics().widthPixels;
-            layout.width=Math.min(dp(expanded?310:252),Math.max(dp(100),screenWidth-dp(12)));
+            int width=expanded?268:preview?160:212;
+            float font=windowContext.getResources().getConfiguration().fontScale;
+            width+=Math.round(Math.max(0,Math.min(font-1,1))*60);
+            layout.width=Math.min(dp(width),Math.max(dp(100),screenWidth-dp(8)));
             preserveBoundary();
             try {wm.addView(root,layout);visible=true;}
             catch(RuntimeException e){stop();}
         }
-        TextView label(String value,int size){
+        TextView key(LinearLayout row,String title,String hint,View.OnClickListener tap){
+            TextView v=control(row,title,hint,tap);v.setLayoutParams(new LinearLayout.LayoutParams(dp(48),-2));v.setTextSize(12);return v;
+        }
+        TextView label(LinearLayout parent,String value,int size){
             TextView t=new TextView(windowContext);t.setText(value);t.setTextSize(size);t.setTextColor(Color.WHITE);
-            t.setPadding(dp(7),dp(2),dp(7),dp(2));root.addView(t);return t;
+            t.setIncludeFontPadding(false);t.setPadding(dp(2),dp(1),dp(2),dp(1));parent.addView(t);return t;
         }
         void resize(){
-            expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
+            toolsOpen=false;expanded=!expanded;prefs.edit().putBoolean("expanded",expanded).apply();
             rebuild();
         }
         void newGuide(){

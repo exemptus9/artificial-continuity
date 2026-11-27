@@ -13,7 +13,6 @@ import android.text.InputType;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.*;
 import com.google.zxing.BinaryBitmap;
 import com.google.zxing.PlanarYUVLuminanceSource;
@@ -45,7 +44,7 @@ public final class MintLinkActivity extends Activity {
 
     @Override protected void onCreate(Bundle saved) {
         super.onCreate(saved);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+
         page();
     }
     @Override protected void onResume() { super.onResume(); handler.post(tick); }

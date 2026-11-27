@@ -46,7 +46,7 @@ public final class OverlaySettingsActivity extends Activity {
         body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(20),dp(26),dp(20),dp(24));scroll.addView(body);setContentView(scroll);
         label("Floating controls",28,true);
-        label("A small movable control stays over other apps during an active listening session. Drag anywhere to move it. Tap Expand panel for more actions.",16,false);
+        label("A small movable control stays over other apps during an active listening session. Drag anywhere to move it. Tap ↗ to expand or tap the status to open your full journal.",16,false);
         boolean grant=Settings.canDrawOverlays(this), enabled=RecallOverlay.enabled(this);
         label("Overlay "+(enabled&&grant?"enabled":"off"),17,true);
         if(!grant){
@@ -67,7 +67,7 @@ public final class OverlaySettingsActivity extends Activity {
                 Switch caption=new Switch(this);caption.setText("Show live captions on the overlay");
                 caption.setChecked(RecallOverlay.options(this).getBoolean("captions",true));
                 caption.setOnCheckedChangeListener((b,on)->RecallOverlay.changeCaptions(this,on));body.addView(caption);
-                label("Drag anywhere on the panel, including its buttons. Tap Live & saved to read the transcript and situation analysis. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
+                label("Drag anywhere on the panel, including its buttons. Use More for secondary actions. Tap Live & saved to read the transcript and situation analysis. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
                 button(RecallService.isListening()?"Show controls now":"Preview start control",v->{RecallOverlay.idlePreview(this);finish();});
             }
         }

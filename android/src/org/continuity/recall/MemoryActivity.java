@@ -10,7 +10,6 @@ import android.content.res.ColorStateList;
 import android.graphics.Rect;
 import android.view.inputmethod.InputMethodManager;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -56,7 +55,7 @@ public final class MemoryActivity extends Activity {
         .setMessage(message).setPositiveButton("OK",null).show();
   }
   @Override public void onCreate(Bundle saved) {
-    super.onCreate(saved); getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    super.onCreate(saved);
     section=getIntent().getStringExtra("section"); if(section==null)section="timeline";
     recordId=getIntent().getStringExtra("record_id");if(recordId==null)recordId="";
     String initialKind=getIntent().getStringExtra("kind");if(initialKind!=null)kind=initialKind;
