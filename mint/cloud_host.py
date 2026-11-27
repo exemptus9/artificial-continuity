@@ -32,9 +32,10 @@ PRIOR_STORY_APK = ("TotalRecall-0.14.0.apk",56129834,"83c346764d3553ad58d8f49c14
 LAST_APK = ("TotalRecall-0.15.0.apk",56138026,"c4383289901e275f0a4102877dd4e0f1db87234e3345d7373f720c799d84e48e")
 RESUME_APK = ("TotalRecall-0.16.0.apk",56138026,"427cfca878e980e95e49b645957f4e6ee3e20e77c016daa9553aa81c4d1b3e55")
 SPEAKER_APK = ("TotalRecall-0.17.0.apk",70027652,"da51ecdbb9ec9db9a67b0b4c98badfdaa594da884ff3839e42d5db545c6232dd")
-APK_NAME = "TotalRecall-0.18.0.apk"
-APK_SIZE = 70035844
-APK_SHA = "734ae0915ee467b9e91b4867e6664bd15b7b5b1e029392d0f62b6617cddff2b0"
+PASSAGE_APK = ("TotalRecall-0.18.0.apk",70035844,"734ae0915ee467b9e91b4867e6664bd15b7b5b1e029392d0f62b6617cddff2b0")
+APK_NAME = "TotalRecall-0.19.0.apk"
+APK_SIZE = 70044036
+APK_SHA = "b69eb035739c0a84793857d7c585e124885ad0cd002ed305d6f8d7802df16cd7"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
@@ -151,7 +152,7 @@ class HostedHandler(recall_web.OwnerHandler):
     def download_apk(self,release=None):
         media=self.server.archive.media_store
         try:
-            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
+            choices=[release] if release else [(APK_NAME,APK_SIZE,APK_SHA),PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK]
             for name,size,digest in choices:
                 key="total-recall/installers/"+digest+"/"+name
                 head=media._head(key)
@@ -229,7 +230,7 @@ class HostedHandler(recall_web.OwnerHandler):
         if path=="/healthz": return self.json(200,{"ok":True})
         if not self.valid_host(self.headers.get("Host","")): return self.json(403,{"error":"Unrecognized origin"})
         if path==self.apk_path():return self.download_apk((APK_NAME,APK_SIZE,APK_SHA))
-        for old in (SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK):
+        for old in (PASSAGE_APK,SPEAKER_APK,RESUME_APK,LAST_APK,PRIOR_STORY_APK,PREVIOUS_APK):
             if path==self.apk_path(old[0],old[2]):return self.download_apk(old)
         if path=="/v2/status": return recall_desk.TransferHandler.do_GET(self)
         if path.startswith("/open/"): return self.json(404,{"error":"Unknown route"})
