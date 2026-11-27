@@ -200,6 +200,9 @@ public class SelectiveEngineTest {
         pair.clear();
         check(pair.observe("[unk] hey recall save as",null,null,16000)==null);
         check("hey recall save as".equals(pair.observe(null,"hey murray call save as",null,23000)));
+        check("hey recall save as".equals(pair.observe("the rhyme as a poem hey recall save as","hey murray call save as",null,26000)));
+        check(pair.observe("save that poem hey recall save as","menu items include save as",null,28000)==null);
+        pair.clear();
         check(pair.observe(null,"the instructor said hey recall save as",null,32000)==null);
         check(pair.observe("[unk] hey recall save as",null,"the instructor said hey recall save as",33000)==null);
         pair.clear();

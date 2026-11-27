@@ -113,14 +113,14 @@ public final class SelectiveEngine {
         return wake+" "+narrow.group(3);
     }
 
-    private static final Pattern CHOICE_AFTER_UNKNOWN=Pattern.compile("^(?:.* )?\\[unk\\] (hey recall|total recall|hey lexi|lexi) (save (?:this |that )?as)$");
+    private static final Pattern ADDRESSED_CHOICE_TAIL=Pattern.compile("^.+ (hey recall|total recall|hey lexi|lexi) (save (?:this |that )?as)$");
     // This only asks a question. A second, separate label is still required to write audio.
     private static String corroboratedChoice(String restricted,String original){
         if(restricted==null || original==null || reportedAddress(original))return null;
-        java.util.regex.Matcher match=CHOICE_AFTER_UNKNOWN.matcher(restricted);
+        java.util.regex.Matcher match=ADDRESSED_CHOICE_TAIL.matcher(restricted);
         if(!match.matches() || CommandEndpoints.REPORTING.matcher(restricted).find())return null;
         String open=normalize(original),request=match.group(2);
-        return !CommandEndpoints.REPORTING.matcher(open).find() && open.endsWith(" "+request)?match.group(1)+" "+request:null;
+        return !CommandEndpoints.REPORTING.matcher(open).find() && CHOICE_READING.matcher(open).matches() && open.endsWith(" "+request)?match.group(1)+" "+request:null;
     }
 
     /** Reconcile only nearby final endpoints. Prefer ordinary exact commands immediately. */

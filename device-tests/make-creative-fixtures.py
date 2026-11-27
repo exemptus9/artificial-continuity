@@ -18,7 +18,7 @@ def choice_fixture(source):
     # Each turn is independently playable for save, cancel and timeout checks.
     with (ASSETS / 'creative-choice.pcm.gz').open('wb') as out:
         with gzip.GzipFile(filename='', mode='wb', fileobj=out, mtime=0) as archive:
-            for phrase in ('The room has a paper lantern.', 'Hey Recall save as.', 'Line.', 'Cancel.'):
+            for phrase in ('The room has a paper lantern.', 'Hey Recall save as.', 'Line.', 'Cancel.', 'Hey Recall.', 'Save as.'):
                 source.write_text(phrase)
                 audio = subprocess.check_output(['ffmpeg', '-hide_banner', '-loglevel', 'error',
                     '-f', 'lavfi', '-i', f'flite=textfile={source}:voice=slt', '-ar', '16000',

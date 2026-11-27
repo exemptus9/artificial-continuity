@@ -38,7 +38,7 @@ public final class SpokenChoiceSmoke {
     private static void require(boolean condition,String message){if(!condition)throw new AssertionError(message);}
 
     public String run(Context target,Context test,Store store,OfflineSpeech speech)throws Exception {
-        byte[][] turns=new byte[5][];
+        byte[][] turns=new byte[7][];
         try(DataInputStream in=new DataInputStream(new GZIPInputStream(test.getAssets().open("creative-choice.pcm.gz")))){
             for(int i=0;i<turns.length;i++){turns[i]=new byte[in.readInt()];in.readFully(turns[i]);}
         }
@@ -64,7 +64,7 @@ public final class SpokenChoiceSmoke {
         int initial=store.search("").size();
         try(JournalStore journal=new JournalStore(target)){
             window=construct.newInstance(service,store,journal,speech,events);
-            for(String answer:new String[]{"cancel","timeout","line"}){
+            for(String answer:new String[]{"cancel","timeout","split cancel","line"}){
                 frozen=null;source.reset();requests.clear();receipts.clear();
                 begin.invoke(window,"choice playback","");
                 int before=saved.size();
@@ -75,22 +75,30 @@ public final class SpokenChoiceSmoke {
                         require(receipts.stream().anyMatch(v->v.startsWith("Command unclear")),"Missing unclear receipt");
                         receipts.clear();
                         // Replay the actual spoken unclear/help hint into the microphone like a device speaker.
-                        feed(turns[4],true);feed(new byte[32000],false);
+                        feed(turns[6],true);feed(new byte[32000],false);
                         require(requests.isEmpty() && receipts.isEmpty() && saved.size()==before,
                             "The spoken retry hint issued a command "+requests+" "+receipts);
                     }
                     feed(turns[0],false);feed(new byte[32000],false);
-                    feed(turns[1],false);feed(new byte[48000],false);
+                    if(answer.equals("split cancel")){
+                        feed(new byte[2*32000],false);
+                        feed(turns[4],false);feed(new byte[48000],false);
+                        require(requests.equals(Arrays.asList("ready")),"Standalone wake did not announce Ready "+requests+" "+receipts);
+                        requests.clear();
+                        // The response follows the spoken-ready interval, independently of the wake utterance.
+                        feed(new byte[16000],true);feed(turns[5],false);
+                    }else feed(turns[1],false);
+                    feed(new byte[48000],false);
                     require(frozen!=null && frozen.length>=turns[0].length && saved.size()==before
                             && receipts.contains("Choose a save category"),"Missing uncommitted voice choice "+requests+" "+receipts);
                     feed(turns[2],true);feed(new byte[32000],true); // A spoken 'line' from the app must never answer itself.
                     require(saved.size()==before && !requests.contains("choiceClosed"),"Prompt answered its own question");
                     if(answer.equals("line"))feed(turns[2],false);
-                    if(answer.equals("cancel"))feed(turns[3],false);
+                    if(answer.endsWith("cancel"))feed(turns[3],false);
                     feed(new byte[(answer.equals("timeout")?12:2)*32000],false);
                     require(requests.equals(Arrays.asList("choose","choiceClosed")),"Choice lifecycle was "+requests+" "+receipts);
                     if(!answer.equals("line")){
-                        require(saved.size()==before && receipts.contains(answer.equals("cancel")?"Choice canceled":"Save choice expired"),
+                        require(saved.size()==before && receipts.contains(answer.endsWith("cancel")?"Choice canceled":"Save choice expired"),
                             "Discarded choice wrote audio or missed its receipt "+receipts);
                         continue;
                     }
