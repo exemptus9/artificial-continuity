@@ -15,6 +15,8 @@ public final class LiveCapture {
     private static String partial="",lastSave="",reason="",state="Paused";
     private static long partialAt=-WINDOW,lastLevel=-1000;
     private static float level;
+    private static int buffered;
+    static synchronized void buffered(int seconds){if(active && !waiting)buffered=seconds;}
     private static long clipWarningUntil;
     static synchronized boolean clipping(){return active && !waiting && now()<clipWarningUntil;}
     static volatile String roomStatus="Room filter off";
@@ -62,13 +64,24 @@ public final class LiveCapture {
         String who(int i){int id=voices.get(i);return names.getOrDefault(id,defaultVoice(id));}
         String attributed(int i){String source=who(i);int split=source.indexOf(" · ");if(split>=0)source=source.substring(split+3);return (source.isEmpty()?"":source+" · ")+finals.get(i);}
         public final float level;
+        final int bufferSeconds;
+        String bufferLabel(){return bufferSeconds==0?"Buffer warming":Math.min(60,bufferSeconds)+"s ready";}
+        boolean freshLine(long after){
+            return finalSequence>after && !recognizedAt.isEmpty() && now()-recognizedAt.get(recognizedAt.size()-1)<6500;
+        }
+        String currentSituation(long after){return currentSeq>after?currentCue:"";}
+        String appendedPartial(long after,String hidden){
+            if(finalSequence==after-1 && !hidden.isEmpty() && partial.startsWith(hidden+" "))
+                return partial.substring(hidden.length()+1);
+            return "";
+        }
         public final long finalSequence, sessionSeconds;
         public final int savedCount,flags; public final long words; public final String event,lastFlag;public final long clipId,savedAt;
         public final boolean receiving;
         public final boolean active,waiting;
         Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
             boolean stale=t-situationAt>=45000;
-            lastFlag=flagLabel;clipId=latestClip;savedAt=latestSaveTime;
+            bufferSeconds=buffered;lastFlag=flagLabel;clipId=latestClip;savedAt=latestSaveTime;
             currentCue=stale?"":situation;currentSeq=situationSeq;
             previousCue=stale?situation:previousSituation;previousSeq=stale?situationSeq:previousSituationSeq;
             partial=p;lastSave=save;reason=why;state=status;finals=Collections.unmodifiableList(lines);recognizedAt=Collections.unmodifiableList(times);level=meter;active=on;waiting=wait;
@@ -131,7 +144,7 @@ public final class LiveCapture {
     static synchronized void stop(String label){clear();active=false;waiting=false;state=bounded(label,200);}
     static synchronized void waitFor(String label){clear();waiting=true;state=bounded(label,200);}
     static synchronized void resume(String label){clear();waiting=false;state=bounded(label,200);}
-    private static void clear(){roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
+    private static void clear(){buffered=0;roomStatus="Room filter off";situation=previousSituation="";situationSeq=previousSituationSeq=0;voiceSession(-1,false);clipWarningUntil=0;event=flagLabel="";latestClip=-1;latestSaveTime=0;recent.clear();partial="";lastSave="";reason="";level=0;lastLevel=now()-1000;partialAt=now()-WINDOW;}
     static synchronized void saved(String what,String why){saved(-1,what,why);}
     static synchronized void saved(long id,String what,String why){saved(id,what,why,false);}
     static synchronized void saved(long id,String what,String why,boolean finishingPause){

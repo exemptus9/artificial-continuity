@@ -21,7 +21,7 @@ public final class RecallService extends Service {
     public static final String LEARN_ROOM=NS+"LEARN_ROOM";
     public static final String START=NS+"START",PAUSE=NS+"PAUSE",USER_PAUSE=NS+"USER_PAUSE",END=NS+"END",KEEP=NS+"KEEP",
         MISSED=NS+"MISSED",DISCARD_LAST=NS+"DISCARD_LAST",ACTION_CHANGED=NS+"CHANGED";
-    private static final String CHANNEL="total_recall_listening";
+    static final String CHANNEL="total_recall_listening";
     private static final String PREFS="total_recall_session";
     private static final int NOTIFICATION=9021, RESUME_NOTIFICATION=9022;
     private volatile boolean userPaused,ending;
@@ -46,6 +46,7 @@ public final class RecallService extends Service {
     private long startedElapsed;
     private volatile String inputRoute="";
     private final Handler noticeHandler=new Handler(Looper.getMainLooper());
+    private boolean channelReady;
     private final Runnable refreshNotice=new Runnable(){public void run(){
         if(!running || destroyed || stopping.get())return;
         try{notifications().notify(NOTIFICATION,notification(current));}catch(SecurityException ignored){}
@@ -89,11 +90,15 @@ public final class RecallService extends Service {
         SharedPreferences prefs=getSharedPreferences(PREFS,MODE_PRIVATE);
         String paused="Microphone off since "+java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new Date(since));
         String summary=paused+"\nSession "+elapsed(prefs.getLong("pausedSeconds",0))+" · "+prefs.getInt("pausedClips",0)+" clips saved · "+prefs.getLong("pausedWords",0)+" words · "+prefs.getInt("pausedFlags",0)+" flagged\n"+captureSettings()+"\n"+backupStatus();
+        Intent end=new Intent(this,EndListeningActivity.class).putExtra("endPausedAt",since)
+            .setData(android.net.Uri.parse("recall:end-paused/"+since));
+        PendingIntent endTap=PendingIntent.getActivity(this,206,end,PendingIntent.FLAG_IMMUTABLE);
         Notification n=new Notification.Builder(this,CHANNEL).setSmallIcon(android.R.drawable.ic_media_pause)
             .setStyle(new Notification.BigTextStyle().bigText(summary)).setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentTitle("Total Recall paused").setContentText(openApp?"Open the recorder to restore microphone access":"Microphone off · tap to resume listening")
             .setContentIntent(tap).setAutoCancel(true).setOnlyAlertOnce(true)
-            .addAction(android.R.drawable.ic_media_play,openApp?"Open recorder":"Resume",openApp?tap:resumeTap).addAction(android.R.drawable.ic_menu_agenda,"Live & saved",reviewIntent()).build();
+            .addAction(android.R.drawable.ic_media_play,openApp?"Open recorder":"Resume",openApp?tap:resumeTap).addAction(android.R.drawable.ic_menu_agenda,"Live & saved",reviewIntent())
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel,"End & close",endTap).build();
         try{notifications().notify(RESUME_NOTIFICATION,n);}catch(SecurityException ignored){}
     }
     public static String status(Context c){
@@ -112,9 +117,9 @@ public final class RecallService extends Service {
     }
     private NotificationManager notifications(){return (NotificationManager)getSystemService(NOTIFICATION_SERVICE);}
     private Notification notification(String label){
-        if(Build.VERSION.SDK_INT>=26){
+        if(!channelReady && Build.VERSION.SDK_INT>=26){
             NotificationChannel ch=new NotificationChannel(CHANNEL,"Selective listening",NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Visible controls for the microphone session");notifications().createNotificationChannel(ch);
+            ch.setDescription("Visible controls for the microphone session");notifications().createNotificationChannel(ch);channelReady=true;
         }
         Notification.Builder b=Build.VERSION.SDK_INT>=26?new Notification.Builder(this,CHANNEL):new Notification.Builder(this);
         LiveCapture.Snapshot snapshot=LiveCapture.snapshot();
@@ -124,9 +129,13 @@ public final class RecallService extends Service {
         String headline=snapshot.waiting?"Waiting for microphone":take.recording && receiving?"Recording take · "+take.seconds+" / 60 s":
             !snapshot.event.isEmpty()?snapshot.event:receiving?(label!=null && label.startsWith("Keeping")?"Capturing selected clip":"Listening"):label;
         if(headline==null || headline.isEmpty())headline="Preparing microphone";
+        if(snapshot.active && !receiving && !snapshot.waiting && snapshot.event.isEmpty())headline="Waiting for microphone input";
         String counts=snapshot.words+" words · "+snapshot.savedCount+" saved · "+snapshot.flags+" flagged";
         StringBuilder details=new StringBuilder(snapshot.waiting?snapshot.state:snapshot.registration(0));
-        if(receiving && !inputRoute.isEmpty())details.append(" · ").append(inputRoute);
+        if(receiving){
+            details.append(" · ").append(snapshot.bufferLabel());
+            if(!inputRoute.isEmpty())details.append(" · ").append(inputRoute);
+        }
         if(snapshot.active && !snapshot.waiting && previews){
             String line=snapshot.partial.isEmpty()?(snapshot.finals.isEmpty()?"":snapshot.attributed(snapshot.finals.size()-1)):snapshot.partial;
             if(!line.isEmpty())details.append(snapshot.partial.isEmpty()?"\nHeard · ":"\nIn progress · ").append(line.substring(0,Math.min(line.length(),120)));
@@ -136,14 +145,20 @@ public final class RecallService extends Service {
         if(!snapshot.lastSave.isEmpty())details.append(" · Latest: ").append(snapshot.lastSave).append(" at ").append(java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM).format(new Date(snapshot.savedAt)));
         details.append("\n").append(captureSettings()).append("\n").append(backupStatus());
         int icon=getResources().getIdentifier("ic_listening","drawable",getPackageName());
-        b.setContentTitle(headline).setContentText(snapshot.active?counts:"Starting on-device speech recognition")
+        String brief=snapshot.waiting?"Mic busy":take.recording?"Take "+take.seconds+"/60s":
+            !receiving?"No input":!snapshot.partial.isEmpty()?"Decoding":snapshot.level<.08f?"Quiet":"Input "+Math.round(snapshot.level*100)+"%";
+        b.setContentTitle(headline).setContentText(snapshot.active?brief+" · "+counts:"Starting on-device speech recognition")
             .setSmallIcon(icon!=0?icon:android.R.drawable.ic_btn_speak_now)
             .setStyle(new Notification.BigTextStyle().bigText(details)).setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true).setOngoing(true).setCategory(Notification.CATEGORY_SERVICE).setContentIntent(reviewIntent());
-        if(snapshot.active)b.setWhen(System.currentTimeMillis()-snapshot.sessionSeconds*1000L).setUsesChronometer(true);
+        if(Build.VERSION.SDK_INT>=31)b.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE);
+        if(snapshot.active && startedElapsed>0)b.setWhen(System.currentTimeMillis()-(SystemClock.elapsedRealtime()-startedElapsed)).setUsesChronometer(true);
+        if(take.recording && receiving)b.setProgress(60,Math.min(60,take.seconds),false);
         if(receiving){
             noticeAction(b,KEEP,"Save last min",android.R.drawable.ic_menu_save);
-            noticeAction(b,take.recording?END_TAKE:BEGIN_TAKE,take.recording?"Finish take":"Start take",android.R.drawable.ic_btn_speak_now);
+            if(!take.recording && getSharedPreferences("recall-speech",0).getBoolean("noticeMissed",false))
+                noticeAction(b,MISSED,"Mark missed",android.R.drawable.ic_menu_recent_history);
+            else noticeAction(b,take.recording?END_TAKE:BEGIN_TAKE,take.recording?"Finish take":"Start take",android.R.drawable.ic_btn_speak_now);
         }
         if(snapshot.active && !stopping.get())noticeAction(b,USER_PAUSE,"Pause",android.R.drawable.ic_media_pause);
         return b.build();
@@ -174,6 +189,8 @@ public final class RecallService extends Service {
             if(worker==null){stopSelf(startId);return START_NOT_STICKY;}
             if(!noticeSession.equals(intent.getStringExtra("noticeSession")) || stopping.get() ||
                 (!USER_PAUSE.equals(action) && (!capturing||!LiveCapture.snapshot().receiving)) ||
+                (MISSED.equals(action) && (SpokenTake.status.recording || !getSharedPreferences("recall-speech",0).getBoolean("noticeMissed",false))) ||
+                (BEGIN_TAKE.equals(action) && getSharedPreferences("recall-speech",0).getBoolean("noticeMissed",false)) ||
                 (take && (intent.getLongExtra("takeGeneration",-1)!=SpokenTake.generation ||
                     BEGIN_TAKE.equals(action)==SpokenTake.status.recording)))return START_NOT_STICKY;
         }
@@ -330,7 +347,9 @@ public final class RecallService extends Service {
             if(utterance!=null)engine.text(speech.rawWords(),true,!(skipMedia && speech.isMedia()));
             if(command!=null && (utterance==null || !command.equals(speech.rawWords())) && !stopping.get())engine.text(command,true);
             if(take.add(data,count))takeAction(false);
-            if(!stopping.get())engine.pcm(data,count);
+            if(!stopping.get()){
+                engine.pcm(data,count);LiveCapture.buffered(engine.bufferedSeconds());
+            }
         }
         void end(boolean gap,String reason){
             capturing=false;

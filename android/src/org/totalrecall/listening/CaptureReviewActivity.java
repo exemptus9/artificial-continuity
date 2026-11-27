@@ -46,6 +46,7 @@ public final class CaptureReviewActivity extends Activity {
         action(quick,"Lock screen & sound",this::feedbackSettings);
         body=column();page.addView(body);tab(saved);
         if(getIntent().getBooleanExtra("commands",false)&&state==null)guide();
+        if(getIntent().getBooleanExtra("noticeSettings",false)&&state==null)feedbackSettings();
     }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("saved",saved);}
     @Override protected void onStart(){super.onStart();RecallOverlay.reviewVisible(this,true);}
@@ -111,7 +112,23 @@ public final class CaptureReviewActivity extends Activity {
     private void feedbackSettings(){
         android.content.SharedPreferences prefs=getSharedPreferences("recall-speech",0);
         LinearLayout options=column();options.setPadding(dp(18),dp(8),dp(18),dp(12));
+        android.app.NotificationManager notices=getSystemService(android.app.NotificationManager.class);
+        android.app.NotificationChannel channel=notices.getNotificationChannel(RecallService.CHANNEL);
+        String availability=!notices.areNotificationsEnabled()?"Notifications are turned off for Total Recall":
+            channel!=null && channel.getImportance()==android.app.NotificationManager.IMPORTANCE_NONE?"The listening notification channel is turned off":
+            channel!=null && channel.getLockscreenVisibility()==android.app.Notification.VISIBILITY_SECRET?"Android is hiding this channel on the lock screen":
+            "Notifications enabled · expand the listening card for controls";
+        text(options,availability,16,true);
+        if("samsung".equalsIgnoreCase(Build.MANUFACTURER))
+            text(options,"Only seeing an icon? In Galaxy Settings, open Notifications → Lock screen notifications and choose Cards if available. Double-tap the lock-screen icon to open the notification panel. An alerting-only filter can hide the quiet listening card.",14,false);
         text(options,"Expand the recording notification to save recent audio, start or finish a one-minute take, or pause. Tap the notification itself to review your recordings.",15,false);
+        Switch missed=new Switch(this);missed.setMinHeight(dp(48));
+        missed.setText("Use Mark missed instead of Start take");missed.setChecked(prefs.getBoolean("noticeMissed",false));options.addView(missed);
+        text(options,"Mark missed keeps up to 90 seconds for review. A running voice take always shows Finish take. The paused card also offers End & close with confirmation.",14,false);
+        missed.setOnCheckedChangeListener((v,on)->{
+            prefs.edit().putBoolean("noticeMissed",on).apply();
+            if(RecallService.isListening())RecallService.command(this,RecallService.REFRESH_NOTICE);
+        });
         Switch words=new Switch(this);words.setMinHeight(dp(48));words.setText("Show recognized words and situations while locked");words.setChecked(prefs.getBoolean("noticeWords",false));options.addView(words);
         words.setOnCheckedChangeListener((v,on)->{
             prefs.edit().putBoolean("noticeWords",on).apply();
@@ -119,7 +136,7 @@ public final class CaptureReviewActivity extends Activity {
         });
         action(options,"Android lock-screen notification settings",()->{
             android.app.NotificationManager manager=getSystemService(android.app.NotificationManager.class);
-            if(manager.getNotificationChannel("total_recall_listening")!=null)
+            if(manager.areNotificationsEnabled() && manager.getNotificationChannel(RecallService.CHANNEL)!=null)
                 startActivity(new Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                     .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()).putExtra(android.provider.Settings.EXTRA_CHANNEL_ID,"total_recall_listening"));
             else startActivity(new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE,getPackageName()));

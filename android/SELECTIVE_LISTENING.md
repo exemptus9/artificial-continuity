@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.25.0
+# Live listening on Galaxy · 0.26.0
 
-Install `TotalRecall-0.25.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.26.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Keep a moment
 
@@ -8,7 +8,7 @@ Speak naturally. In the default mode, a 90-second rolling buffer holds recent au
 
 **Live captions** show what the recognizer is hearing. Wording can change during an utterance. Open a saved moment and choose **Playback & trim** to hear the original, mark the part you want and **Save excerpt…**. The new clip keeps its link to the original. If you are still recording, playback offers **Pause & play**. Tap **Start listening** afterward to begin a fresh session.
 
-**Floating controls** on the listening screen opens the overlay settings. Grant display-over-other-apps access and enable the panel. Drag anywhere, including over a button. Choose **Overlay size → Ultra mini** in Floating controls. In Ultra mini, watch the elapsed time, input meter and most recent words. With captions off, the second line reports input or quiet. The expanded panel places capture buttons beside the transcript, followed by recognition status, current and previous situation, and journal access. Tap **×** in any size to review the end-recording confirmation. **Go back** keeps the session running. **End & close** stops the microphone and closes the app. **More → Hide** dismisses only the overlay. Live captions clear when the phone locks or the microphone becomes unavailable.
+**Floating controls** on the listening screen opens the overlay settings. Grant display-over-other-apps access and enable the panel. Drag anywhere, including over a button. Choose **Overlay size → Ultra mini** in Floating controls. In Ultra mini, watch the elapsed time, input meter and most recent words. Hold the readout to save up to the preceding minute, or tap it to open the journal. The short level history shows recent sound. Between phrases, the strip can show recent audio available, saved and flagged totals, input, or a current situation cue. Choose the readout in Floating controls. Open **Lock screen controls & sound** to check notification access or put **Mark missed** on the listening card. The paused card also offers **End & close** with confirmation. The expanded panel places capture buttons beside the transcript, followed by recognition status, current and previous situation, and journal access. Tap **×** in any size to review the end-recording confirmation. **Go back** keeps the session running. **End & close** stops the microphone and closes the app. **More → Hide** dismisses only the overlay. Live captions clear when the phone locks or the microphone becomes unavailable.
 
 ## Change apps or use voice mode
 

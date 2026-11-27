@@ -585,6 +585,10 @@ public final class RecallSmoke extends Instrumentation {
             waitNode("Shrink panel");
             tapNode("More overlay actions");tapNode("Use the smallest panel with live status and words");
             assertOverlayInScreenshot("Open medium panel");
+            int beforeHold=LiveCapture.snapshot().savedCount;
+            AccessibilityNodeInfo mini=waitNode("Open the complete transcript across saved sessions");
+            require(mini.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK),"Small overlay rejected hold-to-save");
+            until(()->LiveCapture.snapshot().savedCount>beforeHold,16000,"Holding the mini readout did not save audio");
             String clock=miniStatus();
             until(()->!clock.equals(miniStatus()),6500,"Ultra mini readout did not advance during capture");
             tapNode("Stop listening and close Total Recall");waitNode("End & close");tapNode("Go back");
@@ -761,9 +765,20 @@ public final class RecallSmoke extends Instrumentation {
             require(!power.isInteractive(),"Display woke before WAV verification");
             passed("Screen off throughout retrospective save: foreground microphone accepted Keep, stored "
                 +(kept.endMs-kept.startMs)+" ms of emulator PCM and verified WAV bytes against catalog SHA-256.");
+            SharedPreferences controls=target.getSharedPreferences("recall-speech",0);
+            controls.edit().putBoolean("noticeMissed",true).commit();
+            try{
+                android.app.PendingIntent missed=waitForButton("Mark missed");
+                require(noticeButton("Start take")==null,"Take shortcut remained after switching to Mark missed");
+                missed.send();
+                until(()->store.search("").stream().anyMatch(row->!previous.contains(row.uid) && row.kind.contains(SelectiveEngine.MISSED)),16000,"Screen-off mark missed did not store audio");
+                for(Store.Moment row:store.search(""))if(!previous.contains(row.uid)&&row.kind.contains(SelectiveEngine.MISSED))store.delete(row.id);
+                require(!power.isInteractive(),"Mark missed woke the display");
+            }finally{controls.edit().remove("noticeMissed").commit();}
             android.app.PendingIntent priorPause=waitForButton("Pause");priorPause.send();
             android.app.PendingIntent resume=waitForButton("Resume");
             require(!RecallService.isListening() && !power.isInteractive(),"Pause did not release the mic while asleep");
+            waitForButton("End & close");
             resume.send();waitForButton("Save last min");
             require(RecallService.isListening() && !power.isInteractive(),"Resume did not recover an active microphone with screen off");
             priorPause.send();SystemClock.sleep(500);require(RecallService.isListening(),"Old pause affected the new session");

@@ -27,7 +27,11 @@ public final class LiveCaptureTest{
         check(LiveCapture.snapshot().overlayWords(boundary).equals("repeated phrase\nrepeated phrase\nunfinished"));
         long afterPartial=LiveCapture.snapshot().finalSequence+1;
         check(LiveCapture.snapshot().overlayWords(afterPartial).isEmpty());
+        LiveCapture.words("unfinished fresh words",false);
+        check(LiveCapture.snapshot().appendedPartial(afterPartial,"unfinished").equals("fresh words"));
+        check(LiveCapture.snapshot().appendedPartial(afterPartial,"different").isEmpty());
         LiveCapture.words("unfinished phrase",true);
+        check(LiveCapture.snapshot().appendedPartial(afterPartial,"unfinished").isEmpty());
         check(LiveCapture.snapshot().overlayWords(afterPartial).isEmpty());
         LiveCapture.words("visible",false);
         check(LiveCapture.snapshot().overlayWords(afterPartial).equals("visible"));
@@ -37,7 +41,8 @@ public final class LiveCaptureTest{
         check(LiveCapture.snapshot().situationLines(boundary).equals("Now · Question\nLast · Creative idea"));
         check(LiveCapture.at(TimeUnit.NANOSECONDS.toMillis(System.nanoTime())+46000).situationLines(0).equals("Now · Waiting for context\nLast · Question"));
         check(!LiveCapture.snapshot().situationLines(LiveCapture.snapshot().finalSequence).contains("Question"));
-        LiveCapture.waitFor("busy");check(!LiveCapture.snapshot().situationLines(0).contains("Question"));check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
+        LiveCapture.buffered(83);check(LiveCapture.snapshot().bufferLabel().equals("60s ready"));
+        LiveCapture.waitFor("busy");check(LiveCapture.snapshot().bufferSeconds==0);check(!LiveCapture.snapshot().situationLines(0).contains("Question"));check(LiveCapture.snapshot().overlayWords(boundary).isEmpty());
         LiveCapture.stop("Paused");check(!LiveCapture.snapshot().active && LiveCapture.snapshot().finals.isEmpty());
         int before=LiveCapture.snapshot().savedCount;
         LiveCapture.saved(42,"Voice take","User request",true);

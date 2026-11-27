@@ -71,13 +71,21 @@ public final class OverlaySettingsActivity extends Activity {
                     .setTitle("Overlay size").setSingleChoiceItems(sizes,selected,(dialog,which)->{
                         RecallOverlay.changeSize(this,which==0,which==2);dialog.dismiss();render();
                     }).setNegativeButton("Cancel",null).show());
+                String[] focuses={"Cycle input, buffer and totals","Input level","Available audio","Saved and flagged","Current situation"};
+                String[] focusValues={"auto","input","buffer","stats","scene"};
+                int focus=Math.max(0,java.util.Arrays.asList(focusValues).indexOf(RecallOverlay.options(this).getString("miniFocus","auto")));
+                button("Ultra mini between phrases · "+focuses[focus],v->new android.app.AlertDialog.Builder(this)
+                    .setTitle("Between phrases").setSingleChoiceItems(focuses,focus,(dialog,which)->{
+                        RecallOverlay.options(this).edit().putString("miniFocus",focusValues[which]).apply();dialog.dismiss();render();
+                    }).setNegativeButton("Cancel",null).show());
                 Switch caption=new Switch(this);caption.setText("Show live captions on the overlay");
                 caption.setChecked(RecallOverlay.options(this).getBoolean("captions",true));
                 caption.setOnCheckedChangeListener((b,on)->RecallOverlay.changeCaptions(this,on));body.addView(caption);
-                label("Drag anywhere on the panel, including its buttons. Use × in any size to end recording after confirmation. Use More for secondary actions. Tap Live & saved to read the transcript and situation analysis. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
+                label("Drag anywhere on the panel, including its buttons. In Ultra mini, hold the live readout to save recent audio. Tap it to open the journal. Use × in any size to end recording after confirmation. Use More for secondary actions. Tap Live & saved to read the transcript and situation analysis. Live words appear only on the unlocked screen and may change as you speak. Controls disappear when the phone locks. Hiding the overlay keeps the listening session running.",15,false);
                 button(RecallService.isListening()?"Show controls now":"Preview start control",v->{RecallOverlay.idlePreview(this);finish();});
             }
         }
+        button("Lock screen controls & sound",v->startActivity(new Intent(this,CaptureReviewActivity.class).putExtra("noticeSettings",true)));
         button("Back to Total Recall",v->finish());
     }
 }

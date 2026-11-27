@@ -537,6 +537,7 @@ public final class SelectiveEngine {
         if (hit != null) select(hit.category, hit.reason, hit.category.equals(POETRY) ? RATE * 45 : CONTEXT);
     }
 
+    int bufferedSeconds(){return (int)(Math.min(at,WINDOW)/RATE);}
     boolean passageOpen(){return passage;}
     public synchronized void keep() {
         if (stopped || at == 0) return;
