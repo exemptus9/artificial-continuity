@@ -17,7 +17,7 @@ class ContextualSpellingTest(unittest.TestCase):
             path.unlink();words.next_check=0
             self.assertEqual(words.correct("rhyme mosaic"),"rhyme mosaic")
             with self.assertRaises(ValueError):checked_spellings({"":"anything"})
-            with self.assertRaises(ValueError):checked_spellings({"line":"bad\\nline"})
+            with self.assertRaises(ValueError):checked_spellings({"line":"bad\nline"})
 
     def test_precise_edits_and_literal_counterexamples(self):
         cases = {
