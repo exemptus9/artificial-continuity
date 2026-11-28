@@ -122,6 +122,7 @@ public final class ArchiveProbe extends Instrumentation {
             check(ArchiveStore.retainUntil(Instant.parse("2024-02-29T12:00:00Z").toEpochMilli())
                     == Instant.parse("2031-02-28T12:00:00Z").toEpochMilli(),"Leap-day retention drifted");
             verifyToneAndSilence(store,full.id);
+            shell("input keyevent KEYCODE_WAKEUP");shell("wm dismiss-keyguard");
             int journalPlayhead=JournalSegmentPlaybackProbe.verify(this,context,full);
             step("The ordinary journal passage opened retained AAC paused at 40.637 s. Android MediaPlayer reported "+journalPlayhead+" ms after Play. Back returned to the passage and released the player.");
             verifyInterruptedTail(store,silentTail);

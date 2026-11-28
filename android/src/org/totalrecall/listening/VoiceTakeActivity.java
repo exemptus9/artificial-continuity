@@ -19,7 +19,7 @@ public final class VoiceTakeActivity extends Activity {
     private Button playback;
     private android.media.AudioFocusRequest focus;
     private boolean waitingForRelease;
-    private long shown=-1,previous=-1,deadline,boundary;
+    private long shown=-1,previous=-1,deadline,boundary,takeWindow=-1;
     private boolean awaiting,starting,visible;
     private String restored,exportWords;
     private final Runnable poll=new Runnable(){public void run(){if(!visible)return;paint();main.postDelayed(this,200);}};
@@ -33,11 +33,16 @@ public final class VoiceTakeActivity extends Activity {
         if(Build.VERSION.SDK_INT>=35)scroll.setOnApplyWindowInsetsListener((v,i)->{android.graphics.Insets b=i.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(b.left,b.top,b.right,b.bottom);return i;});
         form();
         if(state!=null){
-            exportWords=state.getString("exportWords");starting=state.getBoolean("starting");deadline=state.getLong("deadline");previous=state.getLong("previous",-1);awaiting=state.getBoolean("awaiting");boundary=state.getLong("boundary");
+            takeWindow=state.getLong("takeWindow",-1);exportWords=state.getString("exportWords");starting=state.getBoolean("starting");deadline=state.getLong("deadline");previous=state.getLong("previous",-1);awaiting=state.getBoolean("awaiting");boundary=state.getLong("boundary");
             restored=state.getString("draft");long clip=state.getLong("clip",-1);if(clip>=0)open(clip);
         }else if(SpokenTake.status.recording){awaiting=true;boundary=LiveCapture.snapshot().finalSequence;if(getIntent().getBooleanExtra("finishTake",false))finishTake();}
         else if(getIntent().getBooleanExtra("finishTake",false)){if(SpokenTake.status.clip>=0)open(SpokenTake.status.clip);}
-        else if(getIntent().getBooleanExtra("begin",false) && LiveCapture.snapshot().receiving)begin();
+        else if(getIntent().getBooleanExtra("begin",false)){
+            LiveCapture.Snapshot live=LiveCapture.snapshot();
+            long requested=getIntent().getLongExtra("takeWindow",live.voiceSession);
+            if(RecallService.isListening() && live.active && !live.waiting && requested==live.voiceSession)
+                begin(requested);
+        }
     }
     private void stopAudio(){
         waitingForRelease=false;
@@ -80,17 +85,19 @@ public final class VoiceTakeActivity extends Activity {
         primary=button("Record my words",()->{if(SpokenTake.status.recording)finishTake();else begin();});
         line("Speak after the recording timer starts. Finish & edit saves the original audio and opens your words for correction. Each take can run for one minute.",15);
     }
-    private void begin(){
+    private void begin(){begin(-1);}
+    private void begin(long requestedWindow){
+        takeWindow=requestedWindow;
         if(!org.continuity.recall.ListenPolicy.allowed(this)){note("Enable capture in Total Recall first.");return;}
         if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
             requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},4);return;
         }
         previous=SpokenTake.status.clip;boundary=LiveCapture.snapshot().finalSequence;awaiting=true;starting=true;deadline=SystemClock.elapsedRealtime()+20000;
-        if(!RecallService.isListening())RecallService.command(this,RecallService.START);paint();
+        if(requestedWindow<0 && !RecallService.isListening())RecallService.command(this,RecallService.START);paint();
     }
     @Override public void onRequestPermissionsResult(int req,String[] permissions,int[] result){
         super.onRequestPermissionsResult(req,permissions,result);
-        if(req==4 && result.length>0 && result[0]==0)begin();else note("Microphone access is needed to record your words.");
+        if(req==4 && result.length>0 && result[0]==0)begin(takeWindow);else note("Microphone access is needed to record your words.");
     }
     private void finishTake(){
         primary.setEnabled(false);RecallService.command(this,RecallService.END_TAKE);
@@ -98,7 +105,13 @@ public final class VoiceTakeActivity extends Activity {
     private void paint(){
         if(shown>=0){if(player!=null && RecallService.isListening())stopAudio();return;}
         SpokenTake.Status take=SpokenTake.status;LiveCapture.Snapshot s=LiveCapture.snapshot();
-        if(starting && s.receiving && SystemClock.elapsedRealtime()<deadline){starting=false;RecallService.command(this,RecallService.BEGIN_TAKE);}
+        if(starting && takeWindow>=0 && (!RecallService.isListening() || !s.active || s.waiting || s.voiceSession!=takeWindow)){
+            starting=false;awaiting=false;deadline=SystemClock.elapsedRealtime();
+        }
+        if(starting && s.receiving && SystemClock.elapsedRealtime()<deadline){
+            starting=false;
+            startService(new Intent(this,RecallService.class).setAction(RecallService.BEGIN_TAKE).putExtra("takeWindow",s.voiceSession));
+        }
         if(take.recording){
             awaiting=true;deadline=0;primary.setEnabled(true);primary.setText("Finish & edit");
             status.setText("Recording · "+take.seconds+" / 60 s");live.setText(s.overlayWords(Math.max(boundary,SpokenTake.firstLine)));return;
@@ -158,7 +171,7 @@ public final class VoiceTakeActivity extends Activity {
             main.post(()->{if(!isDestroyed()){note("Correction saved. Original audio and words kept.");open(m.id);}});
         }catch(RuntimeException e){main.post(()->note("Could not save this correction."));}});
     }
-    @Override public void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("exportWords",exportWords);out.putBoolean("starting",starting);out.putLong("deadline",deadline);out.putLong("clip",shown);out.putLong("previous",previous);out.putLong("boundary",boundary);out.putBoolean("awaiting",awaiting);if(editor!=null)out.putString("draft",editor.getText().toString());}
+    @Override public void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putLong("takeWindow",takeWindow);out.putString("exportWords",exportWords);out.putBoolean("starting",starting);out.putLong("deadline",deadline);out.putLong("clip",shown);out.putLong("previous",previous);out.putLong("boundary",boundary);out.putBoolean("awaiting",awaiting);if(editor!=null)out.putString("draft",editor.getText().toString());}
     @Override public void onResume(){super.onResume();visible=true;RecallOverlay.reviewVisible(this,true);main.post(poll);}
     @Override public void onPause(){visible=false;stopAudio();main.removeCallbacks(poll);RecallOverlay.reviewVisible(this,false);super.onPause();}
     @Override public void onDestroy(){io.shutdown();super.onDestroy();}

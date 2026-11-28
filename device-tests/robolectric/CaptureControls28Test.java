@@ -255,6 +255,45 @@ public class CaptureControls28Test {
         assertFalse(RecallService.applyChoice(engine,RecallService.ANSWER_CHOICE+last+"/decision"));
         assertEquals(1,clips.size());assertEquals(SelectiveEngine.POETRY,clips.get(0).category);
     }
+    private Intent tapToBeginTake() throws Exception{
+        openOverlay(false,false);
+        part("takeControl").performClick();
+        Intent intent=shadowOf(app).getNextStartedActivity();
+        assertEquals(VoiceTakeActivity.class.getName(),intent.getComponent().getClassName());
+        assertEquals(LiveCapture.snapshot().voiceSession,intent.getLongExtra("takeWindow",-1));
+        shadowOf(app).grantPermissions(android.Manifest.permission.RECORD_AUDIO);
+        ReflectionHelpers.setStaticField(org.continuity.recall.ListenPolicy.class,"paused",false);
+        // Model the activity launch finishing between mic frames, outside the meter's 750 ms freshness window.
+        ReflectionHelpers.setStaticField(LiveCapture.class,"lastLevel",-1000L);
+        assertFalse(LiveCapture.snapshot().receiving);
+        return intent;
+    }
+    @Test public void takeRequestedFromOverlayWaitsForNextFrameAndSubmitsOnlyOnce() throws Exception{
+        Intent intent=tapToBeginTake();
+        ActivityController<VoiceTakeActivity> sheet=Robolectric.buildActivity(VoiceTakeActivity.class,intent).setup();
+        SpokenTake take=new SpokenTake();
+        try{
+            assertNotNull(find(sheet.get().getWindow().getDecorView(),"Waiting for microphone…"));
+            assertNull("No take or microphone start before fresh input",shadowOf(app).getNextStartedService());
+            ready();invoke(sheet.get(),"paint");Intent queued=dispatched(RecallService.BEGIN_TAKE);
+            assertEquals(intent.getLongExtra("takeWindow",-1),queued.getLongExtra("takeWindow",-2));
+            invoke(sheet.get(),"paint");assertNull(shadowOf(app).getNextStartedService());
+            take.begin();invoke(sheet.get(),"paint");
+            assertNotNull(find(sheet.get().getWindow().getDecorView(),"Finish & edit"));
+        }finally{take.release();sheet.pause().stop().destroy();}
+    }
+    @Test public void staleTakeRequestCannotStartAudioAfterMicGapOrPause() throws Exception{
+        Intent intent=tapToBeginTake();
+        ActivityController<VoiceTakeActivity> sheet=Robolectric.buildActivity(VoiceTakeActivity.class,intent).setup();
+        try{
+            LiveCapture.waitFor("Microphone gap");LiveCapture.resume("New input");ready();invoke(sheet.get(),"paint");
+            assertNull("Old request cannot attach to the recovered microphone",shadowOf(app).getNextStartedService());
+        }finally{sheet.pause().stop().destroy();}
+        LiveCapture.stop("Paused");ReflectionHelpers.setStaticField(RecallService.class,"running",false);
+        sheet=Robolectric.buildActivity(VoiceTakeActivity.class,intent).setup();
+        try{assertNull("An old launch cannot restart a paused microphone",shadowOf(app).getNextStartedService());}
+        finally{sheet.pause().stop().destroy();}
+    }
     @Test public void writingSetupsRestoreTheFirstPreferencesAndPreservePrivacyChanges() {
         android.content.SharedPreferences options=RecallOverlay.options(app);
         options.edit().putBoolean("captions",false).putBoolean("enabled",false)

@@ -9,6 +9,7 @@ import android.text.Spanned;
 import android.text.style.ClickableSpan;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.TextView;
+import java.lang.reflect.Method;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -27,13 +28,19 @@ final class JournalSegmentPlaybackProbe {
         boolean wasEnabled=JournalStore.enabled(context);
         JournalStore.setEnabled(context,true);
         try(JournalStore journal=new JournalStore(context)){
-            long epoch=JournalStore.epoch(context),session=journal.begin(epoch);
+            // The instrumentation and target APK can use different class loaders.
+            Method epochMethod=JournalStore.class.getDeclaredMethod("epoch",Context.class);
+            Method begin=JournalStore.class.getDeclaredMethod("begin",long.class);
+            Method append=JournalStore.class.getDeclaredMethod("append",long.class,long.class,String.class,boolean.class);
+            epochMethod.setAccessible(true);begin.setAccessible(true);append.setAccessible(true);
+            long epoch=(long)epochMethod.invoke(null,context),session=(long)begin.invoke(journal,epoch);
             FullJournalActivity page=null;
             try{
-                if(!journal.append(session,epoch,wording,false))throw new AssertionError("Could not seed the ordinary journal passage");
+                if(!(boolean)append.invoke(journal,session,epoch,wording,false))throw new AssertionError("Could not seed the ordinary journal passage");
                 journal.getWritableDatabase().execSQL("UPDATE lines SET at=? WHERE session=?",new Object[]{at,session});
                 page=(FullJournalActivity)probe.startActivitySync(new Intent(context,FullJournalActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 FullJournalActivity activity=page;
+                await(()->onMain(activity::hasWindowFocus),"Journal did not reach the foreground");
                 await(()->onMain(()->{
                     TextView body=(TextView)field(activity,"transcript");
                     if(!(body.getText() instanceof Spanned))return false;
@@ -50,19 +57,18 @@ final class JournalSegmentPlaybackProbe {
                 Object preview=onMain(()->field(activity,"segmentPlayer"));
                 if(preview==null || onMain(()->field(preview,"player"))!=null)throw new AssertionError("Audio opened before Play was tapped");
 
-                tap("Play");
+                long tappedAt=tap("Play");
                 int[] observed={-1};
                 await(()->onMain(()->{
                     MediaPlayer player=(MediaPlayer)field(preview,"player");
                     if(player==null || !player.isPlaying())return false;
                     observed[0]=player.getCurrentPosition();
                     // AAC-LC uses 64 ms frames at 16 kHz. Allow for polling a running player.
-                    return observed[0]>=expected-128 && observed[0]<=expected+1200;
+                    return observed[0]>=expected-128 && observed[0]<=expected+(SystemClock.elapsedRealtime()-tappedAt)+256;
                 }),"Android AAC playback did not start near the journal timestamp");
                 tap("Back to passage");
-                await(()->node("What I actually said")!=null && onMain(()->field(preview,"player"))==null,
+                await(()->node("What I actually said")!=null && node(wording)!=null && onMain(()->field(preview,"player"))==null,
                     "Leaving playback did not release audio and return to the same passage");
-                if(node(wording)==null)throw new AssertionError("The original passage was lost after playback");
                 return observed[0];
             }finally{
                 if(page!=null){FullJournalActivity opened=page;probe.runOnMainSync(opened::finish);}
@@ -94,8 +100,14 @@ final class JournalSegmentPlaybackProbe {
         }
         return null;
     }
-    private void tap(String label){
-        await(()->{AccessibilityNodeInfo button=node(label);return button!=null && button.performAction(AccessibilityNodeInfo.ACTION_CLICK);},
-            "Could not tap "+label);
+    private long tap(String label){
+        long[] tappedAt={0};
+        await(()->{
+            AccessibilityNodeInfo button=node(label);
+            if(button==null)return false;
+            tappedAt[0]=SystemClock.elapsedRealtime();
+            return button.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        },"Could not tap "+label);
+        return tappedAt[0];
     }
 }

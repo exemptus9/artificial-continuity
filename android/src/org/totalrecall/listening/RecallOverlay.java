@@ -516,7 +516,7 @@ public final class RecallOverlay {
                 else{
                     keep=control(actions,"Save 1 min","Save up to the last minute of available audio as a clip",v->request(RecallService.KEEP,"Keep requested…"));
                     takeControl=control(actions,"Record my words","Record a new voice take and edit what you actually said",v->{
-                        Intent intent=new Intent(app,VoiceTakeActivity.class).putExtra("begin",true).putExtra("finishTake",SpokenTake.status.recording).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        Intent intent=new Intent(app,VoiceTakeActivity.class).putExtra("begin",true).putExtra("finishTake",SpokenTake.status.recording).putExtra("takeWindow",LiveCapture.snapshot().voiceSession).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         try{app.startActivity(intent);}catch(RuntimeException e){Toast.makeText(app,"Could not open voice take",Toast.LENGTH_SHORT).show();}
                     });
                 }

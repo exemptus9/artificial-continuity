@@ -287,6 +287,10 @@ public final class RecallService extends Service {
             }else if(rewindCategory(action)!=null){
                 if(capturing && !stopping.get() && LiveCapture.snapshot().receiving)commands.offer(action);
                 else {LiveCapture.feedback("Waiting for microphone input · no clip saved");sound(CaptureCues.Cue.NO_AUDIO);noticeSoon();}
+            }else if(BEGIN_TAKE.equals(action) && intent.hasExtra("takeWindow")){
+                long expected=intent.getLongExtra("takeWindow",-1);
+                if(capturing && !stopping.get() && expected>=0 && expected==LiveCapture.snapshot().voiceSession)
+                    commands.offer(BEGIN_TAKE+expected);
             }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action)||LEARN_ROOM.equals(action)||BEGIN_TAKE.equals(action)||END_TAKE.equals(action))commands.offer(action);
         }else stopSelf(startId);
         return START_NOT_STICKY;
@@ -669,6 +673,8 @@ public final class RecallService extends Service {
                                     else if(action.equals(MARK_LONG+id)){sound(sessionAudio.mark("",0)?CaptureCues.Cue.MARKED:CaptureCues.Cue.MARK_FAILED);}
                                     LiveCapture.feedback(LongRecording.message);noticeSoon();
                                 }else if(BEGIN_TAKE.equals(action)||END_TAKE.equals(action))window.takeAction(BEGIN_TAKE.equals(action));
+                                else if(action.startsWith(BEGIN_TAKE) && action.equals(BEGIN_TAKE+LiveCapture.snapshot().voiceSession))
+                                    window.takeAction(true);
                                 else if(LEARN_ROOM.equals(action)){
                                     if(getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false)){
                                         window.reduceRoom=true;speech.learnRoom();

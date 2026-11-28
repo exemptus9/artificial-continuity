@@ -587,6 +587,17 @@ public final class RecallSmoke extends Instrumentation {
         },timeout,receipt?"Ultra mini must keep the clock advancing during the confirmed save receipt":
                 "Ultra mini must show the advancing session clock and growing or full rewind buffer");
     }
+    private String takeStatus(Activity sheet){
+        final String[] label={"unknown"};
+        runOnMainSync(()->{
+            try{
+                java.lang.reflect.Field status=VoiceTakeActivity.class.getDeclaredField("status");
+                status.setAccessible(true);TextView view=(TextView)status.get(sheet);
+                if(view!=null)label[0]=view.getText().toString();
+            }catch(ReflectiveOperationException ignored){}
+        });
+        return label[0];
+    }
     private void overlay()throws Exception{
         String app=target.getPackageName(), handle="Expand panel";
         Activity a=launch();
@@ -610,7 +621,22 @@ public final class RecallSmoke extends Instrumentation {
                 return Math.abs(after.centerY()-before.centerY())>=dy/2;
             },8000,"Floating control did not move on a physical pointer drag");
             assertOverlayInScreenshot(handle);tapNode(handle);assertOverlayInScreenshot("Shrink panel");waitNode("Pause recording and release the microphone");waitNode("Shrink panel");
-            tapNode("Record a new voice take and edit what you actually said");waitNode("Finish & edit");
+            ActivityMonitor takeLaunch=addMonitor(VoiceTakeActivity.class.getName(),null,false);
+            Activity takeSheet;
+            try{
+                until(()->{
+                    AccessibilityNodeInfo button=node("Record a new voice take and edit what you actually said");
+                    return button!=null && button.isVisibleToUser() && button.isEnabled() && button.isClickable() &&
+                        LiveCapture.snapshot().receiving && button.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                },10000,"Overlay take button did not accept a tap while receiving microphone input");
+                takeSheet=waitForMonitorWithTimeout(takeLaunch,10000);
+                require(takeSheet!=null,"Accepted overlay tap did not launch the voice take activity");
+            }finally{removeMonitor(takeLaunch);}
+            try{waitText(takeSheet,"Finish & edit",20000);}
+            catch(AssertionError e){throw new AssertionError("Opened the take activity but recording did not start. Microphone: "+
+                RecallService.status(target)+", receiving="+LiveCapture.snapshot().receiving+", activity="+takeSheet.getClass().getSimpleName()+
+                ", take status="+takeStatus(takeSheet),e);}
+            waitNode("Finish & edit");
             SystemClock.sleep(500);tapNode("Finish & edit");waitNode("Listen to original");waitNode("Save corrected words");
             waitNode("Share original audio");waitNode("Copy these words");
             getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
