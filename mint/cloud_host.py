@@ -47,7 +47,7 @@ PERSONAL_VOICE_APK = ("TotalRecall-0.31.0.apk",70907993,"9ec0944cb8d817f5b583ca5
 CHAPTERS_APK = ("TotalRecall-0.33.0.apk",70912089,"8a0dcdedfd280ba6cd5036be948ff5262c7e2d7e73325313e4a8e895e02d1b2f")
 APK_NAME = "TotalRecall-0.34.0.apk"
 APK_SIZE = 80312984
-APK_SHA = "09a112c4d0b2ca79deea5fcce9a6c92cfdeea6b4a94d00e08b94cfbd3803aaad"
+APK_SHA = "31e1445722b887e96cb8b6d2ae1e8124426181410f2d09c6ee29d0495f50aaf4"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
