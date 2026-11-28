@@ -53,11 +53,15 @@ MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.32.0_amd
 
 INSTALLER_NAMES = {"/downloads/android": "Android app", "/downloads/mint": "Linux Mint app"}
 
-def login_page(failed=False, installer=""):
+def login_page(failed=False, installer="", journal=False):
     name = INSTALLER_NAMES.get(installer)
     title = "Download the " + name if name else "Your archive"
     description = "Sign in to download your Total Recall installer." if name else "Listen to saved audio, find a clip, or connect your phone."
     hidden = '<input type="hidden" name="installer" value="' + installer + '">' if name else ""
+    if journal and not name:
+        title="Your shared journal"
+        description="Read speech saved by your connected phone and laptop."
+        hidden='<input type="hidden" name="destination" value="journal">'
     button = "Sign in and download" if name else "Open private archive"
     prompt = "That key did not match. Try the owner key from your private access file." if failed else "Use the owner key from your private access file."
     return ("""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Total Recall · Sign in</title><style>
@@ -258,8 +262,12 @@ class HostedHandler(recall_web.OwnerHandler):
         if not self.auth():
             if self.command == "GET" and path in INSTALLER_NAMES and "text/html" in self.headers.get("Accept","") and not self.headers.get("Range"):
                 return self.emit(200, login_page(installer=path), "text/html; charset=utf-8")
+            if path=="/journal":return self.emit(200,login_page(journal=True),"text/html; charset=utf-8")
             if path in ("/","/login"):return self.emit(200,login_page(),"text/html; charset=utf-8")
             return self.json(401,{"error":"Sign in to your archive."})
+        if path=="/journal":
+            self.send_response(303);self.send_header("Location","/#journal")
+            self.send_header("Content-Length","0");self.end_headers();return
         if path=="/downloads/android":return self.download_apk()
         if path=="/downloads/mint":
             try:
@@ -333,13 +341,14 @@ class HostedHandler(recall_web.OwnerHandler):
             fields = {}
         key = fields.get("key", [""])[0]
         installer = fields.get("installer", [""])[0]
+        journal=fields.get("destination",[""])[0]=="journal"
         if installer not in INSTALLER_NAMES:
             installer = ""
         if not hmac.compare_digest(hashlib.sha256(key.encode()).hexdigest(),self.server.owner_hash):
-            return self.emit(403,login_page(True, installer),"text/html; charset=utf-8")
+            return self.emit(403,login_page(True, installer, journal),"text/html; charset=utf-8")
         stamp=str(int(time.time())+30*DAY);msg=stamp+"."+secrets.token_hex(16)
         signed=msg+"."+hmac.digest(self.server.session_key,msg.encode(),"sha256").hex()
-        return self.redirects(COOKIE+"="+signed+"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age="+str(30*DAY), installer or "/")
+        return self.redirects(COOKIE+"="+signed+"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age="+str(30*DAY), installer or ("/#journal" if journal else "/"))
 
     def do_PUT(self):
         if not self.valid_host(self.headers.get("Host","")):return self.json(403,{"error":"Unrecognized origin"})

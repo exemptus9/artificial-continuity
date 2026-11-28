@@ -145,6 +145,13 @@ class HostedArchiveTests(unittest.TestCase):
         status, headers, _ = self.request("POST", "/login", urlencode({"key":self.owner_key, "installer":"//elsewhere.invalid"}), self.origin)
         self.assertEqual((status, headers["Location"]), (303, "/"))
 
+    def test_shared_journal_link_returns_to_journal_after_owner_login(self):
+        status,_,body=self.request("GET","/journal")
+        self.assertEqual(status,200)
+        self.assertIn(b'name="destination" value="journal"',body)
+        status,headers,_=self.request("POST","/login",urlencode({"key":self.owner_key,"destination":"journal"}),self.origin)
+        self.assertEqual((status,headers["Location"]),(303,"/#journal"))
+
     def test_mint_installer_requires_sign_in_and_returns_the_package(self):
         package = self.root / "total-recall-desk_0.32.0_amd64.deb"
         package.write_bytes(b"!<arch>\nfixture")

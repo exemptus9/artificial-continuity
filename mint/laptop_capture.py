@@ -753,7 +753,7 @@ def panel(arc):
         tick(False)
     ttk.Button(journal_bar,textvariable=local_label,command=toggle_journal).pack(side="left")
     ttk.Button(journal_bar,text="Local journal",command=lambda:archive("journal")).pack(side="left",padx=3)
-    ttk.Button(journal_bar,text="Shared journal ↗",command=lambda:webbrowser.open("https://"+HOST+"/#journal")).pack(side="left")
+    ttk.Button(journal_bar,text="Shared journal ↗",command=lambda:webbrowser.open("https://"+HOST+"/journal")).pack(side="left")
     ttk.Button(journal_bar,textvariable=cloud_label,command=lambda:settings("backup")).pack(side="left",padx=3)
 
     login=Path(os.environ.get("XDG_CONFIG_HOME",Path.home()/".config"))/"autostart/total-recall-microphone.desktop"
