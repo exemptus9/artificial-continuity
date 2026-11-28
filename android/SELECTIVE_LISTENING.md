@@ -1,6 +1,6 @@
-# Live listening on Galaxy · 0.30.0
+# Live listening on Galaxy · 0.31.0
 
-Install `TotalRecall-0.30.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
+Install `TotalRecall-0.31.0.apk` over the earlier Total Recall app and choose **Update**. Open the app, tap **Start listening**, allow microphone access and wait for the input meter. Allow notifications for the ongoing listening controls. Speech recognition works offline with the included English model.
 
 ## Teach a coined word from your own line
 
@@ -97,6 +97,8 @@ Automatic backup follows the paired destination, selected content, network, powe
 
 ## Calibrate your voice and room
 
+In **Voices → Check how Recall hears me**, read an example or type a line of your own. Try a poem at everyday pace, then repeat it quietly. Each take can use a different quiet lift without changing your recorder settings. After you confirm you read the displayed line, Recall shows the actual caption, each missed, added or changed word, and the difference from your previous take of the same line. Numbers compare as written, so type “four” for the spoken word. Practice audio stays in memory and the check does not train a voice profile. When the recorder is already running, Recall asks before using its microphone because your normal journal and recording settings still apply.
+
 Open **Voices** on the large overlay or **Remember voices** in the live capture screen. Choose **Teach my voice**. If listening is paused, **Start listening and continue** brings you back to the phrase after the microphone is ready. Speak for about five seconds, pause, and check what the phone heard. Use **Add a sample of my voice** for a softer or faster delivery you actually use.
 
 For a name Recall keeps splitting or misspelling, choose **Practice a name or coined word**. Enter your preferred spelling once, say the displayed sentence, then tap the first and last words of the misheard part. Confirm the sample. You can practice a second sentence to teach another reading. When Recall matches your voice, it can use the confirmed spelling in the completed caption and when matching a saved highlight. The journal keeps the first reading for comparison. **My voice corrections** lets you forget an entry.
@@ -109,7 +111,9 @@ The expanded overlay shows **Now** and **Last**. These are interpretations of re
 
 Choose **Record my words** on the large panel or **Record my words & edit** on the recorder. Speak after the timer starts. **Finish & edit** opens the saved take. A take also closes at one minute or when usable microphone input ends. **Listen to original** offers to pause the live microphone for playback. Edit **What I actually said**, then **Save corrected words**. You can copy or share the wording or share the original WAV separately. Takes appear in **Saved on phone → Recent saved clips** even with the journal switched off.
 
-In **Full journal**, **Check uncertain wording** lists passages flagged by the recognizer’s word-level confidence. Tap one to see which words to check. **Find audio at this time** opens a saved clip that covers its recognition timestamp with up to six seconds of lead-in. Tap **Play** to listen. If there is no covering clip, the journal tells you.
+In **Full journal**, **Check uncertain wording** lists passages flagged by the recognizer’s word-level confidence. Tap one to see which words to check.
+
+From any recognized journal passage, choose **Find audio at this time**. Recall checks saved clips first, then recordings kept by full-audio capture on this phone. The player opens paused with up to six seconds of lead-in. Clear **Include 6 seconds before the timestamp** to open at the recognition time. Tap **Play** to listen and close the player to return to the passage. If the recording was removed from the phone, the journal tells you.
 
 Choose **Wording is right** to clear the flag, or edit the line and choose **Save correction**. **Show all journal lines** returns to the full journal, where you can also correct, copy or share unflagged passages. **Compare with original recognition** and session text exports preserve the earlier reading.
 
@@ -121,6 +125,6 @@ Open **Live & saved → Lock screen & sound** for transcript and situation previ
 
 While listening, say your wake word followed by **status**, **help**, or **repeat**. Status reports whether the microphone is receiving audio and what is being recorded. Repeat replays the last result from this listening session. The expanded overlay also has **Hear status**, **Last result** and **Spoken help** under **More**.
 
-For a labeled rewind, say your wake word and **save as**. Recall holds up to the preceding minute in memory. When “Word, line, or decision?” finishes, answer **word**, **line**, **decision**, or **cancel**. The choice lasts eight seconds of input, with up to three extra seconds allowed for a spoken cue. A timeout or cancellation discards the held copy. If a long session was running when you asked, its marker points eight seconds before the request, even if that session finished before your reply.
+For a labeled rewind, say your wake word and **save as**. Recall holds up to the preceding minute in memory. When “Word, line, or decision?” finishes, answer **word**, **line**, **decision**, or **cancel**. With floating controls on, the large panel pins these four choices above the scrolling controls. The smaller panels show **Save as** and the remaining seconds even with sound and captions off. Tap that readout to choose, and the panel returns to its previous size when the question closes. The choice lasts eight seconds of input, with up to three extra seconds allowed for a spoken cue. A timeout or cancellation discards the held copy. If a long session was running when you asked, its marker points eight seconds before the request, even if that session finished before your reply.
 
 Recall plays short fixed phrases such as “Microphone back. Listening.” For an unclear command, it says “Say the wake word, then help or save that.” A save failure has its own message. The recorder and journal skip recognition during the app’s spoken prompts so the prompts cannot issue commands or enter voice practice. Audio recordings preserve the microphone signal, which can pick up a loudspeaker. Wait until a prompt finishes before replying.

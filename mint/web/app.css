@@ -35,3 +35,6 @@ dialog{border:1px solid var(--line);border-radius:17px;padding:22px 26px 26px;wi
 
 .result-audio {display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 14px 12px}
 .result-audio .section-note {margin:0}
+
+.journal-line.source-line{border-inline-start:3px solid var(--green,#246247);padding-inline-start:12px;background:var(--card)}
+.line-actions .result-audio{padding:0}.journal-reader .line-actions .quick-find{margin-top:0}.line-actions select,.find-form select{max-width:100%;font:inherit;border:1px solid var(--line);border-radius:8px;background:var(--card);color:inherit;padding:6px}

@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -41,6 +42,41 @@ class OwnerWorkflow(unittest.TestCase):
         for file in files:laptop.finish(self.arc,file,laptop.BASE)
         self.assertEqual(self.arc.status()["counts"],dict(segment=1,journal=0,clip=1))
         self.assertEqual(review.inbox(self.arc,"inbox",0)["total"],1)
+    def test_timed_search_requires_one_source_line_for_all_words(self):
+        source=("2026-11-27 18:00:00 Z  the early morning\n"
+                "2026-11-27 18:01:00 Z  the quiet lantern\n"
+                "  Originally heard · the quiet land turn\n")
+        self.assertEqual(web.journal_match(source,["the","lantern"])["line"],1)
+        self.assertEqual(web.journal_match(source,["lantern","turn"])["field"],"Wording comparison")
+        self.assertIsNone(web.journal_match(source,["early","lantern"]))
+
+    def test_keep_exact_journal_line_with_filing_retry_search_and_removal(self):
+        body=("Header\r\n2026-11-27 18:00:00 Z  Mended line\r\n  Originally heard · Mend the lion\r\n"
+              "2026-11-27 18:00:00 Z  Another line\r\n2026-11-27 18:00:00 Z  [capture status] paused\r\n").encode()
+        sha=hashlib.sha256(body).hexdigest()
+        uid="journal-kept-line"
+        self.arc.begin(dict(id=uid,kind="journal",title="Notebook",bytes=len(body),sha256=sha,startedAtMillis=recall_archive.now(),durationMs=1000,mediaType="text/plain"))
+        self.arc.put(uid,0,body)
+        original_catalog_text=web.lookup(self.arc,"journal",uid)["text"]
+        req=dict(kind="journal",id=uid,action="keep-line",sourceSha=sha,line=1,label="",previous=None)
+        self.assertEqual(review.classify(self.arc,req),review.classify(self.arc,req))
+        review.classify(self.arc,dict(req,previous="",label="Poem draft"))
+        self.assertEqual(review.kept_lines(self.arc,"lion","Poem draft",0)["items"][0]["wording"],"Mended line")
+        found=web.items(self.arc,"journal","poem",5,0)["items"][0]["match"]
+        self.assertEqual((found["line"],found["at"]),(1,1795802400000))
+        self.assertEqual(web.lookup(self.arc,"journal",uid)["savedLines"],{1:"Poem draft"})
+        with self.assertRaises(recall_archive.Failure):review.classify(self.arc,dict(req,previous="",label=None))
+        for idx in [0,2,4,5]:
+            with self.assertRaises(recall_archive.Failure):review.classify(self.arc,dict(req,line=idx))
+        with self.assertRaises(recall_archive.Failure):review.classify(self.arc,dict(req,line=3,sourceSha="0"*64))
+        review.classify(self.arc,dict(req,line=3))
+        self.assertEqual(review.kept_lines(self.arc,"","",0)["total"],2)
+        review.classify(self.arc,dict(req,previous="Poem draft",label=None))
+        self.assertEqual(web.lookup(self.arc,"journal",uid)["text"],original_catalog_text)
+        self.assertEqual((self.arc.files/uid).read_bytes(),body)
+        review.delete(self.arc,dict(kind="journal",id=uid,sha256=sha))
+        with self.arc.connection() as db:self.assertEqual(db.execute("SELECT count(*) FROM journal_keeps").fetchone()[0],0)
+
     def test_story_conflict_search_delete(self):
         uid=self.stage(True)
         fields=dict(kind="clip",id=uid,action="story",body="Working on the lighthouse illustration.",revision=0)

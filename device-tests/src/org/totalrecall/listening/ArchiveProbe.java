@@ -122,6 +122,8 @@ public final class ArchiveProbe extends Instrumentation {
             check(ArchiveStore.retainUntil(Instant.parse("2024-02-29T12:00:00Z").toEpochMilli())
                     == Instant.parse("2031-02-28T12:00:00Z").toEpochMilli(),"Leap-day retention drifted");
             verifyToneAndSilence(store,full.id);
+            int journalPlayhead=JournalSegmentPlaybackProbe.verify(this,context,full);
+            step("The ordinary journal passage opened retained AAC paused at 40.637 s. Android MediaPlayer reported "+journalPlayhead+" ms after Play. Back returned to the passage and released the player.");
             verifyInterruptedTail(store,silentTail);
             step("Android decoded the first two-minute AAC segment and measured both the original 440 Hz tone and later silence. A separate 500 ms tail survived the gap; pause sealed the 2,600 ms resumed segment. All original AAC hashes and seven-year UTC dates agree.");
             check(!store.markSynced(resumed.id, full.sha256,"wrong-checksum"),"Wrong receipt hash accepted");

@@ -26,6 +26,7 @@ TABLES = {
     "observations": "clip_id metadata imported",
     "item_stories":"kind id body rev",
     "recording_evidence":"kind id offset mode cues",
+    "journal_keeps":"id line_no at wording original label",
     "owner_reviews":"kind id state labels name writing heard updated",
     "owner_options":"slot config",
     "deleted_items":"kind id",
@@ -181,6 +182,8 @@ def sanitize(db):
     if "archive_uploads" in tables:
         db.execute("DELETE FROM archive_uploads WHERE state!='complete'")
         db.execute("CREATE INDEX IF NOT EXISTS recall_backup_sha ON archive_uploads(sha)")
+        if "journal_keeps" in tables:
+            db.execute("DELETE FROM journal_keeps WHERE id NOT IN (SELECT id FROM archive_uploads WHERE kind='journal')")
     if "archive_settings" in tables:
         db.execute("DELETE FROM archive_settings WHERE name NOT IN ('quota','floor')")
     db.commit()

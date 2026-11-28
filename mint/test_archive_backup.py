@@ -39,6 +39,7 @@ class ArchiveBackupTest(unittest.TestCase):
             db.execute("INSERT INTO clips VALUES(?,100,100,1600,?,?, 'My correction','Transcript','verse','rhyme',?,?)",
                        ("selected", sha(self.wav), self.wav, '{"note":"pencil edit"}', "keep"))
             db.execute("INSERT INTO observations VALUES('selected','old metadata','today')")
+            db.execute("INSERT INTO journal_keeps VALUES(?,?,?,?,?,?)",("words",1,100,"mended rhyme","mended time","Poem draft"))
             db.execute("CREATE TABLE future_credentials(secret TEXT)")
             db.execute("INSERT INTO future_credentials VALUES(?)", (self.secret,))
             for uid, kind, data, state in (("sound","segment",self.audio,"complete"), ("words","journal",self.journal,"complete"),
@@ -71,6 +72,7 @@ class ArchiveBackupTest(unittest.TestCase):
         with sqlite3.connect(self.restore/"clips.sqlite3") as db:
             self.assertEqual(db.execute("SELECT audio,title,feedback,metadata FROM clips").fetchone(),
                              (self.wav,"My correction","keep",'{"note":"pencil edit"}'))
+            self.assertEqual(db.execute("SELECT wording,label FROM journal_keeps").fetchall(),[("mended rhyme","Poem draft")])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM observations").fetchone(),(1,))
             self.assertEqual(db.execute("SELECT COUNT(*) FROM archive_uploads").fetchone(),(3,))
         for f in self.drive.rglob("*"):

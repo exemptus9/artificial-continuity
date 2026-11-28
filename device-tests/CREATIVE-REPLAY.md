@@ -57,6 +57,14 @@ RECALL_APP_CLASSES=/path/to/0.30/classes device-tests/run-archive-dictation.sh /
 python3 device-tests/archive-dictation-holdout.py compare /tmp/recall-029.jsonl /tmp/recall-030.jsonl
 ```
 
+The 0.31 personal phrase check reuses the generated `rms-04-clean.pcm` fixture through a simulated private Android microphone and the running recorder’s in-memory sample feed. Both paths call native Vosk. The written reference asks for “three copies” and the audio says “two copies.” Both screens retained “two,” reported one changed word, and showed the comparison only after confirmation. To repeat with the same environment and the 0.31 classes, run `RECALL_APP_CLASSES=/path/to/0.31/classes device-tests/run-archive-dictation.sh --phrase-check /tmp/recall-dictation`.
+
+### Compare readings in a recording
+
+Open **Recording analysis → Compare readings** to review a difficult passage against its first transcript. Each differing result appears beside that first reading and its approximate time range. For a faint passage, the comparison raises its level with a single bounded gain. For a passage with a stable noise floor, it estimates background from its quietest windows and checks two noise-reduced versions. Explicitly protected wording, including numbers and negations, remains available to compare against the source audio. **Try voice focus** still runs the established high-pass and gain treatment; **Try original** retains the standard analysis. The microphone and the recording file are unchanged.
+
+The comparison was tested against the recorded 0.29 and 0.30 paths. A separate synthetic holdout used ten new scripts, different speech levels, a different fan mixture, and Flite voices awb, kal and slt. Replay a fixed balanced sample of either corpus by adding `--sample` to the generator. Add `--fresh` to select the new scripts (NumPy required). Set `RECALL_ARCHIVE_MODE` to `standard`, `focus`, or `compare` when running `run-archive-dictation.sh`. Use `compare --subset` when scoring matched partial corpora. A second acoustic reading may recover a missed word or introduce a new error. The app leaves disagreements visible for playback.
+
 ### Addressed command replay
 
 The Android 16 creative phase also plays “Hey Recall save as” and the replies “line” and “cancel” through the service window. It compares the original microphone samples at the instant of the request with the retained WAV, verifies its catalog SHA-256, and checks that cancellation and timeout write no clip. The guarded-playback case feeds the packaged spoken retry hint back through the microphone path and then retries the request. The synthetic input comes from `make-creative-fixtures.py`.

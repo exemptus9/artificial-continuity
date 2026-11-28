@@ -20,6 +20,30 @@ public class RecognitionReview30Test {
         for(String w:text.split(" "))rows.put(new JSONObject().put("word",w).put("conf",java.util.Arrays.asList(weak).contains(w)?.36:.96));
         return rows;
     }
+    @Test public void focusedArchiveHighlightsChangesToLiteralMeaning(){
+        assertTrue(RecognitionReview.safeFocusReplacement("we heard a raver","we heard a river"));
+        for(String[] conflict:new String[][]{
+                {"not today","today"},{"a third line","a fourth line"},{"use nine pages","use ninety pages"},
+                {"at minus two","at plus two"},{"the pun intended here","the pun ended here"}}){
+            assertFalse(RecognitionReview.safeFocusReplacement(conflict[0],conflict[1]));
+        }
+    }
+
+    @Test public void quietRecordingGainAndRoomEstimateNeverChangeSourceSamples(){
+        ArchiveNoise noise=new ArchiveNoise();
+        short[] quiet=new short[32000];java.util.Random random=new java.util.Random(91);
+        for(int i=8000;i<24000;i++)quiet[i]=(short)(100*Math.sin(i*.18));
+        short[] original=quiet.clone();
+        assertTrue(noise.prepare(quiet,quiet.length));assertFalse(noise.hasRoom());
+        short[] lifted=noise.render(quiet,quiet.length,false);
+        assertArrayEquals(original,quiet);assertTrue(Math.abs((int)lifted[8400])>Math.abs((int)quiet[8400]));
+        for(int i=0;i<quiet.length;i++)quiet[i]+=random.nextInt(81)-40;
+        original=quiet.clone();assertTrue(noise.prepare(quiet,quiet.length));assertTrue(noise.hasRoom());
+        assertEquals(quiet.length,noise.render(quiet,quiet.length,true).length);
+        assertArrayEquals(original,quiet);
+        assertFalse(noise.prepare(new short[32000],32000));
+    }
+
     @Test public void twoAlignedReadsCanRepairTwoWeakWordsDespiteExtraWordsElsewhere()throws Exception{
         String first="keep the lion under the silver clod near dusk";
         JSONArray raw=words(first,"lion","clod");

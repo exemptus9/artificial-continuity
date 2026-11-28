@@ -400,7 +400,7 @@ class CloudMedia:
         with closing(sqlite3.connect(path)) as snap, snap:
             snap.execute("ATTACH DATABASE ? AS src",(str(self.archive.path),))
             snap.execute("BEGIN")
-            tables=("cloud_identity","cloud_media","cloud_wavs","clip_original_sizes","clips","observations","archive_settings","archive_uploads","cloud_transfer_month","owner_reviews","item_stories","recording_evidence","owner_options","deleted_items")
+            tables=("cloud_identity","cloud_media","cloud_wavs","clip_original_sizes","clips","observations","archive_settings","archive_uploads","cloud_transfer_month","owner_reviews","item_stories","recording_evidence","journal_keeps","owner_options","deleted_items")
             for table in tables:
                 ddl=snap.execute("SELECT sql FROM src.sqlite_master WHERE type='table' AND name=?",(table,)).fetchone()
                 if not ddl and table=="cloud_transfer_month": continue
@@ -411,6 +411,7 @@ class CloudMedia:
                 if table=="archive_settings": cond=" WHERE name IN ('quota','floor')"
                 if table=="archive_uploads":
                     cond=" WHERE state='complete' AND (kind='clip' OR id IN (SELECT id FROM main.cloud_media))"
+                if table=="journal_keeps":cond=" WHERE id IN (SELECT id FROM main.archive_uploads WHERE kind='journal')"
                 snap.execute(f"INSERT INTO main.{table} SELECT * FROM src.{table}{cond}")
             for ddl, in snap.execute("""SELECT sql FROM src.sqlite_master
                 WHERE type='index' AND name IN('chronology','cloud_expiry','cloud_wav_expiry','archive_dates') AND sql IS NOT NULL""").fetchall():

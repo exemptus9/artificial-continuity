@@ -212,7 +212,7 @@ public final class RecallListenActivity extends Activity {
         else registerReceiver(observer,filter);
         registered=true;refresh();main.removeCallbacks(tick);tick.run();
     }
-    @Override protected void onResume(){super.onResume();if(state!=null){ArchiveSync.schedule(this);refresh();readArchiveStatus();}}
+    @Override protected void onResume(){super.onResume();if(state!=null){if(!getIntent().getBooleanExtra("return_to_journal",false))ArchiveSync.schedule(this);refresh();readArchiveStatus();}}
     private void readArchiveStatus(){
         archiveRefresh=android.os.SystemClock.elapsedRealtime();
         worker.execute(()->{
@@ -270,11 +270,11 @@ public final class RecallListenActivity extends Activity {
                         long id=requestedMoment;requestedMoment=-1;boolean found=false;
                         for(Store.Moment row:rows)if(row.id==id){
                             if(requestedPlayhead>=0){
-                                stopPlayer();studio=new ClipStudio(this,row,worker,this::refresh);studio.show(requestedPlayhead);requestedPlayhead=-1;
+                                stopPlayer();studio=new ClipStudio(this,row,worker,this::refresh);studio.show(requestedPlayhead,getIntent().getBooleanExtra("return_to_journal",false)?this::finish:null);requestedPlayhead=-1;
                             }else showMoment(row);
                             found=true;break;
                         }
-                        if(!found)Toast.makeText(this,"This moment is no longer available.",Toast.LENGTH_SHORT).show();
+                        if(!found){Toast.makeText(this,"This moment is no longer available.",Toast.LENGTH_SHORT).show();if(getIntent().getBooleanExtra("return_to_journal",false))finish();}
                     }
                 });
             }catch(Exception e){main.post(()->{if(alive()&&token==generation)summary.setText("Couldn’t read saved moments. "+message(e));});}

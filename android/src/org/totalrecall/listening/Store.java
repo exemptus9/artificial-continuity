@@ -195,13 +195,13 @@ public final class Store extends SQLiteOpenHelper {
         }return rows;
     }
     Moment covering(long at){
-        try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM clips WHERE start_ms<=? AND end_ms>=? ORDER BY end_ms-start_ms,id DESC",
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT * FROM clips WHERE start_ms<=? AND end_ms>? ORDER BY end_ms-start_ms,id DESC",
             new String[]{String.valueOf(at),String.valueOf(at)})){
             while(c.moveToNext()){
                 Moment candidate=new Moment(c,directory);
                 try{
                     long durationMs=PcmExcerpt.count(candidate.audio)*1000L/PcmExcerpt.RATE;
-                    if(at-candidate.startMs<=durationMs)return candidate;
+                    if(at-candidate.startMs<durationMs)return candidate;
                 }catch(IOException unavailable){/* Another saved clip may cover the same passage. */}
             }
             return null;

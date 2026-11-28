@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS owner_reviews(kind TEXT,id TEXT,state TEXT,labels TEX
 CREATE TABLE IF NOT EXISTS recent_filing_undo(kind TEXT,id TEXT,token TEXT,state TEXT,labels TEXT,clear_seed INTEGER,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS item_stories(kind TEXT,id TEXT,body TEXT,rev INTEGER,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS recording_evidence(kind TEXT,id TEXT,offset INTEGER,mode TEXT,cues TEXT,PRIMARY KEY(kind,id,offset,mode));
+CREATE TABLE IF NOT EXISTS journal_keeps(id TEXT NOT NULL,line_no INTEGER NOT NULL,at INTEGER NOT NULL,wording TEXT NOT NULL,original TEXT NOT NULL,label TEXT NOT NULL,PRIMARY KEY(id,line_no));
+CREATE INDEX IF NOT EXISTS journal_keeps_recent ON journal_keeps(at DESC,id,line_no);
 CREATE TABLE IF NOT EXISTS owner_options(slot INTEGER PRIMARY KEY,config TEXT);
 CREATE TABLE IF NOT EXISTS deleted_items(kind TEXT,id TEXT,PRIMARY KEY(kind,id));
 """
@@ -44,10 +46,54 @@ def review(db,kind,uid):
     row=db.execute("SELECT state,labels,name,writing,heard FROM owner_reviews WHERE kind=? AND id=?",(kind,uid)).fetchone()
     if not row:return dict(state="inbox",labels=[],name="",writing="",heard="")
     return dict(state=row[0],labels=json.loads(row[1]),name=row[2],writing=row[3],heard=row[4])
+def keep_line(db,uid,data):
+    from recall_web import source_journal_line
+    number=data.get("line")
+    if type(number) is not int or number<0 or number>16*1024*1024 or "label" not in data or "previous" not in data:
+        raise Failure(400,"Invalid journal line")
+    wanted,previous=data["label"],data["previous"]
+    if wanted is not None:wanted=clean_text(wanted,42)
+    if previous is not None:previous=clean_text(previous,42)
+    row=db.execute("SELECT label FROM journal_keeps WHERE id=? AND line_no=?",(uid,number)).fetchone()
+    existing=row[0] if row else None
+    if existing==wanted:return dict(line=number,label=existing)
+    if existing!=previous:raise Failure(409,"This saved line changed. Reopen the journal to see its current category.")
+    if wanted is None:
+        db.execute("DELETE FROM journal_keeps WHERE id=? AND line_no=?",(uid,number))
+    elif wanted and wanted not in options(db)["labels"]:
+        raise Failure(400,"Choose a current review category.")
+    elif row:
+        db.execute("UPDATE journal_keeps SET label=? WHERE id=? AND line_no=?",(wanted,uid,number))
+    else:
+        text=db.execute("SELECT journal FROM archive_uploads WHERE id=?",(uid,)).fetchone()[0]
+        at,wording,original=source_journal_line(text,number)
+        if max(len(wording),len(original))>40000:raise Failure(400,"This passage exceeds the 40,000-character saved-line limit.")
+        db.execute("INSERT INTO journal_keeps VALUES(?,?,?,?,?,?)",(uid,number,at,wording,original,wanted))
+    return dict(line=number,label=wanted)
+
+def kept_lines(arc,query,label,offset):
+    if len(query)>500 or len(label)>42 or not 0<=offset<=10_000_000:raise Failure(400,"Invalid saved-line search")
+    conditions=["a.kind='journal'","a.state='complete'"];args=[]
+    if label:
+        conditions.append("k.label=?");args.append(label)
+    for word in query.casefold().split()[:12]:
+        conditions.append("instr(fold_text(k.wording||' '||k.original||' '||k.label),?)>0");args.append(word)
+    source=" FROM journal_keeps k JOIN archive_uploads a ON a.id=k.id WHERE "+" AND ".join(conditions)
+    with arc.connection() as db:
+        db.create_function("fold_text",1,str.casefold,deterministic=True)
+        total=db.execute("SELECT count(*)"+source,args).fetchone()[0]
+        rows=db.execute("SELECT k.id,k.line_no AS line,k.at,k.wording,k.original,k.label,coalesce(json_extract(a.metadata,'$.title'),'Journal') AS title"
+                        +source+" ORDER BY k.at DESC,k.id,k.line_no LIMIT 25 OFFSET ?",[*args,offset]).fetchall()
+        labels=[r[0] for r in db.execute("SELECT DISTINCT label FROM journal_keeps WHERE label!='' ORDER BY label COLLATE NOCASE")]
+    return dict(items=[dict(r) for r in rows],total=total,labels=labels)
+
 def classify(arc,data):
     kind,uid=data.get("kind"),data.get("id");action=data.get("action")
     with arc.connection() as db:
-        db.execute("BEGIN IMMEDIATE");require(db,kind,uid)
+        db.execute("BEGIN IMMEDIATE");digest=require(db,kind,uid)
+        if action=="keep-line":
+            if kind!="journal" or data.get("sourceSha")!=digest:raise Failure(409,"Reopen the source journal to save this line.")
+            return keep_line(db,uid,data)
         r=review(db,kind,uid)
         if action=="story":
             body=clean_text(data.get("body"),12000)
@@ -130,6 +176,7 @@ def delete(arc,data):
                 db.execute("DELETE FROM "+table+" WHERE id=?",(uid,))
         for table in ("owner_reviews","item_stories","recording_evidence","recent_filing_undo"):
             db.execute("DELETE FROM "+table+" WHERE kind=? AND id=?",(kind,uid))
+        if kind=="journal":db.execute("DELETE FROM journal_keeps WHERE id=?",(uid,))
         db.execute("INSERT INTO deleted_items VALUES(?,?)",(kind,uid))
         if kind=="clip":
             for table,key in (("observations","clip_id"),("clip_original_sizes","id"),("clips","id")):

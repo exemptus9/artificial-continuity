@@ -11,27 +11,35 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Review existing media privately. Decoding never opens a microphone. */
 public final class AudioSituation {
+    private enum Reading { ORIGINAL, FOCUS, COMPARE }
     private AudioSituation(){}
     public interface Input {void open(MediaExtractor extractor)throws Exception;}
     public static void show(Activity activity,Input input){
         show(activity,null,"",input);
     }
     static void show(Activity activity,StoryNotes.Kind kind,String id,Input input){
-        show(activity,kind,id,input,false);
+        show(activity,kind,id,input,Reading.ORIGINAL);
     }
-    private static void show(Activity activity,StoryNotes.Kind kind,String id,Input input,boolean focused){
+    private static void show(Activity activity,StoryNotes.Kind kind,String id,Input input,Reading mode){
         AtomicBoolean closed=new AtomicBoolean();
         ScrollView scroll=new ScrollView(activity);
         TextView text=new TextView(activity);int pad=(int)(18*activity.getResources().getDisplayMetrics().density);
         text.setPadding(pad,pad,pad,pad);text.setTextSize(16);text.setTextIsSelectable(true);
         text.setText("Opening recording and offline speech model…");LinearLayout body=new LinearLayout(activity);body.setOrientation(LinearLayout.VERTICAL);body.addView(text);scroll.addView(body);
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Recording analysis").setView(scroll).setNeutralButton(focused?"Try original":"Try voice focus",(d,w)->show(activity,kind,id,input,!focused)).setPositiveButton("Close",null).create();
+        AlertDialog dialog=new AlertDialog.Builder(activity)
+                .setTitle(mode==Reading.COMPARE?"Compare recording readings":mode==Reading.FOCUS?"Voice-focused recording":"Recording analysis")
+                .setView(scroll)
+                .setNeutralButton(mode==Reading.FOCUS?"Try original":"Try voice focus",
+                    (d,w)->show(activity,kind,id,input,mode==Reading.FOCUS?Reading.ORIGINAL:Reading.FOCUS))
+                .setNegativeButton(mode==Reading.COMPARE?"Try original":"Compare readings",
+                    (d,w)->show(activity,kind,id,input,mode==Reading.COMPARE?Reading.ORIGINAL:Reading.COMPARE))
+                .setPositiveButton("Close",null).create();
         dialog.setOnDismissListener(d->closed.set(true));dialog.show();
         new Thread(()->{
             try{
                 String report=analyze(activity,input,closed,(message)->activity.runOnUiThread(()->{
                     if(!closed.get()&&!activity.isDestroyed())text.setText(message);
-                }),focused);
+                }),mode);
                 activity.runOnUiThread(()->{if(!closed.get()&&!activity.isDestroyed()){
                     text.setText(report);
                     if(kind!=null && report.contains("Suggested account"))body.addView(StoryNotes.button(activity,kind,id,report.substring(report.indexOf("Suggested account")+17).trim()));
@@ -47,6 +55,9 @@ public final class AudioSituation {
         return analyze(a,src,stop,progress,false);
     }
     static String analyze(Activity a,Input src,AtomicBoolean stop,Progress progress,boolean focused)throws Exception{
+        return analyze(a,src,stop,progress,focused?Reading.FOCUS:Reading.ORIGINAL);
+    }
+    private static String analyze(Activity a,Input src,AtomicBoolean stop,Progress progress,Reading mode)throws Exception{
         MediaExtractor ex=new MediaExtractor();MediaCodec codec=null;
         try{
             src.open(ex);int track=0;
@@ -60,7 +71,8 @@ public final class AudioSituation {
             if(raw && format.containsKey(MediaFormat.KEY_PCM_ENCODING) && format.getInteger(MediaFormat.KEY_PCM_ENCODING)!=AudioFormat.ENCODING_PCM_16BIT)
                 throw new IOException("This PCM format is unsupported.");
             try(OfflineSpeech speech=new OfflineSpeech(a,false,a.getSharedPreferences("recall-speech",0).getBoolean("voices",true))){
-                Scan scan=new Scan(a,speech);scan.focused=focused;
+                speech.focusedArchive=mode==Reading.COMPARE;
+                Scan scan=new Scan(a,speech);scan.focused=mode==Reading.FOCUS;
                 MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();boolean eof=false;long tick=0,lastWork=SystemClock.elapsedRealtime();
                 ByteBuffer packet=raw?ByteBuffer.allocateDirect(256*1024):null;
                 while(!stop.get()&&!a.isDestroyed()&&!a.isFinishing()){
@@ -150,7 +162,8 @@ public final class AudioSituation {
             String levels="Audio decoded  "+time(samples/16000)+"\nAbove −50 dBFS  "+Math.round(active*100d/samples)+"% of decoded time"+
                 "\nLongest quiet stretch  "+String.format(Locale.ROOT,"%.1f s",longest/16000d)+"\nPeak level  "+
                 (peak==0?"silence":String.format(Locale.ROOT,"%.1f dBFS",20*Math.log10(peak/32768d)));
-            String checks="Difficult passages checked across three decodes  "+speech.compared+" · matching enhanced readings "+speech.agreed+" · unresolved "+speech.uncertain+
+            String checks=(speech.focusedArchive?"Use each time range to replay the source recording after closing this review. Check names, numbers and deliberate wordplay against what you hear.\n\n":"")+
+                "Difficult passages compared locally  "+speech.compared+" · matching enhanced readings "+speech.agreed+" · unresolved "+speech.uncertain+
                 (toCheck.isEmpty()?"":"\n\nWording to check (up to 12 passages)\n"+String.join("\n",toCheck));
             if(turns.isEmpty()){
                 String signal=peak==0?"All decoded samples were silent.":active>0?"Sound was measured above −50 dBFS.":"The measured level stayed below −50 dBFS in every analysis window.";

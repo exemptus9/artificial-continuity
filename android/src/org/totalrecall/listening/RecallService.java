@@ -34,6 +34,8 @@ public final class RecallService extends Service {
     private static final int NOTIFICATION=9021, RESUME_NOTIFICATION=9022;
     private volatile boolean userPaused,ending;
     private static volatile boolean running;
+    static final String ANSWER_CHOICE=NS+"ANSWER_CHOICE";
+    static volatile SelectiveEngine.SaveChoice saveChoice=SelectiveEngine.SaveChoice.NONE;
     private static volatile String current="";
     private final ConcurrentLinkedQueue<String> commands=new ConcurrentLinkedQueue<>();
     private final AtomicBoolean stopping=new AtomicBoolean(false);
@@ -259,7 +261,7 @@ public final class RecallService extends Service {
                 longOnly=startLong;if(startLong)commands.offer(BEGIN_LONG);
                 try{if(cues==null)cues=new CaptureCues(this);}catch(RuntimeException ignored){}
                 notifications().cancel(RESUME_NOTIFICATION);userPaused=false;ending=false;stopping.set(false);destroyed=false;current="Preparing on-device listening";running=true;LiveCapture.start();RecallOverlay.sessionStarted(this);changed();
-                startedElapsed=SystemClock.elapsedRealtime();inputRoute="";lastOutcome=CaptureCues.Cue.NO_EVENT;gapOpen=false;worker=new Thread(this::listen,"Recall-Mic");worker.start();
+                startedElapsed=SystemClock.elapsedRealtime();inputRoute="";saveChoice=SelectiveEngine.SaveChoice.NONE;lastOutcome=CaptureCues.Cue.NO_EVENT;gapOpen=false;worker=new Thread(this::listen,"Recall-Mic");worker.start();
                 noticeHandler.removeCallbacks(refreshNotice);noticeHandler.postDelayed(refreshNotice,1000);
             }
         }else if(worker!=null){
@@ -277,12 +279,23 @@ public final class RecallService extends Service {
             else if(FINISH_LONG.equals(action)||MARK_LONG.equals(action)){
                 String id=intent.getStringExtra("longId");
                 if(id!=null && !id.isEmpty() && id.equals(LongRecording.active))commands.offer(action+id);
+            }else if(ANSWER_CHOICE.equals(action)){
+                String token=intent.getStringExtra("choiceToken"),answer=intent.getStringExtra("choiceAnswer");
+                if(capturing && !stopping.get() && LiveCapture.snapshot().receiving &&
+                    token!=null && !token.isEmpty() && token.equals(saveChoice.token) && SelectiveEngine.choiceWord(answer))
+                    commands.offer(ANSWER_CHOICE+token+"/"+answer);
             }else if(rewindCategory(action)!=null){
                 if(capturing && !stopping.get() && LiveCapture.snapshot().receiving)commands.offer(action);
                 else {LiveCapture.feedback("Waiting for microphone input · no clip saved");sound(CaptureCues.Cue.NO_AUDIO);noticeSoon();}
             }else if(KEEP.equals(action)||MISSED.equals(action)||DISCARD_LAST.equals(action)||LEARN_ROOM.equals(action)||BEGIN_TAKE.equals(action)||END_TAKE.equals(action))commands.offer(action);
         }else stopSelf(startId);
         return START_NOT_STICKY;
+    }
+    // Only the microphone worker can consume the original held rewind. A replacement prompt has its own token.
+    static boolean applyChoice(SelectiveEngine engine,String command){
+        int slash=command.indexOf('/',ANSWER_CHOICE.length());
+        return command.startsWith(ANSWER_CHOICE) && slash>ANSWER_CHOICE.length() &&
+            engine.answerChoice(command.substring(ANSWER_CHOICE.length(),slash),command.substring(slash+1));
     }
     private static final class SessionIssue extends RuntimeException {
         SessionIssue(String message){super(message);}
@@ -435,6 +448,7 @@ public final class RecallService extends Service {
             }
         }
         void end(boolean gap,String reason){
+            PhraseCheckInput.gap();
             capturing=false;
             if(engine==null)return;
             engine.closeChoice(null);hearingPrompt=false;
@@ -477,6 +491,7 @@ public final class RecallService extends Service {
                 SelectiveEngine.Listener listener=new SelectiveEngine.Listener(){
                     String choiceSession="";
                     long choicePosition;
+                    @Override public void onChoiceState(SelectiveEngine.SaveChoice choice){saveChoice=choice;}
                     @Override public void onSpokenRequest(String action){
                         switch(action){
                             case "choose":choiceSession=LongRecording.active;choicePosition=LongRecording.duration;break;
@@ -564,6 +579,7 @@ public final class RecallService extends Service {
                                 consumed+=Math.max(0,count);
                                 if(count<0){unavailable="input route interrupted ("+count+")";broken=true;}
                                 else if(count==0){
+                                    PhraseCheckInput.drained();
                                     recorderEpoch=System.nanoTime()-consumed*SAMPLE_NANOS;
                                     long now=SystemClock.elapsedRealtime();
                                     if(zeroSince==0)zeroSince=now;
@@ -632,13 +648,16 @@ public final class RecallService extends Service {
                             String next=route(device);int nextId=device==null?-1:device.getId();inputRoute=next;
                             if(window.engine==null){window.begin(next,resumeNote);resumeNote="";selecting=false;route=next;}
                             else if(nextId!=routedId || !next.equals(route)){
+                                PhraseCheckInput.gap();
                                 speech.clearRoom();
                                 store.gap(next.equals(route)?"Input device changed · "+next:"Input changed from "+route+" to "+next);
                                 route=next;progress("Listening · "+route);
                             }
                             routedId=nextId;
                             WearableMicCheck.onFrame(rec,device,next,frame,count);
-                            window.tick(frame,count,promptInFrame(rec,timestamp,consumed,count,recorderEpoch));
+                            boolean cueAudio=promptInFrame(rec,timestamp,consumed,count,recorderEpoch);
+                            PhraseCheckInput.frame(frame,count,cueAudio);
+                            window.tick(frame,count,cueAudio);
                             if(stopping.get())break;
                             String action;
                             while((action=commands.poll())!=null){
@@ -654,6 +673,8 @@ public final class RecallService extends Service {
                                     if(getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("reduceRoom",false)){
                                         window.reduceRoom=true;speech.learnRoom();
                                     }
+                                }else if(action.startsWith(ANSWER_CHOICE)){
+                                    if(stillArmed())applyChoice(window.engine,action);
                                 }else if(rewindCategory(action)!=null)window.engine.keepAs(rewindCategory(action));
                                 else if(KEEP.equals(action))window.engine.keep();
                                 else if(MISSED.equals(action))window.engine.missed();
@@ -682,7 +703,7 @@ public final class RecallService extends Service {
             }
         }catch(RuntimeException failure){end="Listening stopped · "+message(failure);}
         finally{
-            WearableMicCheck.unavailable();inputRoute="";liveRecorder=null;release(rec);if(lock.isHeld())lock.release();
+            WearableMicCheck.unavailable();saveChoice=SelectiveEngine.SaveChoice.NONE;inputRoute="";liveRecorder=null;release(rec);if(lock.isHeld())lock.release();
             if(end.startsWith("Listening stopped") && lastOutcome!=CaptureCues.Cue.SAVE_FAILED)sound(CaptureCues.Cue.STOPPED);
             if(userPaused)sound(CaptureCues.Cue.PAUSED);
             String result=end;LiveCapture.stop(result);RecallOverlay.sessionEnded(this);

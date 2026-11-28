@@ -6,11 +6,18 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.os.Looper;
+import android.os.UserManager;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.text.Spanned;
 import android.text.style.ClickableSpan;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
+import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import android.widget.EditText;
 import android.widget.TextView;
 import java.util.concurrent.CountDownLatch;
@@ -26,6 +33,8 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowAlertDialog;
+import org.robolectric.shadows.ShadowMediaPlayer;
+import org.robolectric.shadows.util.DataSource;
 import org.robolectric.util.ReflectionHelpers;
 import static org.junit.Assert.*;
 import static org.robolectric.Shadows.shadowOf;
@@ -37,6 +46,7 @@ public class JournalWording30Test {
 
     @Before public void setUp(){
         app=RuntimeEnvironment.getApplication();
+        ArchiveStore.setReserveMiB(app,16);
         JournalStore.setEnabled(app,true);
     }
 
@@ -184,6 +194,7 @@ public class JournalWording30Test {
             valid=clips.save(new SelectiveEngine.Clip(new short[30*16000],"original","Poetry","kept",at-15000));
             long broken=clips.save(new SelectiveEngine.Clip(new short[4*16000],"short clip","Poetry","kept",at-2000));
             assertTrue(clips.get(broken).audio.delete());
+            try(ArchiveStore archive=new ArchiveStore(app)){segment(archive,at-18000,400);}
         }
         ActivityController<FullJournalActivity> journal=Robolectric.buildActivity(FullJournalActivity.class).setup();
         try{
@@ -193,7 +204,7 @@ public class JournalWording30Test {
             AlertDialog unavailable=openLine(transcript,"Faraway wording");
             View fields=unavailable.getWindow().getDecorView();
             find(fields,"Find audio at this time").performClick();
-            await("Missing audio was not reported",()->find(fields,"No saved clip covers this time")!=null);
+            await("Missing audio was not reported",()->find(fields,"No saved audio on this phone covers this time.")!=null);
             assertNull(shadowOf(activity).peekNextStartedActivity());
             unavailable.dismiss();
 
@@ -216,7 +227,7 @@ public class JournalWording30Test {
             Intent target=shadowOf(activity).getNextStartedActivity();
             assertEquals(RecallListenActivity.class.getName(),target.getComponent().getClassName());
             assertEquals(valid,target.getLongExtra("moment_id",-1));assertEquals(9000L,target.getLongExtra("clip_offset_ms",-1));
-            covered.dismiss();
+            assertTrue(covered.isShowing());assertTrue(target.getBooleanExtra("return_to_journal",false));
             ActivityController<RecallListenActivity> player=Robolectric.buildActivity(RecallListenActivity.class,target).setup();
             try{
                 await("Clip Studio did not load the saved audio",()->{
@@ -226,7 +237,96 @@ public class JournalWording30Test {
                 ClipStudio studio=ReflectionHelpers.getField(player.get(),"studio");
                 assertEquals(9*16000,(int)ReflectionHelpers.getField(studio,"cursor"));
                 assertFalse((Boolean)ReflectionHelpers.getField(studio,"playing"));
+                studio.close();
+                await("Closing clip did not return to the journal",()->player.get().isFinishing());
+                assertTrue(covered.isShowing());covered.dismiss();
             }finally{player.pause().stop().destroy();}
         }finally{journal.pause().stop().destroy();}
     }
+    private static ArchiveStore.Segment segment(ArchiveStore archive,long start,int frames)throws Exception{
+        ArchiveStore.Stage stage=archive.stage(start,32000);
+        // One valid silent AAC-LC ADTS frame at 16 kHz, 1024 samples per frame.
+        byte[] frame={(byte)0xff,(byte)0xf1,0x60,0x40,0x01,0x7f,(byte)0xfc,0x01,0x18,0x20,0x07};
+        try(FileOutputStream out=new FileOutputStream(stage.partial)){for(int i=0;i<frames;i++)out.write(frame);}
+        return archive.seal(stage,1024L*frames);
+    }
+    private void ordinaryLine(long at,String words){
+        try(JournalStore db=new JournalStore(app)){
+            long epoch=JournalStore.epoch(app),session=db.begin(epoch);
+            assertTrue(db.append(session,epoch,words,false,0));
+            db.getWritableDatabase().execSQL("UPDATE lines SET at=? WHERE session=?",new Object[]{at,session});
+        }
+    }
+    @Test public void ordinaryLineFindsVerifiedSegmentAndSeeksOnlyOnPlay()throws Exception{
+        long at=System.currentTimeMillis()-60000;
+        ordinaryLine(at,"Ordinary audio passage");
+        ArchiveStore.Segment valid;
+        try(ArchiveStore db=new ArchiveStore(app)){
+            valid=segment(db,at-9013,250);
+            ArchiveStore.Segment corrupt=segment(db,at-1000,40);
+            File data=new File(new File(app.getFilesDir(),"audio-archive"),corrupt.id+".aac");
+            try(java.io.RandomAccessFile file=new java.io.RandomAccessFile(data,"rw")){file.seek(9);file.write(0xff);}
+            assertEquals(valid.id,db.covering(at).id);
+            assertNull(db.covering(valid.endMs));
+        }
+        ActivityController<FullJournalActivity> screen=Robolectric.buildActivity(FullJournalActivity.class).setup();
+        try{
+            FullJournalActivity activity=screen.get();TextView transcript=ReflectionHelpers.getField(activity,"transcript");
+            await("Missing ordinary journal line",()->transcript.getText().toString().contains("Ordinary audio passage"));
+            AlertDialog passage=openLine(transcript,"Ordinary audio passage");
+            View root=passage.getWindow().getDecorView();
+            CheckBox lead=(CheckBox)find(root,"Include 6 seconds before the timestamp");
+            assertTrue(lead.isChecked());lead.performClick();
+            find(root,"Find audio at this time").performClick();
+            await("Segment player did not open",()->ShadowAlertDialog.getLatestAlertDialog()!=passage);
+            AlertDialog preview=ShadowAlertDialog.getLatestAlertDialog();
+            assertTrue(passage.isShowing());assertNull(shadowOf(activity).peekNextStartedActivity());
+            assertNotNull(find(preview.getWindow().getDecorView(),"Paused · 0:09.013 / 0:16.000"));
+            JournalSegmentPlayer segmentPlayer=ReflectionHelpers.getField(activity,"segmentPlayer");
+            assertNull(ReflectionHelpers.getField(segmentPlayer,"player"));
+            DataSource.setFileDescriptorTransform((fd,offset)->"verified-journal-segment-"+offset);
+            ShadowMediaPlayer.addMediaInfo(DataSource.toDataSource(new FileDescriptor()),new ShadowMediaPlayer.MediaInfo(16000,0));
+            shadowOf(app.getSystemService(AudioManager.class)).setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+            preview.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            await("Requested position was not played",()->(Boolean)ReflectionHelpers.getField(segmentPlayer,"playing"));
+            MediaPlayer transport=ReflectionHelpers.getField(segmentPlayer,"player");
+            assertTrue(transport.isPlaying());
+            assertTrue("Playback restarted from the beginning",transport.getCurrentPosition()>=9013);
+            preview.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+            await("Closing segment did not return to the same passage",()->!preview.isShowing() && passage.isShowing());
+            assertNull(ReflectionHelpers.getField(segmentPlayer,"player"));
+
+            lead.performClick();find(root,"Find audio at this time").performClick();
+            await("Lead-in player unavailable",()->ShadowAlertDialog.getLatestAlertDialog()!=preview);
+            AlertDialog leadPreview=ShadowAlertDialog.getLatestAlertDialog();
+            assertNotNull(find(leadPreview.getWindow().getDecorView(),"Paused · 0:03.013 / 0:16.000"));
+            screen.pause();assertFalse(leadPreview.isShowing());screen.resume();
+            assertTrue(passage.isShowing());passage.dismiss();
+        }finally{screen.pause().stop().destroy();}
+    }
+
+    @Test public void reportsLockedEvictedAndExpiredWithoutLaunchingPlayback()throws Exception{
+        long at=System.currentTimeMillis()-40000;
+        ordinaryLine(at,"Archived passage");
+        try(ArchiveStore db=new ArchiveStore(app)){
+            ArchiveStore.Segment saved=segment(db,at-3000,90);
+            assertTrue(db.markSynced(saved.id,saved.sha256,"test receipt"));db.delete(saved.id);
+        }
+        ActivityController<FullJournalActivity> screen=Robolectric.buildActivity(FullJournalActivity.class).setup();
+        try{
+            FullJournalActivity activity=screen.get();TextView transcript=ReflectionHelpers.getField(activity,"transcript");
+            await("Missing retained text",()->transcript.getText().toString().contains("Archived passage"));
+            AlertDialog passage=openLine(transcript,"Archived passage");View root=passage.getWindow().getDecorView();
+            Button check=(Button)find(root,"Find audio at this time");
+            UserManager users=app.getSystemService(UserManager.class);shadowOf(users).setUserUnlocked(false);
+            check.performClick();await("Locked storage reported incorrectly",()->check.getText().toString().contains("Unlock this phone"));
+            shadowOf(users).setUserUnlocked(true);check.performClick();
+            await("Evicted segment reported incorrectly",()->check.getText().toString().contains("no longer on this phone"));
+            try(JournalStore store=new JournalStore(app)){store.getWritableDatabase().delete("lines",null,null);}
+            check.performClick();await("Stale journal passage opened",()->check.getText().toString().contains("expired or was deleted"));
+            assertNull(shadowOf(activity).peekNextStartedActivity());assertNull(ReflectionHelpers.getField(activity,"segmentPlayer"));
+            passage.dismiss();
+        }finally{screen.pause().stop().destroy();}
+    }
+
 }

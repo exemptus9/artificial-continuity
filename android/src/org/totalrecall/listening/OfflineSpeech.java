@@ -28,6 +28,8 @@ public final class OfflineSpeech implements AutoCloseable {
     private String displayFinal(String json){
         String reading=verified(json);
         if(reading==null)return null;
+        if(focusedArchive && !rawWords.isEmpty() && !rawWords.equals(reading))
+            reviewHint=comparison(rawWords,"Focused reading",reading);
         boolean same=voice>0 && voice==priorSpeaker && streamSamples-priorAt<5L*16000;
         String displayed=spellings.apply(same?priorContext:"",reading,known);
         priorContext=SpeechContext.tail(reading);priorAt=streamSamples;priorSpeaker=voice;
@@ -54,6 +56,9 @@ public final class OfflineSpeech implements AutoCloseable {
     void offerExample(){VoiceProfiles.offer(rawWords,latestVector,frames);}
     private int voice;
     private boolean archiveReview;
+    private ArchiveNoise archiveNoise;
+    boolean focusedArchive;
+    private final boolean publishSignal;
     private Recognizer retry;
     private final QuietSpeech reviewGain=new QuietSpeech();
     private short[] passage;
@@ -96,20 +101,24 @@ public final class OfflineSpeech implements AutoCloseable {
                     (original!=null && confidence>=.83 && !weakWord && !faint))return original;
             compared++;
             if(retry==null){retry=new Recognizer(model,16000f);retry.setWords(true);}
+            if(focusedArchive && archiveNoise==null)archiveNoise=new ArchiveNoise();
+            boolean enhanced=focusedArchive && archiveNoise.prepare(passage,used);
+            short[] levelled=enhanced?archiveNoise.render(passage,used,false):null;
             String[] alternatives=new String[2];double[] scores=new double[2];
             JSONArray[] detail={new JSONArray(),new JSONArray()};
             for(int pass=0;pass<2;pass++){
                 retry.reset();reviewGain.reset();
                 StringBuilder text=new StringBuilder();double total=0;int words=0;
                 double prev=0,filtered=0;
+                short[] source=pass==1 && enhanced && archiveNoise.hasRoom()?archiveNoise.render(passage,used,true):levelled;
                 for(int off=0;off<used;off+=1600){
                     int n=Math.min(1600,used-off);
-                    short[] input=java.util.Arrays.copyOfRange(passage,off,off+n);
-                    if(pass==1)for(int i=0;i<n;i++){
+                    short[] input=java.util.Arrays.copyOfRange(source==null?passage:source,off,off+n);
+                    if(pass==1 && (!enhanced || !archiveNoise.hasRoom()))for(int i=0;i<n;i++){
                         double current=input[i];filtered=.965*(filtered+current-prev);prev=current;
                         input[i]=(short)Math.round(Math.max(-32768,Math.min(32767,filtered)));
                     }
-                    short[] boosted=reviewGain.apply(input,n);
+                    short[] boosted=enhanced?input:reviewGain.apply(input,n);
                     if(retry.acceptWaveForm(boosted,n)){
                         JSONObject part=new JSONObject(retry.getResult());int count=appendRetry(text,part,detail[pass]);
                         total+=count*confidence(part);words+=count;
@@ -119,21 +128,42 @@ public final class OfflineSpeech implements AutoCloseable {
                 alternatives[pass]=text.toString().trim();
                 scores[pass]=(total+count*confidence(part))/Math.max(1,words+count);
             }
+            if(enhanced){
+                // This comparison keeps the first transcript and presents acoustic disagreements
+                // side by side. Agreement between two filters does not establish the spoken word.
+                int best=scores[0]>=scores[1]?0:1;
+                String candidate=alternatives[best];
+                if(!candidate.isEmpty() && !candidate.equals(original) && scores[best]>=.70){
+                    String label=archiveNoise.hasRoom()?"Noise-reduced reading":"Focused reading";
+                    if(!RecognitionReview.safeFocusReplacement(original,candidate))label+=" · check exact wording";
+                    reviewHint=comparison(original,label,candidate);
+                    uncertain++;
+                }else if(candidate.equals(alternatives[1-best]) && candidate.equals(original))agreed++;
+                else{
+                    if(!checkWords.isEmpty())reviewHint="Check wording · "+checkWords;
+                    uncertain++;
+                }
+                return original;
+            }
             JSONArray first=new JSONObject(json).optJSONArray("result");
             if(!alternatives[0].isEmpty() && spellings.apply("",alternatives[0]).equals(spellings.apply("",alternatives[1])) &&
                 Math.min(scores[0],scores[1])>=Math.max(.78,(weakWord||faint)?Math.min(.90,confidence):confidence) &&
                 RecognitionReview.supportedRewrite(original,first,alternatives[0],detail[0]) &&
-                RecognitionReview.supportedRewrite(original,first,alternatives[1],detail[1])){
+                RecognitionReview.supportedRewrite(original,first,alternatives[1],detail[1]) &&
+                (!focusedArchive || RecognitionReview.safeFocusReplacement(original,alternatives[0]))){
                 agreed++;return alternatives[0];
             }
             String repaired=repairWeakWord(original,first,detail[0],detail[1]);
-            if(repaired!=null){agreed++;return repaired;}
+            if(repaired!=null && (!focusedArchive || RecognitionReview.safeFocusReplacement(original,repaired))){agreed++;return repaired;}
             if(!alternatives[0].isEmpty() && alternatives[0].equals(alternatives[1]) && !alternatives[0].equals(original))
                 reviewHint="Other reading to check · "+alternatives[0].substring(0,Math.min(200,alternatives[0].length()));
             else if(!checkWords.isEmpty())reviewHint="Check wording · "+checkWords;
             uncertain++;return original;
         }catch(IOException|JSONException|RuntimeException failed){uncertain++;return original;}
         finally{used=0;overflow=false;energy=0;}
+    }
+    private static String comparison(String first,String label,String other){
+        return "First reading · "+(first==null || first.isEmpty()?"no words recognized":first)+"\n"+label+" · "+other;
     }
     static String repairWeakWord(String original,JSONArray first,JSONArray a,JSONArray b){
         return RecognitionReview.repair(original,first,a,b);
@@ -161,12 +191,20 @@ public final class OfflineSpeech implements AutoCloseable {
         this(context,commands,commands && context.getSharedPreferences("recall-speech",0).getBoolean("voices",true));
     }
     OfflineSpeech(Context context,boolean commands,boolean groupVoices) throws IOException {
+        this(context,commands,groupVoices,!commands,true);
+    }
+    static OfflineSpeech forPhraseCheck(Context context) throws IOException {
+        boolean voices=context.getSharedPreferences("recall-speech",0).getBoolean("voices",true);
+        return new OfflineSpeech(context,false,voices,false,false);
+    }
+    private OfflineSpeech(Context context,boolean commands,boolean groupVoices,boolean review,boolean publishSignal) throws IOException {
+        this.publishSignal=publishSignal;
         spellings=new SpeechContext(context);profiles=new VoiceProfiles(context);
         File dir = unpack(context.getApplicationContext(),MODEL);
         try {
             model = new Model(dir.getAbsolutePath());
             recognizer = new Recognizer(model, 16000f);
-            archiveReview=!commands;
+            archiveReview=review;
             recognizer.setWords(true);
             if(archiveReview)passage=new short[16*16000];
             if(groupVoices)try{
@@ -211,7 +249,7 @@ public final class OfflineSpeech implements AutoCloseable {
             }
         }
         short[] input=liftQuiet?quietSpeech.apply(filtered,count,archiveReview?12:micSignal.gainLimit(extendedReach)):filtered;
-        if(!archiveReview && streamSamples>=nextReading){
+        if(publishSignal && !archiveReview && streamSamples>=nextReading){
             LiveCapture.micSignal=micSignal.reading(quietSpeech.gain(),liftQuiet);
             nextReading=streamSamples+4000;
         }

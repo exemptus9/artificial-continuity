@@ -80,6 +80,13 @@ jobs:
           keytool -genkeypair -noprompt -alias recall-test -keystore "$RECALL_KEYSTORE" -storetype PKCS12 -storepass:env RECALL_KEY_PASSWORD -keypass:env RECALL_KEY_PASSWORD -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Disposable Recall Device Test'
           bash android/build.sh
           bash device-tests/build.sh
+          mkdir -p "$RUNNER_TEMP/recall-upgrades"
+          cat > "$RUNNER_TEMP/recall-upgrades/versions" <<'VERSIONS'
+          0.11.0 12 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
+          0.28.1 30 d84cf4d24f8ae22d130ae7f891c842ca2f36d8ec
+          0.29.0 31 d735d2489e1341dfb85d05eb8fd1f901a8e7d570
+          0.30.0 32 efdafe96952ab7c253a4dfa970ad3c64619c7be8
+          VERSIONS
           build_prior() {
             local version=$1 revision=$2 prior="$RUNNER_TEMP/recall-$1"
             git fetch --no-tags --depth 1 origin "$revision"
@@ -93,10 +100,12 @@ jobs:
               cp -a android/assets/offline-speech/. "$prior/android/assets/offline-speech/"
             fi
             bash "$prior/android/build.sh"
+            mv "$prior/android/build/TotalRecall-$version.apk" "$RUNNER_TEMP/recall-upgrades/$version.apk"
+            git worktree remove --force "$prior"
           }
-          build_prior 0.11.0 1979e60b50c2aef5c88eb315d9ea1ea1cfd9d7b8
-          build_prior 0.28.1 d84cf4d24f8ae22d130ae7f891c842ca2f36d8ec
-          build_prior 0.29.0 d735d2489e1341dfb85d05eb8fd1f901a8e7d570
+          while read -r version code revision; do
+            build_prior "$version" "$revision" </dev/null
+          done < "$RUNNER_TEMP/recall-upgrades/versions"
           rm -f "$RECALL_KEYSTORE"
       - name: Verify in-place upgrade and exercise current Android app
         run: |
@@ -106,12 +115,14 @@ jobs:
           timeout 300 bash -c 'until [ "$("$1" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 3; done' _ "$adb"
           "$adb" shell input keyevent 82
           current_apk="$(python3 -c 'import json; print("android/build/TotalRecall-"+json.load(open("android/build/build-receipt.json"))["version"]+".apk")')"
-          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.11.0/android/build/TotalRecall-0.11.0.apk" "$PWD/$current_apk"
-          # The first probe required a clean emulator and has verified and removed its synthetic fixture.
-          "$adb" uninstall org.continuity.recall.test
-          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.28.1/android/build/TotalRecall-0.28.1.apk" "$PWD/$current_apk" 30
-          "$adb" uninstall org.continuity.recall.test
-          timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-0.29.0/android/build/TotalRecall-0.29.0.apk" "$PWD/$current_apk" 31
+          tested=0
+          while read -r version code revision; do
+            # Only remove the previous successful synthetic fixture from this disposable emulator.
+            if [[ "$tested" -gt 0 ]]; then "$adb" uninstall org.continuity.recall.test </dev/null; fi
+            timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-upgrades/$version.apk" "$PWD/$current_apk" "$code" </dev/null
+            tested=$((tested+1))
+          done < "$RUNNER_TEMP/recall-upgrades/versions"
+          test "$tested" -eq 4
           timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
       - name: Exercise codec, pinned transfer and browser against the packaged Mint app
         run: |

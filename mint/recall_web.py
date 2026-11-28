@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import tempfile
 import http.cookies
+from io import StringIO
+from itertools import islice
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
 import os
@@ -52,27 +54,58 @@ def matched_excerpt(value,terms):
 
 JOURNAL_LINE=re.compile(r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (Z|[+-]\d{2}:\d{2})  (.+)$")
 
+def source_journal_line(text,number):
+    # Physical source offsets distinguish lines with identical words and rounded timestamps.
+    lines=islice(StringIO(text),number,None)
+    parsed=JOURNAL_LINE.fullmatch(next(lines,"").rstrip("\r\n"))
+    if parsed and not parsed[4].startswith("[capture status]"):
+        try:
+            at=int(datetime.fromisoformat(parsed[1]+"T"+parsed[2]+parsed[3].replace("Z","+00:00")).timestamp()*1000)
+        except (ValueError,OverflowError,OSError):at=0
+        if at>0:
+            prefix="  Originally heard · "
+            following=next(lines,"").rstrip("\r\n")
+            return at,parsed[4],following[len(prefix):] if following.startswith(prefix) else ""
+    raise Failure(400,"Choose a timestamped speech line from this journal.")
+
 def journal_match(value,terms):
-    at=None
-    for line in value.splitlines():
-        parsed=JOURNAL_LINE.match(line)
-        if parsed:
-            at=None
-            if parsed[4].startswith("[capture status]"):continue
+    # Only attach a playhead when every query term belongs to the same passage.
+    if not terms:return None
+    current=None
+    def match(row):
+        if row is None:return None
+        at,number,wording,original=row
+        first,second=wording.casefold(),original.casefold()
+        if all(term in first for term in terms):label,text="Transcript",wording
+        elif all(term in second for term in terms):label,text="Originally heard",original
+        elif all(term in first or term in second for term in terms):label,text="Wording comparison",wording
+        else:return None
+        return dict(field=label,text=matched_excerpt(text,terms) or text[:160],at=at,line=number)
+    for number,raw in enumerate(StringIO(value)):
+        line=raw.rstrip("\r\n")
+        if current and line.startswith("  Originally heard · "):
+            current[3]=line.removeprefix("  Originally heard · ")
+            result=match(current)
+            if result:return result
+            current=None
+            continue
+        result=match(current)
+        if result:return result
+        current=None
+        parsed=JOURNAL_LINE.fullmatch(line)
+        if parsed and not parsed[4].startswith("[capture status]"):
             try:at=int(datetime.fromisoformat(parsed[1]+"T"+parsed[2]+parsed[3].replace("Z","+00:00")).timestamp()*1000)
             except (ValueError,OverflowError,OSError):continue
-            label,text="Transcript",parsed[4]
-        elif at and line.startswith("  Originally heard · "):
-            label,text="Originally heard",line.removeprefix("  Originally heard · ")
-        else:
-            at=None
-            continue
-        excerpt=matched_excerpt(text,terms)
-        if excerpt and at>0:return dict(field=label,text=excerpt,at=at)
-    return None
+            if at>0:current=[at,number,parsed[4],""]
+    return match(current)
 
 def search_preview(db,row,terms,recognized):
     if not terms:return None
+    if row["kind"]=="journal":
+        saved=db.execute("SELECT line_no,at,wording,original,label FROM journal_keeps WHERE id=? ORDER BY line_no",(row["id"],))
+        for line,at,wording,original,label in saved:
+            if all(term in (wording+" "+original+" "+label).casefold() for term in terms):
+                return dict(field="Saved journal line",text=matched_excerpt(wording,terms) or wording[:160],line=line,at=at)
     meta=json.loads(row["metadata"])
     labels=json.loads(row["filedLabels"] or "[]")
     for label,value,needles in (
@@ -197,8 +230,9 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all",o
         prepared=where.pop()
         parts=[prepared for _ in [term,*variants]]
         parts.append("instr(fold_text(coalesce(rv.name,'')||' '||coalesce(rv.writing,'')||' '||coalesce(rv.labels,'')||' '||coalesce(rv.heard,'')||' '||coalesce(st.body,'')),?)>0 OR EXISTS(SELECT 1 FROM recording_evidence ev,json_each(ev.cues) ec WHERE ev.id=a.id AND ev.kind=a.kind AND instr(fold_text(json_extract(ec.value,'$.quote')),?)>0)")
+        parts.append("a.kind='journal' AND EXISTS(SELECT 1 FROM journal_keeps k WHERE k.id=a.id AND instr(fold_text(k.label),?)>0)")
         where.append("("+ " OR ".join(parts)+")")
-        args.extend((term,*variants,term,term))
+        args.extend((term,*variants,term,term,term))
     sql=base+(" WHERE "+" AND ".join(where) if where else "")
     with arc.connection() as db:
         if category: db.create_function("has_clip_label",2,lambda value,wanted: wanted in category_keys(value),deterministic=True)
@@ -219,8 +253,10 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all",o
             result["similar"]=similar_items(db,filtered,filter_args,terms)
         return result
 
-def recordings_at(arc,instant):
+def recordings_at(arc,instant,journal=""):
     if not 0<instant<=253402300799999:raise Failure(400,"Invalid recording time")
+    if journal and not UID.fullmatch(journal):raise Failure(400,"Invalid journal source")
+    laptop=int(journal.startswith("laptop-"))
     with arc.connection() as db:
         rows=db.execute("""SELECT id,kind,title,started AS startedAtMillis,duration AS durationMs FROM (
                 SELECT id,'clip' AS kind,title,started,duration FROM clips WHERE started<=? AND started+duration>?
@@ -229,8 +265,9 @@ def recordings_at(arc,instant):
                        cast(json_extract(metadata,'$.durationMs') AS INTEGER) AS duration
                 FROM archive_uploads WHERE state='complete' AND kind='segment' AND started<=? AND
                      started+cast(json_extract(metadata,'$.durationMs') AS INTEGER)>?)
-            ORDER BY CASE kind WHEN 'segment' THEN 0 ELSE 1 END,started DESC,id LIMIT 13""",(instant,)*4).fetchall()
-        return {"items":[dict(row) for row in rows[:12]],"more":len(rows)>12}
+            ORDER BY CASE WHEN ?='' OR (id GLOB 'laptop-*' OR id GLOB 'desk-keep-[0-9]*')=? THEN 0 ELSE 1 END,
+                     CASE kind WHEN 'segment' THEN 0 ELSE 1 END,started DESC,id LIMIT 13""",(instant,)*4+(journal,laptop)).fetchall()
+        return {"items":[dict(row,device="Mint laptop" if row["id"].startswith(("laptop-","desk-keep-")) else "Phone or imported") for row in rows[:12]],"more":len(rows)>12}
 
 def overlaps(arc,kind,uid):
     if kind not in ("segment","clip") or not UID.fullmatch(uid):raise Failure(400,"Invalid recording")
@@ -254,6 +291,8 @@ def lookup(arc,kind,uid):
     result=item(row,True)
     with arc.connection() as db:
         result["review"]=recall_review.review(db,kind,uid);result["filingOptions"]=recall_review.options(db)
+        if kind=="journal":
+            result["savedLines"]=dict(db.execute("SELECT line_no,label FROM journal_keeps WHERE id=?",(uid,)))
         story=db.execute("SELECT body,rev FROM item_stories WHERE kind=? AND id=?",(kind,uid)).fetchone()
         result["story"]=dict(body=story[0],revision=story[1]) if story else dict(body="",revision=0)
         evidence=list(db.execute("SELECT offset,mode,cues FROM recording_evidence WHERE kind=? AND id=? ORDER BY offset,mode",(kind,uid)))
@@ -430,13 +469,14 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 name,mime={"/":("index.html","text/html; charset=utf-8"),"/app.css":("app.css","text/css; charset=utf-8"),"/app.js":("app.js","text/javascript; charset=utf-8")}[path]
                 self.emit(200,(self.server.assets/name).read_bytes(),mime);return
             if path=="/api/status": return self.json(200,arc.status())
+            if path=="/api/saved-lines":return self.json(200,recall_review.kept_lines(arc,param("q",""),param("label",""),int(param("offset","0"))))
             if path=="/api/review":return self.json(200,recall_review.inbox(arc,param("shelf","inbox"),int(param("offset","0"))))
             if path=="/api/items":
                 start=param("from",None);end=param("to",None)
                 return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
                     int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all"),param("overlap","0")=="1",param("similar","0")=="1"))
             if path=="/api/overlaps":return self.json(200,overlaps(arc,param("kind",""),param("id","")))
-            if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0"))))
+            if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0")),param("journal","")))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))
             route=re.fullmatch(r"/api/(items|media)/(segment|journal|clip)/([A-Za-z0-9_-]{1,128})",path)
             if not route: raise Failure(404,"Missing archive path")

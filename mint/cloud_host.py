@@ -48,7 +48,7 @@ APK_SHA = "c44539ece757d0534989c9958c7c8b53574ccc91c3f661e03178f28090355211"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
-MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.30.0_all.deb"
+MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.31.0_all.deb"
 
 INSTALLER_NAMES = {"/downloads/android": "Android app", "/downloads/mint": "Linux Mint app"}
 

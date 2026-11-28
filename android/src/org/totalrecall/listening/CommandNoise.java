@@ -7,8 +7,8 @@ import java.util.Arrays;
  * general dictation follow their existing independent paths. 256 samples at 16 kHz. */
 final class CommandNoise {
     private static final int SIZE=256,HOP=SIZE/2,BINS=HOP+1;
-    private final double[] window=new double[SIZE],cos=new double[HOP],sin=new double[HOP];
-    private final int[] reversed=new int[SIZE];
+    private final double[] window=new double[SIZE];
+    private final Spectrum spectrum=new Spectrum(SIZE);
     private final double[] raw=new double[SIZE],speech=new double[SIZE],re=new double[SIZE],im=new double[SIZE];
     private final double[] power=new double[BINS],smooth=new double[BINS],minimum=new double[BINS],mask=new double[BINS];
     private final double[][] floors=new double[8][BINS];
@@ -23,8 +23,6 @@ final class CommandNoise {
     CommandNoise(){
         for(int i=0;i<SIZE;i++){
             window[i]=Math.sqrt(.5-.5*Math.cos(2*Math.PI*i/SIZE));
-            reversed[i]=Integer.reverse(i)>>>24;
-            if(i<HOP){cos[i]=Math.cos(2*Math.PI*i/SIZE);sin[i]=Math.sin(2*Math.PI*i/SIZE);}
         }
     }
     void reset(){
@@ -67,7 +65,7 @@ final class CommandNoise {
         double energy=0;
         for(int i=0;i<SIZE;i++){energy+=raw[i]*raw[i];re[i]=raw[i]*window[i];im[i]=0;}
         assessRoom(Math.sqrt(energy/SIZE));
-        fft(false);
+        spectrum.transform(re,im,false);
         if(frames>0 && frames%20==0){
             System.arraycopy(minimum,0,floors[floorSlot],0,BINS);
             floorSlot=(floorSlot+1)%floors.length;floorCount=Math.min(floorCount+1,floors.length);
@@ -84,9 +82,9 @@ final class CommandNoise {
         }
         if(active && mix>0){
             for(int i=0;i<SIZE;i++){re[i]=speech[i]*window[i];im[i]=0;}
-            fft(false);
+            spectrum.transform(re,im,false);
             for(int i=0;i<SIZE;i++){double gain=mask[Math.min(i,SIZE-i)];re[i]*=gain;im[i]*=gain;}
-            fft(true);
+            spectrum.transform(re,im,true);
         }else{
             for(int i=0;i<SIZE;i++)re[i]=speech[i]*window[i];
         }
@@ -96,22 +94,36 @@ final class CommandNoise {
         }
         System.arraycopy(raw,HOP,raw,0,HOP);System.arraycopy(speech,HOP,speech,0,HOP);frames++;
     }
-    private void fft(boolean inverse){
-        for(int i=0;i<SIZE;i++){
-            int j=reversed[i];if(j<=i)continue;
-            double x=re[i];re[i]=re[j];re[j]=x;x=im[i];im[i]=im[j];im[j]=x;
-        }
-        for(int width=2;width<=SIZE;width*=2){
-            int half=width/2,stride=SIZE/width;
-            for(int i=0;i<SIZE;i+=width){
-                for(int j=0;j<half;j++){
-                    int left=i+j,right=left+half,k=j*stride;
-                    double c=cos[k],s=inverse?sin[k]:-sin[k];
-                    double x=c*re[right]-s*im[right],y=s*re[right]+c*im[right];
-                    re[right]=re[left]-x;im[right]=im[left]-y;re[left]+=x;im[left]+=y;
-                }
+    /** In-place radix-two transform shared with the recorded-passage analysis. */
+    static final class Spectrum {
+        private final int size;
+        private final int[] reversed;
+        private final double[] cos,sin;
+        Spectrum(int size){
+            this.size=size;reversed=new int[size];cos=new double[size/2];sin=new double[size/2];
+            int shift=32-Integer.numberOfTrailingZeros(size);
+            for(int i=0;i<size;i++){
+                reversed[i]=Integer.reverse(i)>>>shift;
+                if(i<size/2){cos[i]=Math.cos(2*Math.PI*i/size);sin[i]=Math.sin(2*Math.PI*i/size);}
             }
         }
-        if(inverse)for(int i=0;i<SIZE;i++){re[i]/=SIZE;im[i]/=SIZE;}
+        void transform(double[] re,double[] im,boolean inverse){
+            for(int i=0;i<size;i++){
+                int j=reversed[i];if(j<=i)continue;
+                double x=re[i];re[i]=re[j];re[j]=x;x=im[i];im[i]=im[j];im[j]=x;
+            }
+            for(int width=2;width<=size;width*=2){
+                int half=width/2,stride=size/width;
+                for(int i=0;i<size;i+=width){
+                    for(int j=0;j<half;j++){
+                        int left=i+j,right=left+half,k=j*stride;
+                        double c=cos[k],s=inverse?sin[k]:-sin[k];
+                        double x=c*re[right]-s*im[right],y=s*re[right]+c*im[right];
+                        re[right]=re[left]-x;im[right]=im[left]-y;re[left]+=x;im[left]+=y;
+                    }
+                }
+            }
+            if(inverse)for(int i=0;i<size;i++){re[i]/=size;im[i]/=size;}
+        }
     }
 }

@@ -64,7 +64,7 @@ public final class SpokenChoiceSmoke {
         int initial=store.search("").size();
         try(JournalStore journal=new JournalStore(target)){
             window=construct.newInstance(service,store,journal,speech,events);
-            for(String answer:new String[]{"cancel","timeout","split cancel","line"}){
+            for(String answer:new String[]{"cancel","timeout","split cancel","line","tap word"}){
                 frozen=null;source.reset();requests.clear();receipts.clear();
                 begin.invoke(window,"choice playback","");
                 int before=saved.size();
@@ -93,19 +93,29 @@ public final class SpokenChoiceSmoke {
                             && receipts.contains("Choose a save category"),"Missing uncommitted voice choice "+requests+" "+receipts);
                     feed(turns[2],true);feed(new byte[32000],true); // A spoken 'line' from the app must never answer itself.
                     require(saved.size()==before && !requests.contains("choiceClosed"),"Prompt answered its own question");
+                    if(answer.equals("tap word")){
+                        Field engineField=type.getDeclaredField("engine");engineField.setAccessible(true);
+                        SelectiveEngine engine=(SelectiveEngine)engineField.get(window);
+                        Object choice=method(SelectiveEngine.class,"choiceState").invoke(engine);
+                        Field token=choice.getClass().getDeclaredField("token");token.setAccessible(true);
+                        String command=RecallService.ANSWER_CHOICE+token.get(choice)+"/word";
+                        Method apply=method(RecallService.class,"applyChoice",SelectiveEngine.class,String.class);
+                        require((Boolean)apply.invoke(null,engine,command),"Overlay answer failed to consume held audio");
+                        require(!(Boolean)apply.invoke(null,engine,command),"Duplicate tap accepted");
+                    }
                     if(answer.equals("line"))feed(turns[2],false);
                     if(answer.endsWith("cancel"))feed(turns[3],false);
                     feed(new byte[(answer.equals("timeout")?12:2)*32000],false);
                     require(requests.equals(Arrays.asList("choose","choiceClosed")),"Choice lifecycle was "+requests+" "+receipts);
-                    if(!answer.equals("line")){
+                    if(!answer.equals("line") && !answer.equals("tap word")){
                         require(saved.size()==before && receipts.contains(answer.endsWith("cancel")?"Choice canceled":"Save choice expired"),
                             "Discarded choice wrote audio or missed its receipt "+receipts);
                         continue;
                     }
-                    require(saved.size()==before+1,"Spoken label failed to save one clip");
+                    require(saved.size()==before+1,"Expected one "+answer+" clip, got "+(saved.size()-before)+"; events "+receipts+" "+requests);
                     Store.Moment row=null;
                     for(Store.Moment candidate:store.search(""))if(candidate.id==saved.get(before))row=candidate;
-                    require(row!=null && row.kind.equals(SelectiveEngine.POETRY) && row.transcript.contains("paper lantern")
+                    require(row!=null && row.kind.equals(answer.equals("tap word")?SelectiveEngine.FORGE:SelectiveEngine.POETRY) && row.transcript.contains("paper lantern")
                             && row.cueText!=null && row.cueText.contains("paper lantern") && !row.transcript.endsWith("save as"),
                         "Wrong category or missing source passage");
                     byte[] wav=Files.readAllBytes(row.audio.toPath());
@@ -114,10 +124,12 @@ public final class SpokenChoiceSmoke {
                     StringBuilder sha=new StringBuilder();
                     for(byte value:MessageDigest.getInstance("SHA-256").digest(wav))sha.append(String.format(Locale.ROOT,"%02x",value&255));
                     require(sha.toString().equals(row.sha256),"Saved choice hash differs from catalog");
+                    // Each turn uses the same passage. Don't teach that test passage to the next turn.
+                    store.delete(row.id);
                 }finally{end.invoke(window,false,"Choice replay finished");}
             }
-            require(store.search("").size()==initial+1,"Cancel or expiry wrote a catalog row");
-            return "Spoken save-as, line, cancel and timeout replayed through the foreground service. Prompt loopback was excluded and frozen source PCM and WAV SHA-256 verified.";
+            require(saved.size()==2 && store.search("").size()==initial,"Unexpected save or catalog change after the five independent turns");
+            return "Spoken save-as, line, tapped word, cancel and timeout replayed through the foreground service. Prompt loopback was excluded and frozen source PCM and WAV SHA-256 verified.";
         }finally{for(Long id:saved)store.delete(id);}
     }
 }

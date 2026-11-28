@@ -131,6 +131,10 @@ class PrivateStorage(TestCase):
             startedAtMillis=self.stamp,durationMs=0,mediaType="text/plain")
         self.arc.begin(pending);self.arc.put("pending",0,b"W")
         with self.arc.connection() as db:
+            db.executemany("INSERT INTO journal_keeps VALUES(?,?,?,?,?,?)",[
+                ("journal-id",0,self.stamp,"A retained line","","Poem draft"),
+                ("pending",0,self.stamp,"Unfinished line","",""),
+            ])
             db.execute("CREATE TABLE secret_tokens(value TEXT)")
             db.execute("INSERT INTO secret_tokens VALUES('a-sensitive-token')")
             db.execute("CREATE TABLE cloud_transfer_month(month TEXT,kind TEXT,bytes INTEGER)")
@@ -145,6 +149,7 @@ class PrivateStorage(TestCase):
         dest=self.path/"restored.sqlite3"
         self.cloud.restore_latest(dest)
         with closing(sqlite3.connect(dest)) as db:
+            self.assertEqual(db.execute("SELECT id,wording,label FROM journal_keeps").fetchall(),[("journal-id","A retained line","Poem draft")])
             self.assertEqual(db.execute("SELECT length(audio) FROM clips WHERE id='kept'").fetchone(),(0,))
             self.assertEqual(db.execute("SELECT bytes FROM cloud_wavs WHERE id='kept' AND verified=1").fetchone(),(len(audio),))
             self.assertEqual(db.execute("SELECT bytes FROM cloud_transfer_month").fetchone(),(1701,))

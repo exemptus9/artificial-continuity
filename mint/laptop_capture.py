@@ -28,6 +28,7 @@ import zipfile
 import situation
 import live_words
 import voice_feedback
+import voice_check
 import mic_input
 import speech_context
 import recall_archive as storage
@@ -338,6 +339,7 @@ def capture(arc,root,cfg,input_args):
     ring=bytearray();tail=b"";segment=None;seg_bytes=0;start=0;report=0;last_input=time.monotonic()
     feed=live_words.WordFeed(root)
     voice_feed=live_words.WordFeed(root,"voice-control.fifo")
+    practice=live_words.WordFeed(root,voice_check.FIFO)
     requests=queue.SimpleQueue();passage=None;passage_start=0
     candidate=None;last_candidate=float("-inf")
     counter=0;awake=0;event="";event_at=0;cue="";cue_at=0;last_cue=""
@@ -427,6 +429,7 @@ def capture(arc,root,cfg,input_args):
                     if cfg.get("journal"):prefix="quietjournal" if cfg.get("prune") else "journal"
                     segment=(root/f"{prefix}-{start}-{secrets.token_hex(6)}.pcm.part").open("xb")
                 levels.add(block)
+                practice.send(stream_pos,block)
                 recognized = mic_input.recognition_pcm(block,cfg.get("recognitionGain",0))
                 if not voice_feedback.guarded(root):
                     if voice:voice_feed.send(stream_pos,recognized)
@@ -477,12 +480,12 @@ def capture(arc,root,cfg,input_args):
                     if not recognition_error.startswith("Live words unavailable"):recognition_error=""
                     if recognition_error and not reported_recognition_error:
                         sound_cue(root,"decoder");reported_recognition_error=True
-                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,system=cfg["source"],device=cfg.get("device","default"),recognitionGain=cfg.get("recognitionGain",0),recognitionError=recognition_error,promptSpeaking=voice_feedback.guarded(root),commandWindow=max(0,math.ceil(awake-time.monotonic())),**measured,seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
+                    write(root/"status.json",dict(state="Recording",stream=stream_id,words=counter,voice=(event if time.monotonic()-event_at<8 else ""),cue=("Capturing passage" if passage is not None else cue if time.monotonic()-cue_at<45 else ""),lastCue=(cue if passage is not None or time.monotonic()-cue_at>=45 else last_cue),at=now,system=cfg["source"],device=cfg.get("device","default"),recognitionGain=cfg.get("recognitionGain",0),recognitionError=recognition_error,practiceStream=True,promptSpeaking=voice_feedback.guarded(root),commandWindow=max(0,math.ceil(awake-time.monotonic())),**measured,seconds=round(seg_bytes/BYTES_PER_SECOND),elapsed=int(time.monotonic()-began),available=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)))
                     report=time.monotonic()
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
     finally:
-        feed.close();voice_feed.close()
+        feed.close();voice_feed.close();practice.close()
         if voice:voice.close()
         proc.terminate()
         try:proc.wait(timeout=3)
@@ -785,6 +788,13 @@ def panel(arc):
             except (ValueError,OSError) as ex:messagebox.showerror("Capture settings",str(ex),parent=dlg)
         ttk.Button(dlg,text="Save settings",command=save).pack(anchor="e",padx=10,pady=(0,8))
     menu=tk.Menu(window,tearoff=False)
+    check_window=None
+    def show_voice_check():
+        nonlocal check_window
+        if check_window is not None and check_window.winfo_exists():check_window.lift();return
+        check_window=voice_check.panel(window,root,config,read)
+    ttk.Button(header,text="Voice check",command=show_voice_check).pack(side="left",padx=3)
+    menu.add_command(label="Voice check",command=show_voice_check)
     menu.add_command(label="Open recorder",command=open_app)
     menu.add_command(label="Browse & play",command=archive)
     menu.add_command(label="Open last kept audio",command=reopen_keep)

@@ -131,6 +131,27 @@ public final class ArchiveStore extends SQLiteOpenHelper {
         char[] hex="0123456789abcdef".toCharArray();StringBuilder out=new StringBuilder(64);
         for(byte b:hash.digest()){out.append(hex[(b>>4)&15]).append(hex[b&15]);}return out.toString();
     }
+    static boolean storageUnlocked(Context context){
+        android.os.UserManager users=context.getSystemService(android.os.UserManager.class);
+        return users!=null && users.isUserUnlocked();
+    }
+    /** Prefer the narrowest verified local recording containing the timestamp, including overlaps. */
+    Segment covering(long at)throws IOException{synchronized(LOCK){
+        if(!storageUnlocked(app))throw new IOException("Unlock this phone to check saved audio.");
+        String time=Long.toString(at);
+        boolean offPhone=false,unreadable=false;
+        try(Cursor c=getReadableDatabase().rawQuery("SELECT "+COLS+" FROM segments WHERE state IN ('pending','synced','evicted') AND start<=? AND end>? ORDER BY duration,start DESC,id",new String[]{time,time})){
+            while(c.moveToNext()){
+                Segment segment=new Segment(c);
+                if(!segment.local){offPhone=true;continue;}
+                try(FileInputStream checked=openForPlayback(segment.id)){return segment;}
+                catch(IOException unavailable){unreadable=true;}
+            }
+        }
+        if(unreadable)throw new IOException("A recording covers this time, but its phone copy is missing or damaged.");
+        if(offPhone)throw new IOException("The recording for this time is no longer on this phone.");
+        return null;
+    }}
     public FileInputStream openForPlayback(String id)throws IOException{synchronized(LOCK){
         Segment row=get(id);if(row==null||!row.local)throw new IOException("Audio is not on this phone");
         FileInputStream in=new FileInputStream(file(id,false));

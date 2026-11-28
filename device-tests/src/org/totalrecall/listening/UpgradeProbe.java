@@ -23,12 +23,14 @@ public final class UpgradeProbe extends Instrumentation {
     private static final String TITLE = "Upgrade fixture";
     private static final String CORRECTION = "Preserve the blue book";
     private String phase;
-    private boolean voicePracticeFixture;
+    private boolean voicePracticeFixture, spokenPreferencesFixture;
 
     @Override public void onCreate(Bundle args) {
         super.onCreate(args);
         phase = args == null ? "" : args.getString("phase", "");
-        voicePracticeFixture = args != null && "31".equals(args.getString("sourceVersion"));
+        String sourceVersion = args == null ? "" : args.getString("sourceVersion", "");
+        spokenPreferencesFixture = "32".equals(sourceVersion);
+        voicePracticeFixture = spokenPreferencesFixture || "31".equals(sourceVersion);
         start();
     }
 
@@ -39,6 +41,9 @@ public final class UpgradeProbe extends Instrumentation {
         try (Store store = new Store(target)) {
             if ("seed".equals(phase)) {
                 if (voicePracticeFixture) UpgradeVoicePractice.seed(target);
+                if (spokenPreferencesFixture) check(target.getSharedPreferences("recall-speech", 0).edit()
+                        .putBoolean("spokenAnswers", false).putBoolean("spokenRecovery", true).putInt("cueLevel", 1)
+                        .commit(), "Could not seed spoken guidance settings");
                 String marker = "upgrade-" + UUID.randomUUID();
                 Method save = Store.class.getDeclaredMethod("save", SelectiveEngine.Clip.class);
                 save.setAccessible(true);
@@ -81,6 +86,14 @@ public final class UpgradeProbe extends Instrumentation {
                 if (voicePracticeFixture) {
                     UpgradeVoicePractice.verify(target);
                     receipt.putString("voicePractice", "The synthetic speaker example, voice-only correction and general spelling survived replacement.");
+                }
+                if (spokenPreferencesFixture) {
+                    SharedPreferences speech = target.getSharedPreferences("recall-speech", 0);
+                    check(!speech.getBoolean("spokenAnswers", true) && speech.getBoolean("spokenRecovery", false)
+                            && speech.getInt("cueLevel", -1) == 1, "Spoken guidance preferences changed");
+                    receipt.putString("guidance", "Quiet spoken answers, recovery announcements and cue level survived replacement.");
+                    check(speech.edit().remove("spokenAnswers").remove("spokenRecovery").remove("cueLevel").commit(),
+                            "Could not clear synthetic guidance settings");
                 }
                 String marker = fixture.getString("marker", null);
                 check(marker != null, "Package replacement lost the fixture");

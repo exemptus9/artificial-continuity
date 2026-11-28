@@ -46,6 +46,20 @@ final class RecognitionReview {
         return !SpeechContext.literal(original) && anchors(original).equals(anchors(proposed));
     }
 
+    // Ordinals, ranges and arithmetic signs also carry meaning in recordings read for comparison.
+    private static final Set<String> FOCUS_NUMBERS=new HashSet<>(Arrays.asList(
+        "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth thirtieth fortieth fiftieth sixtieth seventieth eightieth ninetieth hundredth thousandth millionth plus minus negative point dozen single triple".split(" ")));
+    static boolean safeFocusReplacement(String original,String proposed){
+        if(!safeReplacement(original,proposed))return false;
+        String before=original==null?"":original;
+        return focusNumbers(before).equals(focusNumbers(proposed));
+    }
+    private static String focusNumbers(String words){
+        StringBuilder numbers=new StringBuilder();
+        for(String token:words.toLowerCase(Locale.ROOT).split(" +"))if(FOCUS_NUMBERS.contains(token))numbers.append(' ').append(token);
+        return numbers.toString();
+    }
+
     // Align each retry to the original. An utterance average can conceal a poorly supported
     // replacement midway through an otherwise clear sentence.
     static boolean supportedRewrite(String original,JSONArray first,String reading,JSONArray retry){

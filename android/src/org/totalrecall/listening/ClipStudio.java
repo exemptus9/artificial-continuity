@@ -54,7 +54,8 @@ final class ClipStudio {
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build();
     }
     void show(){show(0);}
-    void show(long offsetMs){
+    void show(long offsetMs){show(offsetMs,null);}
+    void show(long offsetMs,Runnable whenClosed){
         LinearLayout sheet=owner.column();
         ScrollView scroll=new ScrollView(owner);scroll.addView(sheet);owner.pad(sheet,18,10);
         TextView title=owner.text(moment.title,21,0xff192c28,true);title.setTypeface(Typeface.SERIF,Typeface.BOLD);sheet.addView(title);
@@ -103,7 +104,7 @@ final class ClipStudio {
         notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);sheet.addView(notice);
         if(RecallService.isListening())note("Listening is active. You can trim silently. Pause listening to play audio.");
         dialog=new AlertDialog.Builder(owner).setTitle("Playback & trim").setView(scroll).setPositiveButton("Close",null).create();
-        dialog.setOnDismissListener(d->release());dialog.show();
+        dialog.setOnDismissListener(d->{release();if(whenClosed!=null)whenClosed.run();});dialog.show();
         transport.setEnabled(false);
         worker.execute(()->{
             try{

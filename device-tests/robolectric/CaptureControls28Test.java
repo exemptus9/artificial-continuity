@@ -50,7 +50,7 @@ public class CaptureControls28Test {
         LongRecording.active="";
         LongRecording.duration=0;
         LongRecording.marks=0;
-        LiveCapture.stop("Finished");
+        LiveCapture.stop("Finished");RecallService.saveChoice=SelectiveEngine.SaveChoice.NONE;
         ReflectionHelpers.setStaticField(RecallService.class,"running",false);
     }
     private static Object invoke(Object owner,String name) throws Exception {
@@ -152,6 +152,108 @@ public class CaptureControls28Test {
             assertEquals(View.GONE,part("latest").getVisibility());
         }
         assertEquals(0,LiveCapture.snapshot().savedCount);
+    }
+    private SelectiveEngine choiceEngine(java.util.List<SelectiveEngine.Clip> saved){
+        return new SelectiveEngine(new SelectiveEngine.Listener(){
+            public void onClip(SelectiveEngine.Clip clip){saved.add(clip);}
+            public void onPauseRequested(){}
+            public void onChoiceState(SelectiveEngine.SaveChoice choice){RecallService.saveChoice=choice;}
+        });
+    }
+    private String ask(SelectiveEngine engine){
+        short[] audio=new short[SelectiveEngine.RATE*3];java.util.Arrays.fill(audio,(short)10);
+        engine.pcm(audio,audio.length);engine.text("hey recall save as",true);
+        assertEquals(8,engine.choiceState().seconds);
+        return engine.choiceState().token;
+    }
+    @Test public void heldRewindButtonsUseTheSameSerializedRequestExactlyOnce() throws Exception {
+        openOverlay(false,false);
+        java.util.List<SelectiveEngine.Clip> clips=new java.util.ArrayList<>();
+        SelectiveEngine engine=choiceEngine(clips);
+        RecallService service=Robolectric.buildService(RecallService.class).get();
+        ReflectionHelpers.setField(service,"worker",new Thread());
+        ReflectionHelpers.setField(service,"capturing",true);
+        java.util.Queue<?> queued=field(service,"commands",java.util.Queue.class);
+        String[] answers={"Word","Line","Decision","Cancel"};
+        String[] expected={SelectiveEngine.FORGE,SelectiveEngine.POETRY,SelectiveEngine.DECISION};
+        TextView prior=null;
+        for(int i=0;i<answers.length;i++){
+            String token=ask(engine);ready();paint();
+            View root=field(overlay,"root",View.class);
+            TextView button=find(root,answers[i]);assertTrue(button.isShown());
+            assertTrue(button.getContentDescription().toString().contains("held"));
+            assertFalse(part("keep").isEnabled());assertFalse(part("saveAs").isEnabled());
+            if(prior!=null){prior.performClick();assertNull("Old view cannot file a replacement question",shadowOf(app).getNextStartedService());}
+            engine.pcm(new short[16000],16000);ready();paint();
+            assertEquals("File held audio · 7s",value(part("status")));
+            button.performClick();
+            Intent intent=dispatched(RecallService.ANSWER_CHOICE);
+            assertEquals(token,intent.getStringExtra("choiceToken"));
+            assertEquals(answers[i].toLowerCase(java.util.Locale.ROOT),intent.getStringExtra("choiceAnswer"));
+            button.performClick();assertNull("Double tap dispatched a second request",shadowOf(app).getNextStartedService());
+            service.onStartCommand(intent,0,i+1);String cmd=(String)queued.poll();
+            assertNotNull(cmd);assertTrue(RecallService.applyChoice(engine,cmd));assertFalse(RecallService.applyChoice(engine,cmd));
+            service.onStartCommand(intent,0,i+2);assertNull("Receiver accepted a closed prompt",queued.poll());
+            assertEquals(Math.min(i+1,3),clips.size());
+            if(i<3){
+                SelectiveEngine.Clip clip=clips.get(i);assertTrue(clip.fromSpokenChoice);assertEquals(expected[i],clip.category);
+                assertEquals("The following silent second must be excluded",10,clip.audio[clip.audio.length-1]);
+            }
+            prior=button;ready();paint();assertFalse(button.isShown());assertTrue(part("keep").isEnabled());
+        }
+    }
+    @Test public void miniQuietChoiceReturnsToItsOriginalSizeOnExpiryOrGap() throws Exception {
+        openOverlay(true,false);
+        java.util.List<SelectiveEngine.Clip> clips=new java.util.ArrayList<>();
+        SelectiveEngine engine=choiceEngine(clips);
+        String first=ask(engine);ready();paint();
+        TextView header=part("status");assertEquals("Save as · 8s",value(header));
+        View readout=(View)header.getParent();assertTrue(readout.getContentDescription().toString().contains("held"));
+        assertTrue(value(part("caption")).contains("Tap to file"));assertFalse(readout.isLongClickable());
+        readout.performClick();assertTrue((Boolean)ReflectionHelpers.getField(overlay,"expanded"));
+        assertFalse(RecallOverlay.options(app).getBoolean("expanded",false));
+        View button=find(field(overlay,"root",View.class),"Line");assertTrue(button.isShown());
+        engine.cueAudio(16000);engine.pcm(new short[16000],16000);assertEquals(8,engine.choiceState().seconds);
+        engine.pcm(new short[8*16000+1],8*16000+1);ready();paint();
+        assertFalse((Boolean)ReflectionHelpers.getField(overlay,"expanded"));assertTrue((Boolean)ReflectionHelpers.getField(overlay,"ultra"));
+        assertFalse(engine.answerChoice(first,"line"));button.performClick();assertNull(shadowOf(app).getNextStartedService());
+        String second=ask(engine);ready();paint();((View)part("status").getParent()).performClick();
+        engine.closeChoice(null);LiveCapture.waitFor("Microphone gap");paint();
+        assertEquals("Mic busy",value(part("status")));assertTrue((Boolean)ReflectionHelpers.getField(overlay,"ultra"));
+        assertFalse(engine.answerChoice(second,"word"));assertTrue(clips.isEmpty());
+    }
+    @Test public void mediumAndMoreRespectReplacementPromptsAndExplicitPanelSize() throws Exception {
+        openOverlay(false,false);
+        Method size=overlay.getClass().getDeclaredMethod("setSize",boolean.class,boolean.class);size.setAccessible(true);
+        size.invoke(overlay,false,false);
+        java.util.List<SelectiveEngine.Clip> clips=new java.util.ArrayList<>();
+        SelectiveEngine engine=choiceEngine(clips);
+        String old=ask(engine);ready();paint();
+        assertEquals("Save as · 8s",value(part("status")));
+        ((View)part("status").getParent()).performClick();
+        TextView oldButton=find(field(overlay,"root",View.class),"Line");
+        assertTrue(oldButton.isShown());String oldCommand=RecallService.ANSWER_CHOICE+old+"/line";
+        String current=ask(engine);ready();paint();
+        assertFalse((Boolean)ReflectionHelpers.getField(overlay,"expanded"));assertFalse((Boolean)ReflectionHelpers.getField(overlay,"ultra"));
+        assertFalse(RecallService.applyChoice(engine,oldCommand));
+        oldButton.performClick();assertNull(shadowOf(app).getNextStartedService());
+        size.invoke(overlay,false,true);
+        View root=field(overlay,"root",View.class);
+        find(root,"More").performClick();
+        View updated=field(overlay,"root",View.class);
+        TextView held=find(updated,"Decision");assertTrue(held.isShown());
+        assertEquals("Choice row must stay outside the scrolling More controls",
+            updated,((View)held.getParent()).getParent());
+        engine.answerChoice(current,"cancel");ready();paint();
+        assertTrue((Boolean)ReflectionHelpers.getField(overlay,"expanded"));
+        assertTrue(find(updated,"Voices").isShown());assertFalse(held.isShown());
+        assertTrue(clips.isEmpty());
+        String last=ask(engine);ready();paint();
+        find(updated,"Decision").performClick();dispatched(RecallService.ANSWER_CHOICE);
+        // The final spoken answer may arrive before the microphone worker consumes the tap.
+        engine.text("line",true);
+        assertFalse(RecallService.applyChoice(engine,RecallService.ANSWER_CHOICE+last+"/decision"));
+        assertEquals(1,clips.size());assertEquals(SelectiveEngine.POETRY,clips.get(0).category);
     }
     @Test public void writingSetupsRestoreTheFirstPreferencesAndPreservePrivacyChanges() {
         android.content.SharedPreferences options=RecallOverlay.options(app);

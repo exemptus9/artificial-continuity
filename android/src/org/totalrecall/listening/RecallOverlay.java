@@ -142,7 +142,9 @@ public final class RecallOverlay {
         ProgressBar meter;
         InputTrail trail;
         TextView sessionSummary,sessionToggle,sessionMark,saveAs;
-        LinearLayout saveKinds;
+        LinearLayout saveKinds,choiceRow,readout;
+        String displayedChoice="",submittedChoice="",expandedForChoice="";
+        boolean returnToUltra;
         boolean kindsOpen;
         long receiptTime=-1,hiddenClipId=-1,nextBackupCheck;
         String receiptStamp="",backupReadout="";
@@ -197,7 +199,7 @@ public final class RecallOverlay {
         void detach() {
             if(caption!=null)caption.setText("");
             if(visible && root!=null)try{wm.removeViewImmediate(root);}catch(RuntimeException ignored){}
-            sessionSummary=null;sessionToggle=null;sessionMark=null;saveAs=null;saveKinds=null;
+            sessionSummary=null;sessionToggle=null;sessionMark=null;saveAs=null;saveKinds=null;choiceRow=null;readout=null;displayedChoice="";
             tentativeCue=partialSeen="";backupReadout="";nextBackupCheck=0;
             root=null;caption=null;status=null;detail=null;takeControl=null;latest=null;contextCue=null;panelScroll=null;meter=null;trail=null;keep=null;missed=null;words=null;visible=false;
         }
@@ -239,8 +241,14 @@ public final class RecallOverlay {
         void paint(LiveCapture.Snapshot s){
             if(s.waiting!=wasWaiting){preserveBoundary();wasWaiting=s.waiting;requestUntil=0;}
             boolean ready=s.receiving;
-            if(keep!=null)keep.setEnabled(ready);
-            if(saveAs!=null)saveAs.setEnabled(ready || kindsOpen);
+            SelectiveEngine.SaveChoice choice=ready?RecallService.saveChoice:SelectiveEngine.SaveChoice.NONE;
+            if(!expandedForChoice.isEmpty() && !expandedForChoice.equals(choice.token)){
+                expandedForChoice="";expanded=false;ultra=returnToUltra;toolsOpen=false;rebuild();return;
+            }
+            boolean asking=!choice.token.isEmpty();
+            if(!displayedChoice.equals(choice.token))bindChoice(choice.token);
+            if(keep!=null)keep.setEnabled(ready && !asking);
+            if(saveAs!=null)saveAs.setEnabled(!asking && (ready || kindsOpen));
             if(saveKinds!=null)for(int i=0;i<saveKinds.getChildCount();i++)saveKinds.getChildAt(i).setEnabled(ready);
             String longId=LongRecording.active;
             boolean recording=!longId.isEmpty();
@@ -289,6 +297,10 @@ public final class RecallOverlay {
             if(!ready){
                 headline=s.waiting?"Waiting for microphone":"Waiting for input";
                 compact=s.waiting?"Mic busy":"No input";
+            }else if(asking){
+                boolean sent=submittedChoice.equals(choice.token);
+                headline=sent?"Answer sent":"File held audio · "+choice.seconds+"s";
+                compact=sent?"Answer sent":"Save as · "+choice.seconds+"s";
             }else if(savePending){
                 headline=requestLabel;
                 compact=activeClock+" · Saving";
@@ -384,10 +396,11 @@ public final class RecallOverlay {
                         line="Heard · "+complete+"\nLive · "+s.partial;
                     }
                 }
+                if(asking && !expanded){line="";fallback=activeClock+" · Tap to file";}
                 showText(caption,line.isEmpty()?fallback:line);
                 if(ultra && Build.VERSION.SDK_INT>=30){
                     View readout=(View)status.getParent();
-                    String summary=(ready && !savePending && !s.event.isEmpty()?s.event:status.getText())+". Listening session "+elapsed+", "+s.bufferLabel()+". "
+                    String summary=(ready && !asking && !savePending && !s.event.isEmpty()?s.event:status.getText())+". Listening session "+elapsed+", "+s.bufferLabel()+". "
                         +s.words+" words, "+s.savedCount+" saved, "+s.flags+" flagged. "+caption.getText();
                     if(!TextUtils.equals(summary,readout.getStateDescription()))readout.setStateDescription(summary);
                 }
@@ -422,7 +435,7 @@ public final class RecallOverlay {
             bg.setStroke(dp(1),0xff49746b);root.setBackground(bg);root.setPadding(dp(4),dp(1),dp(4),dp(1));
             root.setElevation(dp(4));root.setFilterTouchesWhenObscured(true);
             LinearLayout header=row(root);header.setGravity(Gravity.CENTER_VERTICAL);
-            LinearLayout readout=new LinearLayout(windowContext);readout.setOrientation(LinearLayout.VERTICAL);readout.setGravity(Gravity.CENTER_VERTICAL);
+            readout=new LinearLayout(windowContext);readout.setOrientation(LinearLayout.VERTICAL);readout.setGravity(Gravity.CENTER_VERTICAL);
             readout.setPadding(dp(5),0,dp(2),0);readout.setMinimumHeight(dp(48));header.addView(readout,new LinearLayout.LayoutParams(0,-2,1));
             readout.setContentDescription("Open the complete transcript across saved sessions");readout.setTooltipText("Open full journal");
             readout.setOnClickListener(v->openScreen(FullJournalActivity.class,false));
@@ -430,6 +443,7 @@ public final class RecallOverlay {
                 String holdName=SAVE_NAMES[holdChoice(app)];
                 readout.setTooltipText("Tap for journal · hold to save "+holdName.toLowerCase(java.util.Locale.ROOT));
                 readout.setOnLongClickListener(v->{
+                    if(!RecallService.saveChoice.token.isEmpty())return true;
                     if(!LiveCapture.snapshot().receiving){Toast.makeText(app,"Waiting for microphone input",Toast.LENGTH_SHORT).show();return true;}
                     request(SAVE_ACTIONS[holdChoice(app)],"Saving…");
                     v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -438,7 +452,7 @@ public final class RecallOverlay {
                 readout.setAccessibilityDelegate(new View.AccessibilityDelegate(){
                     @Override public void onInitializeAccessibilityNodeInfo(View host,AccessibilityNodeInfo info){
                         super.onInitializeAccessibilityNodeInfo(host,info);
-                        info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK,"Save "+holdName));
+                        if(displayedChoice.isEmpty())info.addAction(new AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_LONG_CLICK,"Save "+holdName));
                     }
                 });
             }
@@ -448,13 +462,17 @@ public final class RecallOverlay {
             LinearLayout body=root;
             if(expanded){
                 if(!preview){
+                    choiceRow=row(root);
+                    GradientDrawable choiceBg=new GradientDrawable();choiceBg.setColor(0xff28664f);choiceBg.setCornerRadius(dp(8));choiceRow.setBackground(choiceBg);
+                    choiceRow.setVisibility(View.GONE);
                     sessionSummary=label(root,"",13);sessionSummary.setTextColor(0xffa6f5d5);sessionSummary.setVisibility(View.GONE);
                 }
                 Point display=new Point();wm.getDefaultDisplay().getSize(display);
                 panelScroll=new ScrollView(windowContext){
                     @Override protected void onMeasure(int w,int h){
                         int summaryHeight=sessionSummary!=null && sessionSummary.getVisibility()==View.VISIBLE?sessionSummary.getMeasuredHeight():0;
-                        int reserve=Math.max(dp(106),header.getMeasuredHeight()+summaryHeight+dp(24));
+                        int choiceHeight=choiceRow!=null && choiceRow.getVisibility()==View.VISIBLE?choiceRow.getMeasuredHeight():0;
+                        int reserve=Math.max(dp(106),header.getMeasuredHeight()+summaryHeight+choiceHeight+dp(24));
                         super.onMeasure(w,MeasureSpec.makeMeasureSpec(Math.max(dp(24),display.y-reserve),MeasureSpec.AT_MOST));
                     }
                 };
@@ -629,9 +647,52 @@ public final class RecallOverlay {
             setSize(false,!expanded && !ultra);
         }
         void setSize(boolean mini,boolean large){
-            toolsOpen=false;ultra=mini;expanded=large;
+            expandedForChoice="";toolsOpen=false;ultra=mini;expanded=large;
             prefs.edit().putBoolean("ultra",mini).putBoolean("expanded",large).apply();
             rebuild();
+        }
+        void bindChoice(String token){
+            displayedChoice=token;
+            if(!submittedChoice.equals(token))submittedChoice="";
+            if(!token.isEmpty() && saveKinds!=null){kindsOpen=false;showKinds();}
+            if(choiceRow!=null){
+                choiceRow.removeAllViews();
+                choiceRow.setVisibility(token.isEmpty()?View.GONE:View.VISIBLE);
+                if(!token.isEmpty()){
+                    for(String answer:SelectiveEngine.CHOICE_WORDS){
+                        String title=Character.toUpperCase(answer.charAt(0))+answer.substring(1);
+                        String hint=answer.equals("cancel")?"Cancel this held rewind":"File held audio as "+
+                            (answer.equals("word")?SelectiveEngine.FORGE:answer.equals("line")?SelectiveEngine.POETRY:SelectiveEngine.DECISION);
+                        control(choiceRow,title,hint,v->{
+                            if(visible && v.getParent()==choiceRow && v.isShown())submitChoice(token,answer);
+                        }).setEnabled(!token.equals(submittedChoice));
+                    }
+                    choiceRow.announceForAccessibility("File held audio. Choose word, line, decision or cancel.");
+                }
+            }else if(!expanded && readout!=null){
+                boolean pending=!token.isEmpty();
+                readout.setLongClickable(ultra && !pending);
+                readout.setContentDescription(pending?"Choose how to file the held audio":"Open the complete transcript across saved sessions");
+                readout.setTooltipText(pending?"Choose word, line, decision or cancel":ultra?
+                    "Tap for journal · hold to save "+SAVE_NAMES[holdChoice(app)].toLowerCase(java.util.Locale.ROOT):"Open full journal");
+                readout.setOnClickListener(v->{
+                    if(!pending){openScreen(FullJournalActivity.class,false);return;}
+                    if(visible && v==readout && v.isShown() && token.equals(RecallService.saveChoice.token) &&
+                        unlocked() && LiveCapture.snapshot().receiving){
+                        returnToUltra=ultra;expandedForChoice=token;expanded=true;ultra=false;rebuild();
+                    }
+                });
+            }
+        }
+        void submitChoice(String token,String answer){
+            if(token.equals(submittedChoice) || !token.equals(RecallService.saveChoice.token) || !unlocked() ||
+                !RecallService.isListening() || !LiveCapture.snapshot().receiving)return;
+            try{
+                app.startService(new Intent(app,RecallService.class).setAction(RecallService.ANSWER_CHOICE)
+                    .putExtra("choiceToken",token).putExtra("choiceAnswer",answer));
+                submittedChoice=token;
+                if(choiceRow!=null)for(int i=0;i<choiceRow.getChildCount();i++)choiceRow.getChildAt(i).setEnabled(false);
+            }catch(RuntimeException e){Toast.makeText(app,"Recorder could not accept this choice",Toast.LENGTH_SHORT).show();}
         }
         void showKinds(){
             saveKinds.setVisibility(kindsOpen?View.VISIBLE:View.GONE);

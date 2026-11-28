@@ -170,6 +170,7 @@ public final class VoiceProfilesActivity extends Activity {
         VoiceProfiles.Profile self=null;for(VoiceProfiles.Profile p:profiles.list())if(p.source.equals("Me"))self=p;
         final VoiceProfiles.Profile me=self;
         action(me==null?"Teach my voice":"Add a sample of my voice",()->{if(me==null)create(true);else begin(me,me.name,me.source);});
+        action("Check how Recall hears me",()->startActivity(new Intent(this,PhraseCheckActivity.class)));
         if(me!=null)action("Practice a name or coined word",()->chooseTerm(me));
         if(me!=null && !me.wordings.isEmpty())action("My voice corrections · "+me.wordings.size(),()->wordings(me));
         action("Add another person or media voice",()->create(false));

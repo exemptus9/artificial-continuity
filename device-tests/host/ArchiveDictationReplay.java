@@ -36,6 +36,9 @@ public class ArchiveDictationReplay {
         JSONArray cases=new JSONArray(new String(Files.readAllBytes(corpus.resolve("cases.json")),"UTF-8"));
         try(OfflineSpeech speech=new OfflineSpeech(context,false,false);
             PrintWriter output=new PrintWriter(System.getProperty("recall.report"),"UTF-8")){
+            String mode=System.getProperty("recall.archiveMode","standard");
+            if(mode.equals("compare"))OfflineSpeech.class.getDeclaredField("focusedArchive").setBoolean(speech,true);
+            else if(!mode.equals("standard") && !mode.equals("focus"))throw new IllegalArgumentException("Unknown archive mode "+mode);
             for(int i=0;i<cases.length();i++){
                 JSONObject fixture=cases.getJSONObject(i);
                 speech.resetStream();
@@ -43,9 +46,21 @@ public class ArchiveDictationReplay {
                 ByteBuffer input=ByteBuffer.wrap(Files.readAllBytes(corpus.resolve(fixture.getString("file")))).order(ByteOrder.LITTLE_ENDIAN);
                 short[] frame=new short[1600];
                 JSONArray readings=new JSONArray();
+                double previous=0,filtered=0,gain=1;
                 while(input.hasRemaining()){
                     int count=Math.min(frame.length,input.remaining()/2);
                     for(int j=0;j<count;j++)frame[j]=input.getShort();
+                    if(mode.equals("focus")){
+                        // Exact input path from AudioSituation.Scan.focus, also used by 0.29 and 0.30.
+                        double[] adjusted=new double[count];double peak=0;
+                        for(int j=0;j<count;j++){
+                            filtered=.965*(filtered+frame[j]-previous);previous=frame[j];
+                            adjusted[j]=filtered;peak=Math.max(peak,Math.abs(filtered));
+                        }
+                        double target=peak>12?Math.min(10,Math.max(1,7000/peak)):1;
+                        gain=Math.min(target,.65*gain+.35*target);
+                        for(int j=0;j<count;j++)frame[j]=(short)Math.round(Math.max(-32768,Math.min(32767,adjusted[j]*gain)));
+                    }
                     record(speech,hint,speech.accept(frame,count),readings);
                 }
                 record(speech,hint,speech.finish(),readings);

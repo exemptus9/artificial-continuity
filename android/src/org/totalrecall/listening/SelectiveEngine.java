@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /** In-memory selective audio capture. One instance represents one uninterrupted microphone session. */
@@ -44,6 +45,7 @@ public final class SelectiveEngine {
         default void onVoice(String message,boolean wake) {}
         default void onSession(int action) {}
         default void onSpokenRequest(String request) {}
+        default void onChoiceState(SaveChoice choice) {}
         default void onFlag(String reason) {}
     }
 
@@ -492,6 +494,14 @@ public final class SelectiveEngine {
     private boolean active, stopped, heldVoiceCommand,passage,wakeAnnounced;
     private int lastAction=-1;
     private long awakeUntil=-1, readyAt=-10L*RATE, choiceUntil=-1;
+    /** Read-only metadata for a question. The held audio stays on this engine. */
+    public static final class SaveChoice {
+        static final SaveChoice NONE=new SaveChoice("",0);
+        final String token;
+        final int seconds;
+        private SaveChoice(String token,int seconds){this.token=token;this.seconds=seconds;}
+    }
+    private SaveChoice choice=SaveChoice.NONE;
     private Clip pendingRewind;
     private int choiceCueSamples,wakeCueSamples;
     private String interim = "";
@@ -555,7 +565,13 @@ public final class SelectiveEngine {
                 }
             }
         }
-        if(pendingRewind!=null && at>choiceUntil)closeChoice("Save choice expired");
+        if(pendingRewind!=null){
+            if(at>choiceUntil)closeChoice("Save choice expired");
+            else{
+                int seconds=Math.max(1,(int)((choiceUntil-at+RATE-1)/RATE));
+                if(seconds!=choice.seconds)showChoice(new SaveChoice(choice.token,seconds));
+            }
+        }
         if(awakeUntil>=0 && at>awakeUntil){
             awakeUntil=-1;wakeAnnounced=false;
             listener.onVoice("Wake window ended · say Hey Recall again",false);
@@ -581,17 +597,7 @@ public final class SelectiveEngine {
             return;
         }
         if(choicePending() && choiceWord(n)){
-            if(isFinal){
-                clearInterim();
-                if(n.equals("cancel"))closeChoice("Choice canceled");
-                else{
-                    Clip frozen=pendingRewind;
-                    pendingRewind=null;
-                    try{
-                        publishRewind(frozen,n.equals("word")?FORGE:n.equals("line")?POETRY:DECISION,true);
-                    }finally{listener.onSpokenRequest("choiceClosed");}
-                }
-            }
+            if(isFinal){clearInterim();answerChoice(choice.token,n);}
             return;
         }
         if(isFinal){
@@ -650,6 +656,7 @@ public final class SelectiveEngine {
                     if(pendingRewind!=null){
                         choiceUntil=at+8L*RATE;choiceCueSamples=0;
                         listener.onSpokenRequest("choose");
+                        showChoice(new SaveChoice(UUID.randomUUID().toString(),8));
                         listener.onVoice("Choose a save category",false);
                     }
                 }else if(action==STATUS || action==HELP || action==REPEAT){
@@ -719,6 +726,20 @@ public final class SelectiveEngine {
     }
 
     synchronized boolean choicePending(){return pendingRewind!=null;}
+    synchronized SaveChoice choiceState(){return choice;}
+    private void showChoice(SaveChoice next){choice=next;listener.onChoiceState(next);}
+    synchronized boolean answerChoice(String token,String answer){
+        if(pendingRewind==null || stopped || at>choiceUntil || !choice.token.equals(token) || !choiceWord(answer))return false;
+        if(answer.equals("cancel"))closeChoice("Choice canceled");
+        else{
+            Clip frozen=pendingRewind;
+            pendingRewind=null;
+            showChoice(SaveChoice.NONE);
+            try{publishRewind(frozen,answer.equals("word")?FORGE:answer.equals("line")?POETRY:DECISION,true);}
+            finally{listener.onSpokenRequest("choiceClosed");}
+        }
+        return true;
+    }
 
     /** Continue recording through our prompt while giving the user time to answer it. */
     synchronized void cueAudio(int count){
@@ -737,6 +758,7 @@ public final class SelectiveEngine {
         if(pendingRewind==null)return;
         Arrays.fill(pendingRewind.audio,(short)0);
         pendingRewind=null;
+        showChoice(SaveChoice.NONE);
         listener.onSpokenRequest("choiceClosed");
         if(message!=null)listener.onVoice(message,false);
     }
