@@ -112,3 +112,5 @@ Open an archive item for a situation review based on its recognized speech, corr
 
 
 In version 0.33 the compact overlay’s recording-status button opens the most recently filed laptop words. The overlay menu also offers **Read last saved words**. Inside a journal, **Earlier journal** and **Later journal** open adjacent entries in time order across the recorders visible in that archive.
+
+In the overlay menu, **My words & phrases** remembers how you write a phrase the laptop repeatedly mishears. Enter the recognized phrase and the spelling you want. Replacements apply to live captions and new local journal entries, with the recognizer's original wording retained in each changed entry. Spoken commands continue to use the recognizer's own words. Personal spellings stay on this laptop.

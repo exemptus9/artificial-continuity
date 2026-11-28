@@ -201,10 +201,11 @@ def file_journal(arc,path,start,ms,gain):
         return
     if not text.exists():
         lines=[]
+        spellings=speech_context.PersonalSpellings(path.parent/"personal-spellings.json")
         with path.open("rb") as pcm:
             for seconds,original in desk_speech.transcribe(pcm,gain):
                 stamp=time.strftime("%Y-%m-%d %H:%M:%S Z",time.gmtime(start/1000+seconds))
-                polished=speech_context.correct(original)
+                polished=spellings.correct(original)
                 lines.append(stamp+"  "+polished)
                 if polished!=original:lines.append("  Originally heard · "+original)
         if not lines:return
@@ -475,6 +476,7 @@ def capture(arc,root,cfg,input_args):
                 cue_at=time.monotonic()
     heard.commands_enabled=cfg.get("commands",True)
     heard.command_open=lambda: time.monotonic()<awake
+    heard.display_words=speech_context.PersonalSpellings(root/"personal-spellings.json").correct
     voice=desk_speech.LiveStream(heard)
     stream_id=secrets.token_hex(12)
     stream_pos=secrets.randbits(61)
@@ -953,6 +955,49 @@ def panel(arc):
     menu.add_command(label="Voice check",command=show_voice_check)
     menu.add_command(label="Archive tools & phone receiver",command=open_app)
     menu.add_command(label="Browse & play",command=archive)
+    def personal_spellings():
+        path=root/"personal-spellings.json"
+        try:words=speech_context.checked_spellings(read(path,{}))
+        except (ValueError,OSError) as exc:
+            messagebox.showerror("My words & phrases",str(exc),parent=window);return
+        dlg=tk.Toplevel(window);dlg.title("My words & phrases");dlg.transient(window)
+        panel=ttk.Frame(dlg,padding=12);panel.pack(fill="both",expand=True)
+        ttk.Label(panel,text="Teach the laptop how to write a name, coined word or phrase. Changes apply to live captions and future journal entries.",wraplength=360).pack(anchor="w")
+        heard=tk.StringVar();written=tk.StringVar();notice=tk.StringVar()
+        ttk.Label(panel,text="What the laptop heard").pack(anchor="w",pady=(8,0))
+        first=ttk.Entry(panel,textvariable=heard);first.pack(fill="x")
+        ttk.Label(panel,text="How I write it").pack(anchor="w")
+        ttk.Entry(panel,textvariable=written).pack(fill="x")
+        saved=tk.Listbox(panel,height=6,exportselection=False);saved.pack(fill="both",expand=True,pady=6)
+        keys=[]
+        def refresh():
+            keys[:]=sorted(words);saved.delete(0,"end")
+            for key in keys:saved.insert("end",key+" → "+words[key])
+        def pick(event):
+            choice=saved.curselection()
+            if choice:
+                key=keys[choice[0]];heard.set(key);written.set(words[key])
+        saved.bind("<<ListboxSelect>>",pick)
+        def update(remove=False):
+            key=" ".join(heard.get().lower().split())
+            try:
+                changed=dict(words)
+                if remove:
+                    if key not in changed:raise ValueError("Select a saved phrase to remove.")
+                    del changed[key]
+                else:
+                    changed[key]=written.get();changed=speech_context.checked_spellings(changed)
+                write(path,changed)
+            except (OSError,ValueError) as exc:notice.set(str(exc));return
+            words.clear();words.update(changed);refresh();heard.set("");written.set("")
+            notice.set("Spelling removed." if remove else "Spelling saved on this laptop.");first.focus_set()
+        actions=ttk.Frame(panel);actions.pack(fill="x")
+        ttk.Button(actions,text="Save spelling",command=update).pack(side="left")
+        ttk.Button(actions,text="Remove",command=lambda:update(True)).pack(side="left")
+        ttk.Button(actions,text="Done",command=dlg.destroy).pack(side="right")
+        ttk.Label(panel,textvariable=notice,wraplength=360).pack(anchor="w")
+        refresh();first.focus_set();dlg.grab_set()
+    menu.add_command(label="My words & phrases",command=personal_spellings)
     menu.add_command(label="Read last saved words",command=read_last_journal)
     menu.add_command(label="Open last kept audio",command=reopen_keep)
     menu.add_command(label="Review saved moments",command=lambda:archive("review"))

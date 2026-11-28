@@ -28,6 +28,7 @@ class DesktopJournalTest(unittest.TestCase):
                 writer.add(bytes(32000),clock+2000,False)
                 spool=next(root.glob("dict6-*.pcm"))
                 self.assertEqual(spool.read_bytes(),original+bytes(32000))
+                cap.write(root/"personal-spellings.json",{"sun shines":"Son shines"})
                 def decode(stream,gain):
                     self.assertEqual(gain,6)
                     self.assertEqual(stream.read(),spool.read_bytes())
@@ -59,7 +60,8 @@ class DesktopJournalTest(unittest.TestCase):
                 with hosted.connection() as db:
                     rows=db.execute("SELECT id,journal FROM archive_uploads ORDER BY id").fetchall()
                 self.assertEqual(len(rows),2)
-                self.assertIn("the sun shines in",rows[0]["journal"])
+                self.assertIn("  the Son shines in",rows[0]["journal"])
+                self.assertIn("  Originally heard · the sun shines in",rows[0]["journal"])
                 self.assertEqual(rows[1]["id"],"phone-line")
                 self.assertTrue(cap.read(root/"shared-journal-receipt.json",{})["id"].startswith("laptop-journal-"))
                 self.assertFalse(spool.exists())

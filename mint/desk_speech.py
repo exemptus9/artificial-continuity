@@ -143,6 +143,7 @@ class LiveStream:
         expected = None
         command_audio = bytearray()
         command_decoder = command_search = None
+        display_words = getattr(self.on_final, "display_words", speech_context.correct)
         command_available = getattr(self.on_final, "commands_enabled", False)
         try:
             decoder = Dictation()
@@ -166,7 +167,7 @@ class LiveStream:
                 finals = decoder.feed(pcm)
                 lines = self.state["lines"]
                 for _, words in finals:
-                    lines = (lines+[speech_context.correct(words)])[-3:]
+                    lines = (lines+[display_words(words)])[-3:]
                     command = words
                     window = getattr(self.on_final, "command_open", lambda:False)()
                     near_wake = words.lower().startswith(("lex","alex","hey","total recall"))
@@ -182,7 +183,7 @@ class LiveStream:
                     command_audio.clear()
                     if not self.done.is_set():
                         self.on_final(command)
-                self.state = {**self.state, "lines":lines, "partial":speech_context.correct(decoder.partial)}
+                self.state = {**self.state, "lines":lines, "partial":display_words(decoder.partial)}
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             self.state = {**self.state, "error":str(exc)[:100], "partial":""}
         finally:

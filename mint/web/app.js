@@ -1000,7 +1000,7 @@ function journalNavigation(id){
         const entry=adjacent[key];
         if(!entry)continue;
         const source=entry.id.startsWith('laptop-')?'Mint':'Phone or imported';
-        const link=e('a','text-link',label+' · '+source+' · '+dateTime(entry.startedAtMillis));
+        const link=e('a','text-link',label+' · '+source+' · '+journalTime(entry.startedAtMillis));
         link.href='/#journal/'+encodeURIComponent(entry.id);nav.append(link);
       }
     }catch{nav.append(button('Retry adjacent journals',load,'text-link'));}
