@@ -26,7 +26,7 @@ import static org.junit.Assert.*;
 public class RecordingSilence30Test {
     @Implements(value=OfflineSpeech.class,isInAndroidSdk=false)
     public static class NoWords {
-        @Implementation protected void __constructor__(Context ignored,boolean commands,boolean voices){}
+        @Implementation protected void __constructor__(Context ignored,boolean commands,boolean voices,boolean review,boolean publishSignal){}
         @Implementation protected String accept(short[] pcm,int used){return null;}
         @Implementation protected String finish(){return "";}
         @Implementation protected String takeReviewHint(){return "";}
