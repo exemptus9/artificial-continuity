@@ -84,7 +84,7 @@ public final class LiveCapture {
         public final boolean receiving;
         public final boolean active,waiting;
         Snapshot(String p,String save,String why,String status,List<String> lines,List<Long> times,List<Integer> ids,float meter,boolean on,boolean wait,long t){
-            surroundings=on && !wait && !soundLabel.isEmpty() && (soundAt==Long.MAX_VALUE || android.os.SystemClock.elapsedRealtime()-soundAt<3000)?soundLabel:"";
+            surroundings=on && !wait && !soundLabel.isEmpty() && (soundAt==Long.MAX_VALUE || t-soundAt<3000)?soundLabel:"";
             boolean stale=t-situationAt>=45000;
             bufferSeconds=buffered;lastFlag=flagLabel;clipId=latestClip;savedAt=latestSaveTime;
             currentCue=stale?"":situation;currentSeq=situationSeq;
@@ -131,7 +131,7 @@ public final class LiveCapture {
             return committed.isEmpty()?partial:committed+"\n"+partial;
         }
     }
-    private static long now(){return TimeUnit.NANOSECONDS.toMillis(System.nanoTime());}
+    static long now(){return TimeUnit.NANOSECONDS.toMillis(System.nanoTime());}
     private static String bounded(String text,int max){return text==null?"":text.substring(0,Math.min(max,text.length())).trim();}
     private static void expire(long t){
         while(!recent.isEmpty()&&t-recent.peekFirst().at>=WINDOW)recent.removeFirst();

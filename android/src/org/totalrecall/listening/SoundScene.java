@@ -1,7 +1,6 @@
 package org.totalrecall.listening;
 
 import android.content.Context;
-import android.os.SystemClock;
 import org.tensorflow.lite.Interpreter;
 import java.io.*;
 import java.nio.*;
@@ -26,7 +25,7 @@ final class SoundScene implements AutoCloseable {
     }
     private static final class Frame {
         final int generation,sequence; final long time; final short[] samples;
-        Frame(int g,int n,short[] pcm){generation=g;sequence=n;samples=pcm;time=SystemClock.elapsedRealtime();}
+        Frame(int g,int n,short[] pcm){generation=g;sequence=n;samples=pcm;time=LiveCapture.now();}
     }
     void feed(short[] pcm,int count){
         for(int pos=0;pos<count;){
@@ -95,7 +94,7 @@ final class SoundScene implements AutoCloseable {
             int lastGeneration=-1,last=-1;
             while(!closed){
                 Frame f=queue.poll(500,TimeUnit.MILLISECONDS);
-                if(f==null || f.generation!=generation || SystemClock.elapsedRealtime()-f.time>2000)continue;
+                if(f==null || f.generation!=generation || LiveCapture.now()-f.time>2000)continue;
                 if(lastGeneration!=f.generation || last+1!=f.sequence)model.restart();
                 String name=model.recognize(f.samples);
                 lastGeneration=f.generation;last=f.sequence;
