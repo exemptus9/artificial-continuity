@@ -92,6 +92,9 @@ public final class CaptureReviewActivity extends Activity {
             grouping.setChecked(getSharedPreferences("recall-speech",0).getBoolean("voices",true));people.addView(grouping);
             grouping.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("voices",on).apply());
             LinearLayout settings=card("Capture choices");
+            Switch ambient=new Switch(this);ambient.setText("Recognize sounds around me while listening");ambient.setMinHeight(dp(48));
+            ambient.setChecked(getSharedPreferences("recall-speech",0).getBoolean("ambientSounds",true));settings.addView(ambient);
+            ambient.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("ambientSounds",on).apply());
             Switch spelling=new Switch(this);spelling.setText("Use context to correct similar-sounding words");
             spelling.setChecked(getSharedPreferences("recall-speech",0).getBoolean("contextSpelling",true));settings.addView(spelling);
             spelling.setOnCheckedChangeListener((v,on)->getSharedPreferences("recall-speech",0).edit().putBoolean("contextSpelling",on).apply());
@@ -246,7 +249,7 @@ public final class CaptureReviewActivity extends Activity {
         }
         put(words,lines.length()>0?lines.toString():s.waiting?"Waiting for microphone access.":s.active?"Waiting for recognized speech…":"Start or resume listening to see words here.");
         put(draft,s.partial.isEmpty()?"":"In progress · "+s.partial);
-        String key=s.situationLines(0)+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.aliasVersion+"|"+s.partial;
+        String key=s.surroundings+"|"+s.situationLines(0)+"|"+s.finalSequence+"|"+s.finals.size()+"|"+s.aliasVersion+"|"+s.partial;
         if(key.equals(lastEvidence))return;lastEvidence=key;
         try{
             Situation analysis=new Situation(this);
@@ -259,7 +262,7 @@ public final class CaptureReviewActivity extends Activity {
                 Situation tentative=new Situation(this);tentative.add(s.partial,"");
                 if(!tentative.cue().isEmpty())result+="\n\nTentative · "+tentative.cue()+" · “"+s.partial+"”";
             }
-            String scene=s.scene(0);put(context,s.situationLines(0)+"\n\n"+(scene.isEmpty()?result:scene+"\n\n"+result));
+            String scene=s.scene(0);put(context,(s.surroundings.isEmpty()?"":"Sound · "+s.surroundings+"\n")+s.situationLines(0)+"\n\n"+(scene.isEmpty()?result:scene+"\n\n"+result));
         }catch(java.io.IOException e){put(context,"Could not load the situation cues.");}
     }
     private void readCatalog(){

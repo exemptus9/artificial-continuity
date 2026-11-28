@@ -339,6 +339,7 @@ public final class RecallOverlay {
                 }
                 String cues=s.situationLines(firstVisibleFinal).replace("Now · ","Situation · ");
                 if(!tentativeCue.isEmpty())cues+="\nPossible · "+tentativeCue+" (live words)";
+                if(!s.surroundings.isEmpty())cues+="\nSound · "+s.surroundings;
                 showText(contextCue,cues);
             }
             if(detail!=null){
@@ -382,9 +383,12 @@ public final class RecallOverlay {
                         fallback=s.savedCount+" saved · "+s.flags+" flags";
                     else if(focus.equals("buffer") || (focus.equals("auto") && s.sessionSeconds/4%3==1))
                         fallback=s.bufferLabel();
+                    else if((focus.equals("scene") || focus.equals("auto")) && s.surroundings.startsWith("Possible · "))
+                        fallback=s.surroundings;
                     else if(focus.equals("scene") && showWords && !s.currentSituation(firstVisibleFinal).isEmpty())
                         fallback=s.currentSituation(firstVisibleFinal);
                 }
+                if(!expanded && !ultra && line.isEmpty() && ready && s.surroundings.startsWith("Possible · "))fallback=s.surroundings;
                 if(expanded && showWords && line.isEmpty() && ready)fallback="Waiting for words…";
                 if(!expanded && recording && (!ready || savePending || !s.event.isEmpty() || clipped) && line.isEmpty())
                     fallback="Audio "+clock+" · "+LongRecording.marks+(LongRecording.marks==1?" mark":" marks");

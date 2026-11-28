@@ -48,7 +48,7 @@ class WordFeed:
 WAKE_GRAMMAR = """#JSGF V1.0;
 grammar recall;
 <wake> = hey recall | total recall | lexi | hey lexi;
-<command> = save that | save this | keep that | remember that | save the last minute | keep the last minute | you missed one | start a passage | start a poem | start a story | start a draft | finish passage | finish the poem | finish the story | finish the draft | pause recall | pause recording | stop listening | save a line | save a poem line | save a word | save a coined word | mark my place | bookmark my place | status | how much can i save | what can i say | help | last save | what did you save;
+<command> = save that | save this | keep that | remember that | save the last minute | keep the last minute | you missed one | start a passage | start a poem | start a story | start a draft | finish passage | finish the poem | finish the story | finish the draft | pause recall | pause recording | stop listening | save a line | save a poem line | save a word | save a coined word | mark my place | bookmark my place | status | how much can i save | what do you hear | what can i say | help | last save | what did you save;
 public <request> = <wake> [<command>];
 """
 
@@ -81,7 +81,7 @@ def checked_wake(decoder,original,pcm,heard,command_window=False):
         # After an explicit wake, the small grammar can recognize a command when
         # dictation substitutes a similar-sounding last word. Never rescue pause.
         if command_window and same_length:
-            info=candidate in ("what can i say","last save","what did you save","status","how much can i save","help")
+            info=candidate in ("what do you hear","what can i say","last save","what did you save","status","how much can i save","help")
             typed=candidate in ("save a line","save a poem line","save a word","save a coined word","mark my place","bookmark my place")
             ending=SequenceMatcher(None,tokens[-1],candidate.split()[-1]).ratio()
             if hyp.best_score>=.68 and hyp.prob>=.37 and (info or typed and ending>=.75):

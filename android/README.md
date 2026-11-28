@@ -232,3 +232,7 @@ recovery of a paused interval, at the cost of explicitly incomplete coverage.
 ## Journal chapters in 0.33
 
 In **Full journal → Chapters & sync**, use **Save chapter now** during a recording. For long sessions, enable five-minute chapters once. After five minutes the next finished phrase closes the chapter. Listening continues and speaker names carry into the next chapter. Each chapter can transfer with your existing journal and archive settings. **Read shared journal** opens the owner archive. Use the magnifying glass in Full journal to find a phrase by its saved wording or its original recognition.
+
+## Environmental sounds in 0.34
+
+During listening the overlay can show **Sound · Possible** for a sound pattern in the microphone input. The expanded view separates these suggestions from words and conversation cues. The small view gives live words priority and can show a sound between phrases. In **Capture review → Capture choices**, toggle **Recognize sounds around me while listening**. Inference runs offline on a background thread, uses the original signal before recognition gain, and skips the app’s feedback playback. Uploaded recordings can be analyzed in the shared archive to see and replay sound changes.

@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import speech_context
+import surroundings
 import tempfile
 import threading
 
@@ -76,6 +77,7 @@ def story_draft(groups):
     sentences=[]
     for group in groups:
         for cue in group["items"]:
+            if cue.get("sound"):continue
             quote=cue["quote"]
             if quote.casefold() in seen:continue
             seen.add(quote.casefold())
@@ -178,12 +180,15 @@ def analyze_audio(arc, data):
                 if require(db,kind,uid)!=row[0]:raise Failure(409,"Recording changed during analysis")
                 mode="voice focus" if focused else "original"
                 db.execute("INSERT OR REPLACE INTO recording_evidence VALUES(?,?,?,?,?)",(kind,uid,offset,mode,json.dumps(result["cues"])))
+                if result["soundAvailable"]:
+                    db.execute("INSERT OR REPLACE INTO recording_evidence VALUES(?,?,?,?,?)",(kind,uid,offset,"sound patterns",json.dumps(result["sounds"])))
             result["storyDraft"]=story_draft([dict(source=mode,items=result["cues"])])
             return result
     finally: SLOT.release()
 
 
 def scan(stream,decoder,offset,focused=False,on_phrase=None):
+    timeline=surroundings.Timeline(offset)
     focus=VoiceFocus() if focused else None
     speech_quiet=0
     samples=active=quiet=longest=peak=phrase_start=0
@@ -201,6 +206,7 @@ def scan(stream,decoder,offset,focused=False,on_phrase=None):
             more=True;continue
         frame=array("h",block)
         if not frame:continue
+        timeline.add(block)
         samples+=len(frame)
         peak=max(peak,max(abs(v) for v in frame))
         if sum(v*v for v in frame)>=10738*len(frame):
@@ -217,6 +223,6 @@ def scan(stream,decoder,offset,focused=False,on_phrase=None):
             end_phrase();decoder.start_utt();phrase_start=samples
     end_phrase()
     if not samples:raise Failure(422,"No audio samples in this range.")
-    return dict(start=offset,seconds=samples/16000,abovePercent=round(100*active/samples),
+    return dict(sounds=timeline.events,soundAvailable=timeline.detector is not None,start=offset,seconds=samples/16000,abovePercent=round(100*active/samples),
                 quietSeconds=round(longest/16000,1),peakDbfs=round(20*math.log10(peak/32768),1) if peak else None,
                 cues=interpret(passages),next=offset+600 if more else None)

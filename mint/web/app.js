@@ -1077,7 +1077,7 @@ function evidenceRows(items,audio){
     if(audio && Number.isFinite(cue.seconds)){
       row.append(button('Play at '+cue.stamp,()=>{audio.currentTime=cue.seconds;audio.play().catch(()=>notice('Use the player to start playback.'));},'text-link'));
     }else if(cue.stamp)row.append(e('span','row-sub','  '+cue.stamp));
-    row.append(e('p','','“'+cue.quote+'”'));group.append(row);
+    row.append(e('p','',cue.sound?cue.quote:'“'+cue.quote+'”'));group.append(row);
   }
   return group;
 }
@@ -1112,7 +1112,9 @@ function situationPanel(full,audio,story){
   box.append(e('h3','','Situation'));
   for(const group of groups){
     const cues=group.items.filter(cue=>cue.label!=='Source excerpt');
-    if(cues.length)box.append(e('p','row-sub',group.source),evidenceRows(cues,audio));
+    if(cues.length && cues[0].sound){
+      const saved=e('details');saved.append(e('summary','',group.source+' · '+cues.length+' sound changes'),evidenceRows(cues,audio));box.append(saved);
+    }else if(cues.length)box.append(e('p','row-sub',group.source),evidenceRows(cues,audio));
     else box.append(e('p','section-note',group.source+' · no explicit situation cue found.'));
   }
   if(!audio)return box;
@@ -1122,7 +1124,7 @@ function situationPanel(full,audio,story){
   let offset=0;
   focused.onchange=()=>{offset=0;review.hidden=false;review.textContent='Analyze original recording';};
   const review=button('Analyze original recording',async()=>{
-    review.disabled=true;focused.disabled=true;status.textContent='Reading audio levels and transcribing English on this archive…';
+    review.disabled=true;focused.disabled=true;status.textContent='Listening for sound patterns and transcribing English on this archive…';
     try{
       const r=await ownerAction('/api/analyze-recording',{kind:full.kind,id:full.id,offset,voiceFocus:focused.checked});
       if(!box.isConnected)return;
@@ -1131,6 +1133,14 @@ function situationPanel(full,audio,story){
         e('p','',r.abovePercent+'% of audio above −50 dBFS · longest quiet stretch '+r.quietSeconds+' s · peak '+(r.peakDbfs==null?'silence':r.peakDbfs+' dBFS')),
         r.cues.length?evidenceRows(r.cues,audio):e('p','section-note','No words recognized in this range.'));
       status.textContent='Speech and playback times are approximate. Background noise counts toward the sound level.';
+      if(r.sounds?.length){
+        const patterns=e('details');patterns.open=true;
+        patterns.append(e('summary','','Sound timeline · '+r.sounds.length),evidenceRows(r.sounds.slice(0,8),audio));
+        if(r.sounds.length>8){const rest=e('details');rest.append(e('summary','','More sound changes · '+(r.sounds.length-8)),evidenceRows(r.sounds.slice(8),audio));patterns.append(rest);}
+        report.append(patterns);
+      }else if('soundAvailable' in r){
+        report.append(e('p','section-note',r.soundAvailable?'No clear environmental sound match in this range.':'Sound recognition unavailable for this analysis.'));
+      }
       if(r.next==null)review.hidden=true;
       else{offset=r.next;review.textContent='Analyze next 10 minutes';}
     }catch(err){status.textContent=err.message;}

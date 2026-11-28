@@ -12,6 +12,8 @@ import live_words
 import speech_context
 
 ASSETS = Path(__file__).resolve().parent / "dictation"
+if not ASSETS.is_dir():
+    ASSETS=Path("/usr/share/total-recall-listening/dictation")
 _model = None
 _lock = threading.Lock()
 

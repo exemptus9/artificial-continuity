@@ -182,6 +182,7 @@ public final class RecallService extends Service {
             String line=snapshot.partial.isEmpty()?(snapshot.finals.isEmpty()?"":snapshot.attributed(snapshot.finals.size()-1)):snapshot.partial;
             if(!line.isEmpty())details.append(snapshot.partial.isEmpty()?"\nHeard · ":"\nIn progress · ").append(line.substring(0,Math.min(line.length(),120)));
             details.append("\n").append(snapshot.situationLines(0));
+            if(!snapshot.surroundings.isEmpty())details.append("\nSound · ").append(snapshot.surroundings);
         }
         if(longOpen)details.append("\nLong session · ").append(LongRecording.time(LongRecording.duration)).append(" · ").append(LongRecording.marks).append(" markers");
         details.append("\n").append(counts);
@@ -387,6 +388,7 @@ public final class RecallService extends Service {
             if(session>=0 && JournalStore.enabled(RecallService.this) && epoch==JournalStore.epoch(RecallService.this))
                 journal.remember(session,id,p.name,p.source);
         }
+        SoundScene sounds;
         boolean hearingPrompt,atPhoneLimit;
         void tick(short[] data,int count){tick(data,count,false);}
         void tick(short[] data,int count,boolean cueAudio){
@@ -410,6 +412,9 @@ public final class RecallService extends Service {
                 if(revision!=feedbackRevision || learn!=learnFromSaves){
                     applyFeedback(engine,store,learn);feedbackRevision=revision;learnFromSaves=learn;
                 }
+                boolean recognizeSounds=getSharedPreferences("recall-speech",MODE_PRIVATE).getBoolean("ambientSounds",true);
+                if(recognizeSounds && sounds==null)sounds=new SoundScene(RecallService.this);
+                if(!recognizeSounds && sounds!=null){sounds.close();sounds=null;}
                 boolean limited=LimitAlerts.message(RecallService.this).startsWith("Phone storage limit");
                 if(limited && !atPhoneLimit)sound(CaptureCues.Cue.STORAGE_LIMIT);
                 atPhoneLimit=limited;
@@ -424,6 +429,7 @@ public final class RecallService extends Service {
             }
             if(clock>=nextPrune && session>=0){journal.prune();nextPrune=clock+3600000;}
             LiveCapture.samples(data,count);
+            if(sounds!=null){if(cueAudio){if(!hearingPrompt)sounds.reset();}else sounds.feed(data,count);}
             if(cueAudio){
                 // Keep source PCM. During spoken playback, no app voice enters ASR, examples or command scoring.
                 if(!hearingPrompt){flushWords(false);hearingPrompt=true;}
@@ -454,6 +460,7 @@ public final class RecallService extends Service {
         void end(boolean gap,String reason){
             PhraseCheckInput.gap();
             capturing=false;
+            if(sounds!=null){sounds.close();sounds=null;}
             if(engine==null)return;
             engine.closeChoice(null);hearingPrompt=false;
             try{

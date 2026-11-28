@@ -87,6 +87,7 @@ jobs:
           0.29.0 31 d735d2489e1341dfb85d05eb8fd1f901a8e7d570
           0.30.0 32 efdafe96952ab7c253a4dfa970ad3c64619c7be8
           0.31.0 33 622180eaab069e3be812cfbc6e6ab7525219d46e
+          0.33.0 34 4ba2a60826304bbff709f3ea874803a680348459
           VERSIONS
           build_prior() {
             local version=$1 revision=$2 prior="$RUNNER_TEMP/recall-$1"
@@ -123,7 +124,7 @@ jobs:
             timeout 240 bash device-tests/upgrade.sh "$RUNNER_TEMP/recall-upgrades/$version.apk" "$PWD/$current_apk" "$code" </dev/null
             tested=$((tested+1))
           done < "$RUNNER_TEMP/recall-upgrades/versions"
-          test "$tested" -eq 5
+          test "$tested" -eq 6
           timeout 900 bash device-tests/run.sh "$PWD/$current_apk"
       - name: Exercise codec, pinned transfer and browser against the packaged Mint app
         run: |
@@ -137,6 +138,8 @@ jobs:
           dpkg-deb -x "$deb" "$RUNNER_TEMP/recall-installed"
           host_py=$(find "$RUNNER_TEMP/recall-installed" -name recall_desk.py -print -quit)
           test -f "$host_py"
+          python3 -m pip install numpy==1.26.4
+          PYTHONPATH="$(dirname "$host_py")" python3 mint/test_packaged_sound.py --fixture device-tests/assets/ordinary.pcm
           python3 device-tests/archive-roundtrip.py --desk "$host_py"
           python3 mint/test_web_ui.py --chromium "$(command -v google-chrome)"
       - name: Report independent host suite failures

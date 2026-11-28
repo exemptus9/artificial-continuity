@@ -369,6 +369,15 @@ public final class RecallSmoke extends Instrumentation {
                 OfflineSpeech recognizer=new OfflineSpeech(target);
                 InputStream input=getContext().getAssets().open("ordinary.pcm")){
             byte[] fixture=bytes(input);
+            Class<?> classifier=Class.forName("org.totalrecall.listening.SoundScene$Model",true,target.getClassLoader());
+            java.lang.reflect.Constructor<?> make=classifier.getDeclaredConstructor(Context.class);make.setAccessible(true);
+            try(AutoCloseable model=(AutoCloseable)make.newInstance(target)){
+                Method recognize=method(classifier,"recognize",short[].class);
+                short[] samples=new short[15600];
+                require("".equals(recognize.invoke(model,(Object)samples)),"Digital silence produced a named sound");
+                java.nio.ByteBuffer.wrap(fixture).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(samples);
+                require(recognize.invoke(model,(Object)samples).toString().contains("Speech"),"Packaged model failed the spoken fixture");
+            }
             require(!JournalStore.enabled(target),"Journal should default to off");
             int initialSessions=journals.sessions().size(),initialClips=clips.search("").size();
             java.util.Set<String> oldFiles=audioNames(target);

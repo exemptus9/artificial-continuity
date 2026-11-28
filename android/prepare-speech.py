@@ -75,6 +75,18 @@ def unpack(aar, entry, dest):
 def main():
     for args in INGREDIENTS:
         fetch(*args)
+    for suffix,digest in (("lite","34b065817e294e7dd3569504e8b9454938ceae453b6a459da54d5f6e45d3c94e"),("lite-api","885b95bc9e47a4aa5cf8e71523aed9b05e397cfef1ea09773f13fea8b649fcee")):
+        name="tensorflow-"+suffix
+        path=CACHE/(name+".aar")
+        fetch(path,MAVEN+"org/tensorflow/"+name+"/2.16.1/"+name+"-2.16.1.aar",digest)
+        with ZipFile(path) as aar:
+            unpack(aar,"classes.jar",BUILD/(name+".jar"))
+            if suffix=="lite":
+                unpack(aar,"LICENSE",ASSETS/"TFLite-LICENSE.txt")
+                for abi in ABIS:
+                    unpack(aar,"jni/"+abi+"/libtensorflowlite_jni.so",BUILD/"lib"/abi/"libtensorflowlite_jni.so")
+    fetch(ASSETS/"yamnet.tflite","https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite",
+          "4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf")
     for name, lib in (("jna", "jnidispatch"), ("vosk", "vosk")):
         with ZipFile(CACHE / (name + ".aar")) as aar:
             unpack(aar, "classes.jar", BUILD / (name + ".jar"))

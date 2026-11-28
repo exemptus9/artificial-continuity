@@ -18,7 +18,7 @@ REPLIES = {
     "wake":"Ready for a command",
     "mark":"Moment saved","line":"Line captured","coinage":"Word captured","resume":"Place marked",
     "passage":"Passage saved","creative":"Creative candidate saved",
-    "help":"After the wake chime, say save a line, save a word, mark my place, or start a passage.",
+    "help":"After the wake chime, say save a line, save a word, mark my place, start a passage, or what do you hear.",
     "unclear":"Command unclear. Try again after the wake chime, or tap Keep moment.",
     "timeout":"Command window closed. Use the wake word to try again.",
     "no-passage":"No passage is open. Use the wake word and say start a passage.",

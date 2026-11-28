@@ -3,13 +3,13 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 arch=${RECALL_DEB_ARCH:-$(dpkg --print-architecture)}
 case "$arch" in amd64) ;; *) arch=all ;; esac
-out=${1:-"$src/total-recall-desk_0.33.0_${arch}.deb"}
+out=${1:-"$src/total-recall-desk_0.34.0_${arch}.deb"}
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 install -d -m 755 "$stage/DEBIAN" "$stage/usr/share/total-recall-listening" "$stage/usr/share/applications" "$stage/usr/share/doc/total-recall-desk" "$stage/usr/bin"
 install -d -m 755 "$stage/usr/share/total-recall-listening/web"
-install -m 644 "$src/recall_desk.py" "$src/recall_archive.py" "$src/recall_web.py" "$src/situation.py" "$src/archive_backup.py" "$src/recall_review.py" "$src/laptop_capture.py" "$src/mic_input.py" "$src/voice_feedback.py" "$src/voice_check.py" "$src/desk_speech.py" "$src/live_words.py" "$src/speech_context.py" "$stage/usr/share/total-recall-listening/"
-install -m 644 "$src/web/situation-rules.tsv" "$src/web/speech-context.tsv" "$src/web/index.html" "$src/web/app.css" "$src/web/app.js" "$stage/usr/share/total-recall-listening/web/"
+install -m 644 "$src/recall_desk.py" "$src/recall_archive.py" "$src/recall_web.py" "$src/situation.py" "$src/archive_backup.py" "$src/recall_review.py" "$src/laptop_capture.py" "$src/mic_input.py" "$src/voice_feedback.py" "$src/voice_check.py" "$src/desk_speech.py" "$src/live_words.py" "$src/speech_context.py" "$src/surroundings.py" "$stage/usr/share/total-recall-listening/"
+install -m 644 "$src/web/sound-groups.tsv" "$src/web/situation-rules.tsv" "$src/web/speech-context.tsv" "$src/web/index.html" "$src/web/app.css" "$src/web/app.js" "$stage/usr/share/total-recall-listening/web/"
 install -m 644 "$src/total-recall-desk.desktop" "$stage/usr/share/applications/"
 install -m 644 "$src/README.md" "$src/CLOUD.md" "$src/CLOUD_RECOVERY.md" "$stage/usr/share/doc/total-recall-desk/"
 cat > "$stage/usr/bin/total-recall-desk" <<'LAUNCH'
@@ -18,16 +18,17 @@ exec /usr/bin/python3 -I /usr/share/total-recall-listening/recall_desk.py "$@"
 LAUNCH
 chmod 755 "$stage/usr/bin/total-recall-desk"
 if [ "$arch" = amd64 ]; then
+    python3 "$src/bundle_surroundings.py" "$stage/usr/share/total-recall-listening/sound-model"
     python3 "$src/bundle_dictation.py" "$stage/usr/share/total-recall-listening/dictation"
 fi
 cat > "$stage/DEBIAN/control" <<PKG
 Package: total-recall-desk
-Version: 0.33.0
+Version: 0.34.0
 Architecture: $arch
 Maintainer: Total Recall project <maintainer@localhost>
 Section: utils
 Priority: optional
-Depends: python3 (>= 3.11), python3-tk, python3-pocketsphinx, pocketsphinx-en-us, ffmpeg, openssl, libqrencode4, iproute2, alsa-utils | pulseaudio-utils
+Depends: python3 (>= 3.11), python3-tk, python3-numpy, python3-pocketsphinx, pocketsphinx-en-us, ffmpeg, openssl, libqrencode4, iproute2, alsa-utils | pulseaudio-utils
 Recommends: espeak-ng | espeak
 Description: Private desktop companion to Total Recall for Android
  Search your original voice captures and optional session journals in a

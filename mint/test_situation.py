@@ -29,3 +29,14 @@ class SituationTest(unittest.TestCase):
         result=scan(io.BytesIO(bytes(33000)),decoder,600)
         self.assertEqual((result["start"],result["abovePercent"],result["peakDbfs"],result["cues"]),(600,0,None,[]))
         self.assertEqual(result["seconds"],16500/16000)
+
+class SoundEvidenceTest(unittest.TestCase):
+    def test_weak_single_window_and_spoken_story(self):
+        from surroundings import Decisions
+        from situation import story_draft
+        d=Decisions()
+        self.assertEqual(d.update({"Music":.50}),"")
+        self.assertEqual(d.update({"Music":.50,"Typing":.9}),"Typing + Music")
+        self.assertEqual(d.update({}),"")
+        self.assertEqual(d.update({"Music":.50}),"")
+        self.assertEqual(story_draft([{"source":"Sound patterns","items":[{"sound":True,"quote":"Rain"}]}]),"")

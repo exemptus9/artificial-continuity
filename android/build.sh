@@ -11,7 +11,7 @@ version=$(python3 -c 'from xml.etree import ElementTree as E; print(E.parse("And
 commit=$(git rev-parse HEAD 2>/dev/null || echo source-export)
 output="build/TotalRecall-$version.apk"
 mkdir -p assets/listening
-cp ../mint/web/situation-rules.tsv ../mint/web/speech-context.tsv assets/listening/
+cp ../mint/web/sound-groups.tsv ../mint/web/situation-rules.tsv ../mint/web/speech-context.tsv assets/listening/
 python3 prepare-speech.py
 python3 tests/prepare-prosody.py
 rm -rf build/classes build/dex build/generated
@@ -20,9 +20,9 @@ printf 'package org.continuity.recall; public final class BuildInfo { public sta
 "$tools/aapt2" compile --dir res -o build/resources.zip
 "$tools/aapt2" link -o build/unsigned.apk --manifest AndroidManifest.xml -I "$platform" -A assets -0 zip build/resources.zip
 find src build/generated -name '*.java' -print >build/sources.list
-javac --release 8 -encoding UTF-8 -classpath "$platform:build/speech/vosk.jar:build/speech/jna.jar:build/speech/zxing-core.jar" -d build/classes @build/sources.list
+javac --release 8 -encoding UTF-8 -classpath "$platform:build/speech/vosk.jar:build/speech/jna.jar:build/speech/zxing-core.jar:build/speech/tensorflow-lite.jar:build/speech/tensorflow-lite-api.jar" -d build/classes @build/sources.list
 find build/classes -name '*.class' -print >build/classes.list
-"$tools/d8" --release --min-api 26 --lib "$platform" --output build/dex @build/classes.list build/speech/vosk.jar build/speech/jna.jar build/speech/zxing-core.jar
+"$tools/d8" --release --min-api 26 --lib "$platform" --output build/dex @build/classes.list build/speech/vosk.jar build/speech/jna.jar build/speech/zxing-core.jar build/speech/tensorflow-lite.jar build/speech/tensorflow-lite-api.jar
 python3 - <<'PY'
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED, ZIP_STORED

@@ -114,3 +114,9 @@ Open an archive item for a situation review based on its recognized speech, corr
 In version 0.33 the compact overlay’s recording-status button opens the most recently filed laptop words. The overlay menu also offers **Read last saved words**. Inside a journal, **Earlier journal** and **Later journal** open adjacent entries in time order across the recorders visible in that archive.
 
 In the overlay menu, **My words & phrases** remembers how you write a phrase the laptop repeatedly mishears. Enter the recognized phrase and the spelling you want. Replacements apply to live captions and new local journal entries, with the recognizer's original wording retained in each changed entry. Spoken commands continue to use the recognizer's own words. Personal spellings stay on this laptop.
+
+## Sounds around you
+
+While recording, **Sound · Possible** shows a match from the original microphone signal. The recognizer checks roughly one-second windows for patterns such as typing, speech, birds, music, and rain. It can suggest two overlapping patterns. A weaker match needs a second consecutive window. Silence or ambiguous audio can show **No clear sound match**. The label expires when fresh input stops. Sound recognition is on by default. Change it under **Settings → Capture**. With voice commands and spoken guidance enabled, say **“Lexi, what do you hear?”**
+
+In the shared or local archive, open saved audio and select **Analyze original recording**. **Sound timeline** lists changes with playback buttons. A saved sound suggestion is searchable and stays separate from quoted speech. Each analysis covers up to ten minutes, with continuation for longer recordings. Original audio and journal transfer settings still control what reaches the shared archive. Phone and laptop classify locally, including offline. The amd64 installation bundles Google’s YAMNet model and LiteRT for Python 3.11–3.13.

@@ -6,6 +6,6 @@ COPY requirements-cloud.txt .
 RUN pip install --no-cache-dir -r requirements-cloud.txt
 COPY recall_archive.py recall_desk.py recall_web.py situation.py speech_context.py cloud_host.py early_access.py cloud_media.py archive_backup.py recall_review.py ./
 COPY web ./web
-COPY desk_speech.py bundle_dictation.py laptop_capture.py mic_input.py voice_feedback.py voice_check.py live_words.py build_deb.sh total-recall-desk.desktop README.md CLOUD.md CLOUD_RECOVERY.md ./
-RUN sh build_deb.sh
+COPY surroundings.py bundle_surroundings.py desk_speech.py bundle_dictation.py laptop_capture.py mic_input.py voice_feedback.py voice_check.py live_words.py build_deb.sh total-recall-desk.desktop README.md CLOUD.md CLOUD_RECOVERY.md ./
+RUN python3 bundle_surroundings.py /app/sound-model && sh build_deb.sh
 CMD ["python", "cloud_host.py"]

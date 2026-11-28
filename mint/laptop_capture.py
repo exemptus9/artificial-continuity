@@ -32,12 +32,13 @@ import voice_feedback
 import voice_check
 import mic_input
 import speech_context
+import surroundings
 import recall_archive as storage
 
 HOST="total-recall-archive-production.up.railway.app"
 RATE=16000
 BYTES_PER_SECOND=2*RATE
-BASE={"source":"pulse","device":"default","recognitionGain":0,"creativeCatches":False,"quality":32,"seconds":60,"keep":30,"journal":True,"commands":True,"prune":False,"network":"Any network"}
+BASE={"source":"pulse","device":"default","recognitionGain":0,"ambientSounds":True,"creativeCatches":False,"quality":32,"seconds":60,"keep":30,"journal":True,"commands":True,"prune":False,"network":"Any network"}
 # The spool prefix travels with the original PCM through an interrupted save.
 # Keep legacy mark/passage prefixes readable for already-running recorders.
 KEEP_TYPES = {
@@ -143,7 +144,7 @@ def read(path,default):
 def config(path):
     raw=read(path/"settings.json",{})
     cfg={k:raw[k] if raw.get(k) in choices else BASE[k] for k,choices in {
-        "creativeCatches":(True,False),"recognitionGain":(0,6,12),"source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60),"prune":(True,False),"journal":(True,False),"commands":(True,False),"network":("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour")}.items()}
+        "ambientSounds":(True,False),"creativeCatches":(True,False),"recognitionGain":(0,6,12),"source":("pulse","alsa"),"quality":(24,32,48),"seconds":(30,60,120),"keep":(15,30,60),"prune":(True,False),"journal":(True,False),"commands":(True,False),"network":("Any network","Wi-Fi only","Prefer Wi-Fi for 1 hour")}.items()}
     device = raw.get("device")
     cfg["device"] = device if mic_input.valid_device(device) else "default"
     return cfg
@@ -453,6 +454,9 @@ def capture(arc,root,cfg,input_args):
                     requests.put(voice_feedback.TYPED[cmd]);event="Bookmark requested"
                 elif cmd in ("what can i say","help","help me"):
                     event=sound_cue(root,"help")
+                elif cmd=="what do you hear":
+                    answer=sounds.label() if sounds else "Sound recognition is off."
+                    event=sound_cue(root,"status",answer.replace("Possible · ","Possible sound: "))
                 elif cmd in ("status","how much can i save"):
                     recent=min(cfg["keep"],len(ring)//BYTES_PER_SECOND)
                     event=sound_cue(root,"status",f"Laptop microphone active. {recent} seconds available to keep.")
@@ -477,6 +481,7 @@ def capture(arc,root,cfg,input_args):
     heard.commands_enabled=cfg.get("commands",True)
     heard.command_open=lambda: time.monotonic()<awake
     heard.display_words=speech_context.PersonalSpellings(root/"personal-spellings.json").correct
+    sounds=surroundings.LiveSounds() if cfg.get("ambientSounds",True) else None
     voice=desk_speech.LiveStream(heard)
     stream_id=secrets.token_hex(12)
     stream_pos=secrets.randbits(61)
@@ -505,6 +510,7 @@ def capture(arc,root,cfg,input_args):
                     if journal:journal.seal()
                     stream_id=secrets.token_hex(12);stream_pos=secrets.randbits(61)
                     levels=mic_input.LevelWindow()
+                    if sounds:sounds.reset()
                 last_input=time.monotonic()
                 if segment is None:
                     if not room(arc,root):raise OSError("Storage low; waiting for space")
@@ -515,6 +521,9 @@ def capture(arc,root,cfg,input_args):
                 practice.send(stream_pos,block)
                 recognized = mic_input.recognition_pcm(block,cfg.get("recognitionGain",0))
                 guarded=voice_feedback.guarded(root)
+                if sounds:
+                    if guarded:sounds.reset()
+                    else:sounds.feed(block)
                 if journal:journal.add(block,now-round(len(block)*1000/BYTES_PER_SECOND),guarded)
                 if not guarded:voice.send(stream_pos,recognized)
                 # A skipped position restarts the recognition phrase after our speaker is quiet.
@@ -560,7 +569,7 @@ def capture(arc,root,cfg,input_args):
                 if time.monotonic()-report>.16:
                     measured=levels.snapshot()
                     live=voice.state
-                    write(display,dict(**live,stream=stream_id,at=now))
+                    write(display,dict(**live,stream=stream_id,at=now,sound=sounds.label() if sounds and not guarded else ""))
                     recognition_error=live.get("error","")
                     if recognition_error and not reported_recognition_error:
                         sound_cue(root,"decoder");reported_recognition_error=True
@@ -569,6 +578,7 @@ def capture(arc,root,cfg,input_args):
                     if config(root)!=cfg:return
                 if seg_bytes>=cfg["seconds"]*BYTES_PER_SECOND:seal()
     finally:
+        if sounds:sounds.close()
         practice.close()
         voice.close()
         display.unlink(missing_ok=True)
@@ -895,6 +905,8 @@ def panel(arc):
         ttk.Button(p,text="Preview feedback",command=preview).pack(anchor="w",pady=3)
         ttk.Label(p,textvariable=preview_result,wraplength=360).pack(anchor="w")
         p=capture_settings
+        environmental=tk.BooleanVar(value=c["ambientSounds"])
+        ttk.Checkbutton(p,text="Recognize sounds around me while recording",variable=environmental).pack(anchor="w")
         prune=tk.BooleanVar(value=c["prune"])
         ttk.Checkbutton(p,text="Skip near-silent blocks in new recordings",variable=prune).pack(anchor="w")
         p=panel_settings
@@ -923,7 +935,7 @@ def panel(arc):
                 new={key:int(v.get()) for key,v in vars.items()}
                 new.update(source=backend.get(),device=selected_device(),recognitionGain=mic_input.GAIN_CHOICES[gain.get()],creativeCatches=automatic.get())
                 mic_input.arguments(new["source"],new["device"])
-                new["journal"]=journal.get();new["commands"]=commands.get();new["prune"]=prune.get();new["network"]=network.get()
+                new["ambientSounds"]=environmental.get();new["journal"]=journal.get();new["commands"]=commands.get();new["prune"]=prune.get();new["network"]=network.get()
                 if share.get():
                     token=credentials(entry.get().strip()) if entry.get().strip() else read(root/"pair.json","")
                     if not token:raise ValueError("Paste the Pair phone code from your shared archive.")
@@ -1067,10 +1079,11 @@ def panel(arc):
             state.set(f"Recording  ·  {elapsed//60}:{elapsed%60:02}  ·  mic {s.get('level',0)}%")
         else:state.set(status)
         cfg=config(root)
-        live=read(display,{}) if ready and show_words.get() else {}
+        live=read(display,{}) if ready and (show_words.get() or cfg["ambientSounds"]) else {}
         if live.get("stream")!=s.get("stream"):live={}
-        lines=live.get("lines",[])
-        partial=live.get("partial","")
+        sound=live.get("sound","") if cfg["ambientSounds"] else ""
+        lines=live.get("lines",[]) if show_words.get() else []
+        partial=live.get("partial","") if show_words.get() else ""
         error=live.get("error","")
         engine_label.set(("Hearing now" if partial else "Live transcript")+"  ·  "+live.get("engine","Offline English"))
         previous_words.set("\n".join(lines[-2:] if partial else lines[-3:-1]))
@@ -1124,6 +1137,7 @@ def panel(arc):
         omit=read(root/"last-omission.json",{})
         if omit.get("at",0)>last.get("at",0):saved="Quiet block skipped · "+str(round(omit["duration"]/1000))+" s"
         facts=(str(s.get("words",0))+" words · Now · "+(s.get("cue") or "Waiting for context")+"\nLast · "+(s.get("lastCue") or "No earlier cue")) if ready and (cfg["commands"] or cfg["creativeCatches"]) else ""
+        if sound:facts=("Sound · "+sound+"\n"+facts).rstrip()
         source=""
         if s.get("system") and (ready or active):
             name="Mint default" if s.get("device")=="default" else s.get("device","")
@@ -1165,6 +1179,7 @@ def panel(arc):
         if not detail and ready:
             detail=(f"Command · {s['commandWindow']} s left" if s.get("commandWindow") else
                     "Speaking · recording continues" if s.get("promptSpeaking") else s.get("inputHint","") or s.get("recognitionError",""))
+        if not detail and ready and sound.startswith("Possible · "):detail="Sound · "+sound
         if not detail and ready and show_words.get():detail=message
         if not detail:detail=(s.get("cue") if ready else "") or ("Last · "+receipt["title"] if receipt else "No kept moments")
         compact_facts.set((detail[-78:] if ready and detail else "Listening" if ready else status) if ultra.get() else (f"Mic {s.get('level',0)}% · Keep {duration} · " if ready else "")+detail)
