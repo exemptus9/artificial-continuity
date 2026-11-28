@@ -139,7 +139,7 @@ public final class ArchiveSyncActivity extends Activity {
         check("Include closed text journals",ArchiveSync.selected(this,"journal"),(b,on)->{
             if(!on){opt("journal",false);return;}
             new AlertDialog.Builder(this).setTitle("Share transcript journals with your archive?")
-                .setMessage("This includes recognized words outside selected clips. Only completed journal sessions within the batch limit are eligible.")
+                .setMessage("This includes recognized words outside selected clips. Completed sessions and saved chapters are eligible within the batch limit.")
                 .setPositiveButton("Include journals",(d,w)->opt("journal",true)).setNegativeButton("Cancel",(d,w)->render()).setOnCancelListener(d->render()).show();
         });
         button("Upload network · "+ArchiveSync.networkLabel(this),()->pick("Upload network",

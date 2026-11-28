@@ -83,6 +83,32 @@ public class JournalWording30Test {
         }
     }
 
+    @Test public void chaptersKeepVoicesAndOriginalWordingAndTheLiveSession(){
+        assertFalse(JournalStore.chapters(app));
+        long epoch=JournalStore.epoch(app);
+        try(JournalStore store=new JournalStore(app)){
+            long live=store.begin(epoch);
+            assertEquals(-1,store.saveChapter(live,epoch,0));
+            store.nameVoice(live,2,"Poet","Me");
+            store.append(live,epoch,"RhymeMosaic",false,2,"rhyme mosaic","mosaic");
+            assertEquals(-1,store.saveChapter(live,epoch+1,0));
+            long saved=store.saveChapter(live,epoch,0);
+            assertTrue(saved>0);assertEquals(-1,store.saveChapter(live,epoch,0));
+            try(Cursor c=store.getReadableDatabase().rawQuery("SELECT text,original,check_words,name,source FROM lines JOIN journal_voices USING(session,voice) WHERE session=?",new String[]{Long.toString(saved)})){
+                assertTrue(c.moveToFirst());assertEquals("RhymeMosaic",c.getString(0));assertEquals("rhyme mosaic",c.getString(1));
+                assertEquals("mosaic",c.getString(2));assertEquals("Poet",c.getString(3));assertEquals("Me",c.getString(4));assertFalse(c.moveToNext());
+            }
+            JournalStore.setChapters(app,true);
+            store.getWritableDatabase().execSQL("UPDATE sessions SET start=? WHERE id=?",new Object[]{System.currentTimeMillis()-JournalStore.CHAPTER_INTERVAL-1,live});
+            assertTrue(store.append(live,epoch,"a second thought",true,2));
+            assertEquals(2,store.sessions().size());
+            assertTrue(store.append(live,epoch,"a second thought completed",false,2));
+            assertEquals(3,store.sessions().size());
+            assertTrue(store.append(live,epoch,"another line",false,2));
+            assertEquals(3,store.sessions().size());assertEquals("Poet",store.voices(live).get(2)[0]);
+        }
+    }
+
     private static void await(String message,BooleanSupplier condition)throws Exception{
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(6);
         do{

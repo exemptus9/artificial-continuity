@@ -35,6 +35,20 @@ class ArchiveTests(unittest.TestCase):
         thread=threading.Thread(target=instance.serve_forever,daemon=True);thread.start()
         def end(): instance.shutdown();thread.join();instance.server_close()
         self.addCleanup(end);return instance
+    def test_journal_navigation_orders_equal_times_and_skips_incomplete_entries(self):
+        body=b"passage";stamp=store.now()-10000
+        for uid in ("journal-b","journal-c","laptop-journal-a","pending"):
+            meta=dict(self.upload(uid,"journal",body),startedAtMillis=stamp)
+            self.arc.begin(meta)
+            if uid!="pending":self.arc.put(uid,0,body)
+        before=web.journal_neighbors(self.arc,"journal-b")
+        self.assertIsNone(before["earlier"]);self.assertEqual(before["later"]["id"],"journal-c")
+        middle=web.journal_neighbors(self.arc,"journal-c")
+        self.assertEqual(middle["earlier"]["id"],"journal-b")
+        self.assertEqual(middle["later"],dict(id="laptop-journal-a",startedAtMillis=stamp))
+        self.assertIsNone(web.journal_neighbors(self.arc,"laptop-journal-a")["later"])
+        with self.assertRaises(store.Failure):web.journal_neighbors(self.arc,"pending")
+
     def test_capacity_durable_resume_rejection_and_expiry(self):
         content=b"private transcript\n"*12000
         meta=self.upload("journal-1","journal",content)

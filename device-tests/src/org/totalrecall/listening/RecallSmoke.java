@@ -419,10 +419,17 @@ public final class RecallSmoke extends Instrumentation {
                 session=sessions.get(0).id;
                 require(sessions.get(0).count==1,"Expected one final utterance in opted-in journal");
                 click(waitText(a,"Full journal · on",10000));
+                tapNode("Chapters & sync");tapNode("Save chapter now");waitNode("Chapter saved on this phone.");
+                tapNode("Save chapter now");waitNode("A chapter needs an active journal with a finished phrase.");
+                tapNode("Close");
+                List<JournalStore.Session> chapters=journals.sessions();
+                require(chapters.size()==initialSessions+2 && chapters.get(0).id==session && chapters.get(0).endMs==0,"Saving a chapter replaced the live recording");
+                require(chapters.get(1).count==1 && chapters.get(1).endMs>0,"Missing finished chapter");
+                session=chapters.get(1).id;
                 tapNode("Save all recognized speech on this phone");getUiAutomation().performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);
                 require(!JournalStore.enabled(target),"Journal switch failed to opt out");
                 feedWindow(window,tick,fixture,false);
-                require(journals.sessions().size()==initialSessions+1 && journals.sessions().get(0).count==1,
+                require(journals.sessions().size()==initialSessions+2 && journals.sessions().get(0).count==0 && journals.sessions().get(1).count==1,
                         "Speech recorded after journal opt-out");
             }finally{
                 end.invoke(window,false,"Paused synthetic input");

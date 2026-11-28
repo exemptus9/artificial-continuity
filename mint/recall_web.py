@@ -260,6 +260,23 @@ def items(arc,kind,q,limit,offset,category="",start=None,end=None,device="all",o
             result["similar"]=similar_items(db,filtered,filter_args,terms)
         return result
 
+def journal_neighbors(arc,uid):
+    if not UID.fullmatch(uid):
+        raise Failure(400,"Invalid journal ID")
+    with arc.connection() as db:
+        db.execute("BEGIN")
+        row=db.execute("SELECT started FROM archive_uploads WHERE id=? AND kind='journal' AND state='complete'",(uid,)).fetchone()
+        if not row:
+            raise Failure(404,"This journal is no longer available")
+        stamp=row[0]
+        result={}
+        for label,op,order in (("earlier","<","DESC"),("later",">","ASC")):
+            adjacent=db.execute(f"""SELECT id,started AS startedAtMillis FROM archive_uploads
+                WHERE kind='journal' AND state='complete' AND (started,id) {op} (?,?)
+                ORDER BY started {order},id {order} LIMIT 1""",(stamp,uid)).fetchone()
+            result[label]=dict(adjacent) if adjacent else None
+        return result
+
 def recordings_at(arc,instant,journal=""):
     if not 0<instant<=253402300799999:raise Failure(400,"Invalid recording time")
     if journal and not UID.fullmatch(journal):raise Failure(400,"Invalid journal source")
@@ -483,6 +500,7 @@ class OwnerHandler(BaseHTTPRequestHandler):
                 return self.json(200,items(arc,param("kind","all"),param("q",""),int(param("limit","50")),
                     int(param("offset","0")),param("category",""),int(start) if start is not None else None,int(end) if end is not None else None,param("device","all"),param("overlap","0")=="1",param("similar","0")=="1"))
             if path=="/api/overlaps":return self.json(200,overlaps(arc,param("kind",""),param("id","")))
+            if path=="/api/journal-neighbors":return self.json(200,journal_neighbors(arc,param("id","")))
             if path=="/api/recordings-at":return self.json(200,recordings_at(arc,int(param("at","0")),param("journal","")))
             if path=="/api/overview": return self.json(200,overview(arc,int(param("from","0")),int(param("to",str(now()))),int(param("tzOffset","0"))))
             route=re.fullmatch(r"/api/(items|media)/(segment|journal|clip)/([A-Za-z0-9_-]{1,128})",path)

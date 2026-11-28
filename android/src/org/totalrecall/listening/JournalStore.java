@@ -101,6 +101,9 @@ public final class JournalStore extends SQLiteOpenHelper {
     }
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences(PREF,Context.MODE_PRIVATE);}
     public static boolean enabled(Context c){return prefs(c).getBoolean("enabled",false);}
+    static final long CHAPTER_INTERVAL=5*60*1000L;
+    static boolean chapters(Context c){return prefs(c).getBoolean("chapters",false);}
+    static void setChapters(Context c,boolean enabled){prefs(c).edit().putBoolean("chapters",enabled).apply();}
     static long epoch(Context c){return prefs(c).getLong("epoch",0);}
     public static void setEnabled(Context c,boolean value){
         synchronized(GUARD){
@@ -178,14 +181,48 @@ public final class JournalStore extends SQLiteOpenHelper {
         synchronized(GUARD){
             if(!enabled(app)||epoch(app)!=expectedEpoch)return false;
             SQLiteDatabase db=getWritableDatabase();
-            try(Cursor c=db.rawQuery("SELECT 1 FROM sessions WHERE id=? AND end=0",new String[]{String.valueOf(session)})){
+            long start;
+            try(Cursor c=db.rawQuery("SELECT start FROM sessions WHERE id=? AND end=0",new String[]{String.valueOf(session)})){
                 if(!c.moveToFirst())return false;
+                start=c.getLong(0);
             }
             ContentValues v=new ContentValues();v.put("session",session);v.put("at",System.currentTimeMillis());
             if(original!=null && !original.equals(value))v.put("original",original);
             if(!partial && checkWords!=null && !checkWords.isEmpty())v.put("check_words",checkWords);
-            v.put("voice",voice);v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);return true;
+            v.put("voice",voice);v.put("text",value.trim());v.put("is_partial",partial?1:0);db.insertOrThrow("lines",null,v);
+            if(partial || !chapters(app) || System.currentTimeMillis()-start<CHAPTER_INTERVAL)return true;
         }
+        saveChapter(session,expectedEpoch,CHAPTER_INTERVAL);
+        return true;
+    }
+    long saveChapter(long session,long expectedEpoch,long minimumAge){
+        String[] id={Long.toString(session)};
+        long chapter;
+        synchronized(GUARD){
+            if(session<0 || !enabled(app) || epoch(app)!=expectedEpoch || (minimumAge>0 && !chapters(app)))return -1;
+            SQLiteDatabase db=getWritableDatabase();
+            db.beginTransaction();
+            try{
+                long start,now=System.currentTimeMillis();
+                try(Cursor c=db.rawQuery("SELECT start FROM sessions WHERE id=? AND end=0 AND EXISTS(SELECT 1 FROM lines WHERE session=sessions.id AND is_partial=0)",id)){
+                    if(!c.moveToFirst())return -1;
+                    start=c.getLong(0);
+                }
+                if(minimumAge>0 && now-start<minimumAge)return -1;
+                try(Cursor times=db.rawQuery("SELECT MAX(at) FROM lines WHERE session=?",id)){
+                    times.moveToFirst();now=Math.max(Math.max(now,times.getLong(0)),start+1);
+                }
+                ContentValues completed=ending("Chapter saved while listening",now);
+                completed.put("start",start);
+                chapter=db.insertOrThrow("sessions",null,completed);
+                db.execSQL("UPDATE lines SET session=? WHERE session=?",new Object[]{chapter,session});
+                db.execSQL("INSERT INTO journal_voices SELECT ?,voice,name,source FROM journal_voices WHERE session=?",new Object[]{chapter,session});
+                db.execSQL("UPDATE sessions SET start=? WHERE id=?",new Object[]{now,session});
+                db.setTransactionSuccessful();
+            }finally{db.endTransaction();}
+        }
+        ArchiveSync.schedule(app);
+        return chapter;
     }
     void finish(long id,String why){if(id<0)return;synchronized(GUARD){
         getWritableDatabase().update("sessions",ending(why,System.currentTimeMillis()),"id=? AND end=0",new String[]{String.valueOf(id)});

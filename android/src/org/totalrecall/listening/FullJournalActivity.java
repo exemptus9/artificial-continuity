@@ -22,6 +22,8 @@ public final class FullJournalActivity extends Activity {
     private JournalSegmentPlayer segmentPlayer;
     private Button older,newer,review;
     private long next,nextRefresh;
+    private String search="";
+    private final Runnable searchRefresh=()->{if(this.visible)read();};
     private int generation;
     private boolean visible,busy,showOriginal,reviewOnly;
     private final Runnable poll=new Runnable(){public void run(){
@@ -42,7 +44,19 @@ public final class FullJournalActivity extends Activity {
             android.graphics.Insets b=i.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.displayCutout());
             v.setPadding(dp(15)+b.left,dp(10)+b.top,dp(15)+b.right,dp(12)+b.bottom);return i;
         });
-        TextView title=new TextView(this);title.setText("Full journal");title.setTextSize(26);page.addView(title);
+        LinearLayout header=new LinearLayout(this);page.addView(header);
+        TextView title=new TextView(this);title.setText("Full journal");title.setTextSize(26);header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        Button options=new Button(this);options.setAllCaps(false);options.setText("Chapters & sync");options.setOnClickListener(v->chapterOptions());header.addView(options);
+        SearchView find=new SearchView(this);find.setQueryHint("Find saved or originally heard words");page.addView(find);
+        if(state!=null){search=state.getString("search","");if(!search.isEmpty()){find.setIconified(false);find.setQuery(search,false);find.clearFocus();}}
+        find.setOnQueryTextListener(new SearchView.OnQueryTextListener(){
+            public boolean onQueryTextSubmit(String text){find.clearFocus();return true;}
+            public boolean onQueryTextChange(String text){
+                search=text.trim();pages.clear();pages.add(Long.MAX_VALUE);
+                generation++;busy=false;restoreScroll=0;if(journalScroll!=null)journalScroll.scrollTo(0,0);
+                main.removeCallbacks(searchRefresh);main.postDelayed(searchRefresh,180);return true;
+            }
+        });
         Switch save=new Switch(this);save.setText("Save all recognized speech on this phone");save.setMinHeight(dp(48));
         save.setChecked(JournalStore.enabled(this));page.addView(save);
         save.setOnClickListener(v->{try{JournalStore.setEnabled(this,save.isChecked());read();}
@@ -66,12 +80,36 @@ public final class FullJournalActivity extends Activity {
         if(pages.isEmpty())pages.add(Long.MAX_VALUE);
         restoreScroll=state==null?0:state.getInt("journalScroll");
     }
+    private void chapterOptions(){
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),dp(8),dp(18),dp(8));
+        TextView hint=new TextView(this);
+        hint.setText("A chapter files finished words while the microphone keeps listening. Your archive transfer settings control when it reaches another device.");box.addView(hint);
+        CheckBox automatic=new CheckBox(this);automatic.setText("Save five-minute chapters at the next finished phrase");
+        automatic.setChecked(JournalStore.chapters(this));box.addView(automatic);
+        automatic.setOnCheckedChangeListener((v,on)->JournalStore.setChapters(this,on));
+        Button file=new Button(this);file.setText("Save chapter now");box.addView(file);
+        file.setOnClickListener(v->{
+            long session=LiveCapture.snapshot().journalId,epoch=JournalStore.epoch(this);file.setEnabled(false);
+            io.execute(()->{String message;
+                try(JournalStore store=new JournalStore(this)){
+                    message=store.saveChapter(session,epoch,0)>=0?"Chapter saved on this phone.":"A chapter needs an active journal with a finished phrase.";
+                }catch(RuntimeException e){message="Could not save this chapter. Try again.";}
+                String result=message;main.post(()->{if(!isDestroyed()){file.setEnabled(true);hint.setText(result);hint.announceForAccessibility(result);if(visible)read();}});
+            });
+        });
+        Button shared=new Button(this);shared.setText("Read shared journal");box.addView(shared);
+        shared.setOnClickListener(v->{try{startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse(ArchiveDestination.WEBSITE+"/journal")));}
+            catch(android.content.ActivityNotFoundException e){hint.setText("Install a browser to open the shared journal.");}});
+        Button sync=new Button(this);sync.setText("Archive transfer settings");sync.setOnClickListener(v->startActivity(new Intent(this,ArchiveSyncActivity.class)));box.addView(sync);
+        ScrollView scroll=new ScrollView(this);scroll.addView(box);
+        new android.app.AlertDialog.Builder(this).setTitle("Journal chapters").setView(scroll).setNegativeButton("Close",null).show();
+    }
     private Button button(LinearLayout row,String text,Runnable action){
         Button b=new Button(this);b.setText(text);b.setOnClickListener(v->action.run());row.addView(b,new LinearLayout.LayoutParams(0,-2,1));return b;
     }
     @Override public void onResume(){super.onResume();visible=true;RecallOverlay.reviewVisible(this,true);read();main.post(poll);}
-    @Override public void onPause(){if(segmentPlayer!=null){segmentPlayer.close();segmentPlayer=null;}visible=false;generation++;busy=false;main.removeCallbacks(poll);RecallOverlay.reviewVisible(this,false);super.onPause();}
-    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putBoolean("reviewOnly",reviewOnly);state.putBoolean("showOriginal",showOriginal);
+    @Override public void onPause(){if(segmentPlayer!=null){segmentPlayer.close();segmentPlayer=null;}visible=false;generation++;busy=false;main.removeCallbacks(poll);main.removeCallbacks(searchRefresh);RecallOverlay.reviewVisible(this,false);super.onPause();}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putString("search",search);state.putBoolean("reviewOnly",reviewOnly);state.putBoolean("showOriginal",showOriginal);
         long[] history=new long[pages.size()];for(int i=0;i<history.length;i++)history[i]=pages.get(i);
         state.putLongArray("pages",history);state.putInt("journalScroll",journalScroll.getScrollY());
     }
@@ -155,7 +193,7 @@ public final class FullJournalActivity extends Activity {
         });
     }
     private void read(){
-        int request=++generation;long before=pages.get(pages.size()-1);boolean compare=showOriginal,filter=reviewOnly;busy=true;older.setEnabled(false);newer.setEnabled(pages.size()>1);
+        String needle=search;int request=++generation;long before=pages.get(pages.size()-1);boolean compare=showOriginal,filter=reviewOnly;busy=true;older.setEnabled(false);newer.setEnabled(pages.size()>1);
         io.execute(()->{
             int needsReview=0;long boundary=0;SpannableStringBuilder result=new SpannableStringBuilder();String error=null;
             try(JournalStore db=new JournalStore(this)){
@@ -163,7 +201,7 @@ public final class FullJournalActivity extends Activity {
                 try(Cursor n=db.getReadableDatabase().rawQuery("SELECT COUNT(*) FROM lines WHERE check_words<>''",null)){
                     if(n.moveToFirst())needsReview=n.getInt(0);
                 }
-                try(Cursor c=db.getReadableDatabase().rawQuery("SELECT l.id,l.at,l.text,l.is_partial,l.voice,v.name,v.source,l.original,l.check_words FROM lines l LEFT JOIN journal_voices v ON v.session=l.session AND v.voice=l.voice WHERE l.id<? "+(filter?"AND l.check_words<>'' ":"")+"ORDER BY l.id DESC LIMIT 41",new String[]{String.valueOf(before)})){
+                try(Cursor c=db.getReadableDatabase().rawQuery("SELECT l.id,l.at,l.text,l.is_partial,l.voice,v.name,v.source,l.original,l.check_words FROM lines l LEFT JOIN journal_voices v ON v.session=l.session AND v.voice=l.voice WHERE l.id<? "+(filter?"AND l.check_words<>'' ":"")+(needle.isEmpty()?"":"AND (instr(lower(l.text),lower(?))>0 OR instr(lower(l.original),lower(?))>0) ")+"ORDER BY l.id DESC LIMIT 41",needle.isEmpty()?new String[]{String.valueOf(before)}:new String[]{String.valueOf(before),needle,needle})){
                     int count=0;long last=0;DateFormat format=DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.MEDIUM);
                     while(c.moveToNext()){
                         if(count++==40){boundary=last;break;}last=c.getLong(0);
@@ -194,7 +232,7 @@ public final class FullJournalActivity extends Activity {
                 busy=false;next=mark;older.setEnabled(next>0);
                 review.setVisibility(total>0 || filter?android.view.View.VISIBLE:android.view.View.GONE);
                 review.setText(filter?"Show all journal lines":"Check uncertain wording · "+total);
-                CharSequence value=body.length()==0 && filter?"No passages left to check.":body.length()==0?(JournalStore.enabled(this)?"Journal saving is on. Recognized lines will appear here while listening.":"Journal saving is off. Turn it on above to keep future words.") :body;
+                CharSequence value=body.length()==0 && !needle.isEmpty()?"No matching passages. Try a shorter phrase.":body.length()==0 && filter?"No passages left to check.":body.length()==0?(JournalStore.enabled(this)?"Journal saving is on. Recognized lines will appear here while listening.":"Journal saving is off. Turn it on above to keep future words.") :body;
                 if(!android.text.TextUtils.equals(transcript.getText(),value))transcript.setText(value);
                 if(restoreScroll>0){int y=restoreScroll;restoreScroll=0;journalScroll.post(()->journalScroll.scrollTo(0,y));}
             });

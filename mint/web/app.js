@@ -661,7 +661,8 @@ function sessionPlayer(){
 function route(){let r=location.hash.slice(1);if(r==='content')return;
   const clipLink=/^clip\/([A-Za-z0-9_-]{1,128})$/.exec(r);
   const lineLink=/^journal\/([A-Za-z0-9_-]{1,128})\/line\/(\d{1,8})$/.exec(r);
-  if(clipLink||lineLink){r='archive';}
+  const journalLink=/^journal\/([A-Za-z0-9_-]{1,128})$/.exec(r);
+  if(clipLink||lineLink||journalLink){r='archive';}
   if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.clock='';state.fold=0;state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';if(sessionCleanup){sessionCleanup();sessionCleanup=null;}state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review','sessions','saved-lines'].includes(r);$('crumb').textContent=r==='saved-lines'?'Saved lines':r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
   const journalView=location.hash==='#journal';
   if(journalView){
@@ -672,6 +673,7 @@ function route(){let r=location.hash.slice(1);if(r==='content')return;
   for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===(journalView?'journal':r==='saved-lines'?'review':r))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
   $('view').replaceChildren(e('p','empty','Loading…'));refresh();
   if(clipLink)openItem({kind:'clip',id:clipLink[1]});
+  else if(journalLink)openItem({kind:'journal',id:journalLink[1]});
   else if(lineLink)openItem({kind:'journal',id:lineLink[1]},{reader:{query:'',sourceLine:Number(lineLink[2])}});
   else if($('detail').open)$('detail').close();
 }
@@ -987,6 +989,24 @@ function journalLines(text) {
   }
   return result;
 }
+function journalNavigation(id){
+  const nav=e('nav','quick-find');
+  nav.setAttribute('aria-label','Adjacent journal entries');
+  async function load(){
+    nav.replaceChildren();
+    try{
+      const adjacent=await get('/api/journal-neighbors',{id});
+      for(const [key,label] of [['earlier','Earlier journal'],['later','Later journal']]){
+        const entry=adjacent[key];
+        if(!entry)continue;
+        const source=entry.id.startsWith('laptop-')?'Mint':'Phone or imported';
+        const link=e('a','text-link',label+' · '+source+' · '+dateTime(entry.startedAtMillis));
+        link.href='/#journal/'+encodeURIComponent(entry.id);nav.append(link);
+      }
+    }catch{nav.append(button('Retry adjacent journals',load,'text-link'));}
+  }
+  load();return nav;
+}
 function journalReader(full,saved={}){
   const raw=full.text||'',lines=journalLines(raw);
   if(!lines.length)return contentBlock('Journal text',raw||'No text supplied.');
@@ -1124,7 +1144,7 @@ async function openItem(item,jump={}){if(modalCleanup){modalCleanup();modalClean
     const nodes=[d,meta];
     if(jump.clock)nodes.push(e('p','section-note','Playback is cued near your remembered time, '+dateTime(jump.at)+'.'));
     if(jump.match)nodes.push(e('p','match-context','Recognized at '+jump.match.stamp+' · “'+jump.match.text+'”'),e('p','section-note','Playback starts up to three seconds before this passage.'));
-    if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(download,journalReader(full,jump.reader));}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
+    if(jump.journal){nodes.push(button('Back to journal',()=>openItem(jump.journal,{reader:jump.reader}),'text-link'),e('p','section-note','Press play to listen near the recognized line.'));}if(full.kind==='journal'){const download=e('a','btn','Download journal');download.prepend(icon('download'));download.href=mediaPath(full)+'?download=1';download.download='';nodes.push(journalNavigation(full.id),journalReader(full,jump.reader),download);}else{nodes.push(...player(full,jump.at));if(full.reason)nodes.push(contentBlock('Why it was kept',full.reason));if(full.transcript||full.kind==='clip')nodes.push(contentBlock('Recognized speech',full.transcript||'No transcript available.'));}
     const playerNode=nodes.find(node=>node?.classList?.contains('player'));
     if(playerNode)nodes.push(micComparison(full,playerNode.querySelector("audio")));
     const story=storyPanel(full);nodes.push(story.box,situationPanel(full,playerNode?.querySelector('audio'),story));

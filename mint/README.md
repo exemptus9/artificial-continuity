@@ -109,3 +109,6 @@ Run `python3 -m unittest discover -s mint` from the source tree for the Mint tes
 Drag anywhere on the microphone panel, including a button, to move it. A stationary click activates the button. **More → Archive tools & phone receiver** raises the desktop archive. **Expand / Shrink** changes the panel size. **Show live words** controls the panel display. The journal setting independently controls saved text. The clock measures the current uninterrupted input stream. The Keep button shows the amount of recent audio available. If the recorder was already running during the package update, sign out and back in to load the new worker.
 
 Open an archive item for a situation review based on its recognized speech, corrected text, writing or journal. **Analyze original recording** reads the selected audio, shows measured levels and offers timestamped speech cues that jump to playback. Refreshing the visible archive leaves playback and active forms alone.
+
+
+In version 0.33 the compact overlay’s recording-status button opens the most recently filed laptop words. The overlay menu also offers **Read last saved words**. Inside a journal, **Earlier journal** and **Later journal** open adjacent entries in time order across the recorders visible in that archive.

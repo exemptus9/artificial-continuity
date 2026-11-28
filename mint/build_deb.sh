@@ -3,7 +3,7 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 arch=${RECALL_DEB_ARCH:-$(dpkg --print-architecture)}
 case "$arch" in amd64) ;; *) arch=all ;; esac
-out=${1:-"$src/total-recall-desk_0.32.0_${arch}.deb"}
+out=${1:-"$src/total-recall-desk_0.33.0_${arch}.deb"}
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 install -d -m 755 "$stage/DEBIAN" "$stage/usr/share/total-recall-listening" "$stage/usr/share/applications" "$stage/usr/share/doc/total-recall-desk" "$stage/usr/bin"
@@ -22,7 +22,7 @@ if [ "$arch" = amd64 ]; then
 fi
 cat > "$stage/DEBIAN/control" <<PKG
 Package: total-recall-desk
-Version: 0.32.0
+Version: 0.33.0
 Architecture: $arch
 Maintainer: Total Recall project <maintainer@localhost>
 Section: utils

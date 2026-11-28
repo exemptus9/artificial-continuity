@@ -726,6 +726,10 @@ def panel(arc):
             server=recall_web.web_server(arc,Path(__file__).parent/"web",0)
             threading.Thread(target=server.serve_forever,daemon=True).start()
         webbrowser.open(recall_web.grant(arc.root,server.server_port)+"#"+view)
+    def read_last_journal():
+        receipt=read(root/"journal-receipt.json",{})
+        uid=receipt.get("id","")
+        archive("journal/"+uid if re.fullmatch(r"laptop-journal-[a-zA-Z0-9_-]+",uid) else "journal")
     more=ttk.Frame(box)
     typed_buttons=[]
     for kind,label in (("line","Poem line"),("coinage","Coined word"),("resume","Pick up here")):
@@ -949,6 +953,7 @@ def panel(arc):
     menu.add_command(label="Voice check",command=show_voice_check)
     menu.add_command(label="Archive tools & phone receiver",command=open_app)
     menu.add_command(label="Browse & play",command=archive)
+    menu.add_command(label="Read last saved words",command=read_last_journal)
     menu.add_command(label="Open last kept audio",command=reopen_keep)
     menu.add_command(label="Review saved moments",command=lambda:archive("review"))
     menu.add_checkbutton(label="Show live words",variable=show_words,command=lambda:(layout(),tick(False)))
@@ -977,7 +982,7 @@ def panel(arc):
     menu_btn=ttk.Button(header,text="More",width=5,command=show_menu)
     mode=ttk.Button(header,text="Shrink",command=lambda:resize(),width=6)
     mini=ttk.Frame(box);mini_state=tk.StringVar(value="Journal")
-    mini_read=ttk.Button(mini,textvariable=mini_state,command=lambda:archive("journal"),width=13,takefocus=True)
+    mini_read=ttk.Button(mini,textvariable=mini_state,command=read_last_journal,width=13,takefocus=True)
     mini_read.pack(side="left")
     mini_toggle=ttk.Button(mini,text="Start",width=5,command=toggle);mini_toggle.pack(side="left")
     mini_keep=ttk.Button(mini,text="Save",width=5,command=mark);mini_keep.pack(side="left")
@@ -1090,6 +1095,7 @@ def panel(arc):
         elif ready and s.get("commandWindow"):
             info.set(f"Command window · {s['commandWindow']} s left\n"+info.get())
         journal_receipt=read(root/"journal-receipt.json",{})
+        menu.entryconfigure("Read last saved words",state="normal" if journal_receipt else "disabled")
         shared_receipt=read(root/"shared-journal-receipt.json",{})
         def last_time(receipt):
             return time.strftime("%H:%M:%S",time.localtime(receipt["at"]/1000))

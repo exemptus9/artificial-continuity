@@ -68,6 +68,7 @@ class Archive:
               offset INTEGER NOT NULL, state TEXT NOT NULL, file TEXT NOT NULL, created INTEGER NOT NULL,
               touched INTEGER NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, journal TEXT NOT NULL DEFAULT ''
             );
+            CREATE INDEX IF NOT EXISTS journal_time_order ON archive_uploads(started,id) WHERE kind='journal' AND state='complete';
             CREATE INDEX IF NOT EXISTS archive_dates ON archive_uploads(state,started DESC);
             CREATE TABLE IF NOT EXISTS archive_settings(name TEXT PRIMARY KEY, value INTEGER NOT NULL);
             """)

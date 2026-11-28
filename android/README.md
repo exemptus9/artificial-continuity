@@ -227,3 +227,8 @@ Notification pause/disable is conservative: post times before the latest enable 
 resume are excluded even if Android re-delivers an active notification later. That
 can skip an update whose original OS post time is unchanged; it prevents silent
 recovery of a paused interval, at the cost of explicitly incomplete coverage.
+
+
+## Journal chapters in 0.33
+
+In **Full journal → Chapters & sync**, use **Save chapter now** during a recording. For long sessions, enable five-minute chapters once. After five minutes the next finished phrase closes the chapter. Listening continues and speaker names carry into the next chapter. Each chapter can transfer with your existing journal and archive settings. **Read shared journal** opens the owner archive. Use the magnifying glass in Full journal to find a phrase by its saved wording or its original recognition.
