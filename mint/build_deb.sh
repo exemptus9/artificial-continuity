@@ -1,12 +1,14 @@
 #!/bin/sh
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-out=${1:-"$src/total-recall-desk_0.31.0_all.deb"}
+arch=${RECALL_DEB_ARCH:-$(dpkg --print-architecture)}
+case "$arch" in amd64) ;; *) arch=all ;; esac
+out=${1:-"$src/total-recall-desk_0.32.0_${arch}.deb"}
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT HUP INT TERM
 install -d -m 755 "$stage/DEBIAN" "$stage/usr/share/total-recall-listening" "$stage/usr/share/applications" "$stage/usr/share/doc/total-recall-desk" "$stage/usr/bin"
 install -d -m 755 "$stage/usr/share/total-recall-listening/web"
-install -m 644 "$src/recall_desk.py" "$src/recall_archive.py" "$src/recall_web.py" "$src/situation.py" "$src/archive_backup.py" "$src/recall_review.py" "$src/laptop_capture.py" "$src/mic_input.py" "$src/voice_feedback.py" "$src/voice_check.py" "$src/live_words.py" "$src/speech_context.py" "$stage/usr/share/total-recall-listening/"
+install -m 644 "$src/recall_desk.py" "$src/recall_archive.py" "$src/recall_web.py" "$src/situation.py" "$src/archive_backup.py" "$src/recall_review.py" "$src/laptop_capture.py" "$src/mic_input.py" "$src/voice_feedback.py" "$src/voice_check.py" "$src/desk_speech.py" "$src/live_words.py" "$src/speech_context.py" "$stage/usr/share/total-recall-listening/"
 install -m 644 "$src/web/situation-rules.tsv" "$src/web/speech-context.tsv" "$src/web/index.html" "$src/web/app.css" "$src/web/app.js" "$stage/usr/share/total-recall-listening/web/"
 install -m 644 "$src/total-recall-desk.desktop" "$stage/usr/share/applications/"
 install -m 644 "$src/README.md" "$src/CLOUD.md" "$src/CLOUD_RECOVERY.md" "$stage/usr/share/doc/total-recall-desk/"
@@ -15,10 +17,13 @@ cat > "$stage/usr/bin/total-recall-desk" <<'LAUNCH'
 exec /usr/bin/python3 -I /usr/share/total-recall-listening/recall_desk.py "$@"
 LAUNCH
 chmod 755 "$stage/usr/bin/total-recall-desk"
-cat > "$stage/DEBIAN/control" <<'PKG'
+if [ "$arch" = amd64 ]; then
+    python3 "$src/bundle_dictation.py" "$stage/usr/share/total-recall-listening/dictation"
+fi
+cat > "$stage/DEBIAN/control" <<PKG
 Package: total-recall-desk
-Version: 0.31.0
-Architecture: all
+Version: 0.32.0
+Architecture: $arch
 Maintainer: Total Recall project <maintainer@localhost>
 Section: utils
 Priority: optional
@@ -31,6 +36,6 @@ Description: Private desktop companion to Total Recall for Android
 PKG
 chmod 755 "$stage"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
-dpkg-deb -Zxz --build --root-owner-group "$stage" "$out"
+dpkg-deb -Zxz -z3 --threads-max=2 --build --root-owner-group "$stage" "$out"
 dpkg-deb --info "$out" >/dev/null
 dpkg-deb --contents "$out" >/dev/null

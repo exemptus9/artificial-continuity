@@ -37,7 +37,14 @@ def item(row,details=False):
     for key in ("category","reason","parentId","startSample","endSample","sessionId","note","correction","feedback"):
         if key in meta: result[key]=meta[key]
     if result["kind"]=="clip": result["transcript"]=content if details else content[:260]
-    if result["kind"]=="journal" and details: result["text"]=content
+    if result["kind"]=="journal":
+        if details:result["text"]=content
+        else:
+            for line in StringIO(content):
+                parsed=JOURNAL_LINE.match(line.rstrip())
+                if parsed and not parsed[4].startswith("[capture status]"):
+                    result["preview"]=parsed[4][:220]
+                    break
     return result
 
 def matched_excerpt(value,terms):

@@ -241,6 +241,7 @@ function itemRow(item){
     if(item.similar)main.append(e('span','match-preview','You typed “'+item.similar.typed+'” · saved as “'+item.similar.found+'”'));
     main.append(e('span','match-preview',[item.match.field,item.match.stamp,item.match.text].filter(Boolean).join(' · ')));
   }
+  if(item.kind==='journal' && item.preview && !item.match)row.querySelector('.row-main').append(e('span','match-preview',item.preview));
   if(item.kind!=='journal'||!Number.isFinite(item.match?.at))return row;
   const at=item.match.at;
   const reader=target.reader||{query:item.similar?.found||state.query,start:0};
@@ -662,7 +663,13 @@ function route(){let r=location.hash.slice(1);if(r==='content')return;
   const lineLink=/^journal\/([A-Za-z0-9_-]{1,128})\/line\/(\d{1,8})$/.exec(r);
   if(clipLink||lineLink){r='archive';}
   if(r==='journal'){state.kind='journal';state.query='';state.device='all';state.date='';state.clock='';state.fold=0;state.category='';state.offset=0;r='archive';}if(!Object.hasOwn(viewInfo,r))r='overview';if(sessionCleanup){sessionCleanup();sessionCleanup=null;}state.view=r;clearTimeout(searchTimer);$('period-wrap').hidden=['archive','review','sessions','saved-lines'].includes(r);$('crumb').textContent=r==='saved-lines'?'Saved lines':r[0].toUpperCase()+r.slice(1);[$('page-title').textContent,$('subtitle').textContent]=viewInfo[r];document.title=`${viewInfo[r][0]} · Total Recall`;
-  for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===(r==='saved-lines'?'review':r))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
+  const journalView=location.hash==='#journal';
+  if(journalView){
+    $('page-title').textContent='Full journal';
+    $('subtitle').textContent='Words from your connected recorders, newest first.';
+    $('crumb').textContent='Journal';document.title='Full journal · Total Recall';
+  }
+  for(const a of document.querySelectorAll('[data-nav]')){if(a.dataset.nav===(journalView?'journal':r==='saved-lines'?'review':r))a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');}
   $('view').replaceChildren(e('p','empty','Loading…'));refresh();
   if(clipLink)openItem({kind:'clip',id:clipLink[1]});
   else if(lineLink)openItem({kind:'journal',id:lineLink[1]},{reader:{query:'',sourceLine:Number(lineLink[2])}});
@@ -1133,7 +1140,7 @@ async function openPairing(){
   const dialog=$('detail'),serial=++state.detailVersion;
   $('detail-kind').textContent='Phone connection';
   const title=e('h2','','Pair your phone');title.id='detail-title';
-  const help=e('p','pair-hint','In Total Recall on your phone, open the archive connection and tap Scan pairing code. On the same phone, copy and paste the code instead. Anyone with the code can send captures to this archive.');
+  const help=e('p','pair-hint','In Total Recall on your phone, open the archive connection and tap Scan pairing code. On the same phone, paste the code instead. On Mint, open Connect in the microphone panel and paste the code in Backup. Anyone with the code can send captures to this archive.');
   const message=e('p','status');message.setAttribute('role','status');const reveal=button('Reveal pairing code',async()=>{
     try{reveal.disabled=true;message.textContent='Loading…';const {code}=await get('/api/phone-pairing');if(serial!==state.detailVersion||!dialog.open)return;
       if(typeof code!=='string'||!code.startsWith('TR1.'))throw Error('Pairing code unavailable.');
@@ -1155,5 +1162,6 @@ function updateVisible(){
      $('view').contains(document.activeElement))return;
   refresh();
 }
-window.setInterval(updateVisible,60000);
+window.setInterval(()=>{if(location.hash==='#journal' && state.offset===0)updateVisible();},5000);
+window.setInterval(()=>{if(location.hash!=='#journal')updateVisible();},60000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)updateVisible();});

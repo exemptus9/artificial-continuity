@@ -80,12 +80,9 @@ class VoiceFeedbackTests(unittest.TestCase):
                 audio=base/"source.pcm";audio.write_bytes(pcm)
                 callbacks=[];positions=[];commands=[]
                 class Decoder:
-                    def __init__(self,root,name,on_final):callbacks.append(on_final)
-                    def close(self):pass
-                class Feed:
-                    def __init__(self,root,name="captions"):self.name=name
+                    state={"lines":[],"partial":"","engine":"Test"}
+                    def __init__(self,on_final):callbacks.append(on_final)
                     def send(self,position,block):
-                        if self.name!="voice-control.fifo":return
                         positions.append((position,len(block)))
                         if not commands:
                             callbacks[0]("Lexi save a line")
@@ -97,7 +94,7 @@ class VoiceFeedbackTests(unittest.TestCase):
                         elif len(commands)==1:
                             callbacks[0]("Lexi mark my place");commands.append("second")
                     def close(self):pass
-                with patch.object(capture.live_words,"LiveWords",Decoder),patch.object(capture.live_words,"WordFeed",Feed):
+                with patch.object(capture.desk_speech,"LiveStream",Decoder):
                     with self.assertRaisesRegex(OSError,"unavailable"):
                         capture.capture(arc,root,capture.BASE,["-re","-f","s16le","-ar","16000","-ac","1","-i",str(audio)])
                 self.assertTrue((root/"enabled").exists())

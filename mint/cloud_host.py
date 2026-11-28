@@ -49,7 +49,7 @@ APK_SHA = "9ec0944cb8d817f5b583ca52bc41c0cbc21fcbc7de5bfe0e5f601610311245f5"
 APK_MIME = "application/vnd.android.package-archive"
 APK_KEY = "total-recall/installers/"+APK_SHA+"/"+APK_NAME
 
-MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.31.0_all.deb"
+MINT_INSTALLER = Path(__file__).resolve().parent / "total-recall-desk_0.32.0_amd64.deb"
 
 INSTALLER_NAMES = {"/downloads/android": "Android app", "/downloads/mint": "Linux Mint app"}
 
@@ -263,16 +263,19 @@ class HostedHandler(recall_web.OwnerHandler):
         if path=="/downloads/android":return self.download_apk()
         if path=="/downloads/mint":
             try:
-                package = MINT_INSTALLER.read_bytes()
+                package = MINT_INSTALLER.open("rb")
             except OSError:
                 return self.json(503, {"error": "The Mint installer is temporarily unavailable."})
-            self.send_response(200)
-            self.send_header("Content-Type", "application/vnd.debian.binary-package")
-            self.send_header("Content-Disposition", 'attachment; filename="' + MINT_INSTALLER.name + '"')
-            self.send_header("Content-Length", str(len(package)))
-            self.end_headers()
-            if self.command != "HEAD":
-                self.wfile.write(package)
+            with package:
+                size=os.fstat(package.fileno()).st_size
+                self.send_response(200)
+                self.send_header("Content-Type","application/vnd.debian.binary-package")
+                self.send_header("Content-Disposition",'attachment; filename="'+MINT_INSTALLER.name+'"')
+                self.send_header("Content-Length",str(size))
+                self.end_headers()
+                if self.command!="HEAD":
+                    while block:=package.read(128*1024):
+                        self.wfile.write(block)
             return
         if path=="/early-access/roster":
             return self.emit(200,early_access.owner_page(self.server.assets,self.server.archive.root),"text/html; charset=utf-8")

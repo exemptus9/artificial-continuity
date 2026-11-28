@@ -94,11 +94,9 @@ def compare(expected, heard):
 
 
 def recognize(pcm, gain, expected):
-    decoder=situation.new_decoder()
-    decoder.start_utt()
-    decoder.process_raw(mic_input.recognition_pcm(pcm,gain),False,True)
-    decoder.end_utt()
-    hyp=decoder.hyp();heard=hyp.hypstr.strip() if hyp else ""
+    import desk_speech
+    with io.BytesIO(pcm) as stream:
+        heard=" ".join(words for _,words in desk_speech.transcribe(stream,gain))
     return dict(heard=heard,match=compare(expected,heard),gain=gain)
 
 

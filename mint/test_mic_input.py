@@ -56,18 +56,14 @@ class MicrophoneTests(unittest.TestCase):
                 tone=base/"source.raw";tone.write_bytes(original)
                 boosted=[];callback=[]
                 class Decoder:
-                    def __init__(self,root,name,heard):callback.append(heard)
-                    def close(self):pass
-                class Feed:
-                    def __init__(self,root,name="captions"):self.name=name
+                    state={"lines":[],"partial":"","engine":"Test"}
+                    def __init__(self,heard):callback.append(heard)
                     def send(self,_position,pcm):
-                        if self.name=="captions":
-                            boosted.extend(pcm)
-                            if callback:
-                                callback[0]("I just coined a word")
-                                callback[0]("Hey Recall pause recording")
+                        boosted.extend(pcm)
+                        callback[0]("I just coined a word")
+                        callback[0]("Hey Recall pause recording")
                     def close(self):pass
-                with patch.object(cap.live_words,"LiveWords",Decoder),patch.object(cap.live_words,"WordFeed",Feed):
+                with patch.object(cap.desk_speech,"LiveStream",Decoder):
                     with self.assertRaisesRegex(OSError,"unavailable"):
                         cap.capture(arc,root,cfg,["-re","-f","s16le","-ar","16000","-ac","1","-i",str(tone)])
                 self.assertTrue((root/"enabled").exists())
